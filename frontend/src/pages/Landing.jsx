@@ -29,6 +29,7 @@ import SoftLetterbox from "@/components/motion/SoftLetterbox";
 import MagneticCTA from "@/components/motion/MagneticCTA";
 import TiltCard from "@/components/motion/TiltCard";
 import Spotlight from "@/components/motion/Spotlight";
+import TodayAvailabilityStrip from "@/components/TodayAvailabilityStrip";
 
 const STADIUM_IMG = "https://images.unsplash.com/photo-1779406283467-5124ba4631c3?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjY2NjV8MHwxfHNlYXJjaHwxfHxkYXJrJTIwZnV0c2FsJTIwc3RhZGl1bSUyMG5pZ2h0fGVufDB8fHx8MTc4MDk2OTUxMXww&ixlib=rb-4.1.0&q=85";
 const PLAYER_IMG = "https://images.unsplash.com/photo-1517927033932-b3d18e61fb3a?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2Nzh8MHwxfHNlYXJjaHwyfHxzb2NjZXIlMjBhY3Rpb24lMjBuaWdodCUyMGRhcmt8ZW58MHx8fHwxNzgwOTY5NTExfDA&ixlib=rb-4.1.0&q=85";
@@ -328,6 +329,9 @@ export default function Landing() {
           <span>PEDRA AZUL F.S.  ·  COPA ALTO TIETÊ  ·  QUADRA NÚNCIO  ·  {COURT_PRICE_LABEL.toUpperCase()}  ·  </span>
         </div>
       </div>
+
+      {/* ===== HOJE · FAIXA DE DISPONIBILIDADE ===== */}
+      <TodayAvailabilityStrip />
 
       {/* ===== ESTRUTURA / CONHEÇA A QUADRA (+ video) ===== */}
       <section

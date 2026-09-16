@@ -243,3 +243,38 @@ export function structureChips(settings) {
   return chips.slice(0, 10);
 }
 
+
+/** YYYY-MM-DD in America/Sao_Paulo (booking day boundary). */
+export function todayYmdSaoPaulo() {
+  try {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/Sao_Paulo",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date());
+  } catch {
+    const n = new Date();
+    return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`;
+  }
+}
+
+/** Validate YYYY-MM-DD (loose). */
+export function isValidYmd(ymd) {
+  if (!ymd || typeof ymd !== "string") return false;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return false;
+  const d = new Date(`${ymd}T12:00:00`);
+  return !Number.isNaN(d.getTime());
+}
+
+/** Normalize HH:MM or H:MM → HH:MM; null if invalid. */
+export function normalizeTimeHm(raw) {
+  if (raw == null) return null;
+  const s = String(raw).trim();
+  const m = s.match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return null;
+  const h = Number(m[1]);
+  const min = Number(m[2]);
+  if (!Number.isFinite(h) || !Number.isFinite(min) || h < 0 || h > 23 || min < 0 || min > 59) return null;
+  return `${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
+}

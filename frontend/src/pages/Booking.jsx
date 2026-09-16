@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import PageShell from "@/components/PageShell";
 import { BOOKING } from "@/constants/testIds";
 import api, { formatApiErrorDetail } from "@/lib/api";
@@ -16,6 +16,9 @@ import {
   mapsUrlReady,
   policiesVisible,
   resolvePolicyCancel,
+  todayYmdSaoPaulo,
+  isValidYmd,
+  normalizeTimeHm,
 } from "@/lib/siteConfig";
 import { useSiteSettings } from "@/lib/SiteSettings";
 import { pixPipelineLabel } from "@/lib/paymentStatus";
@@ -80,11 +83,22 @@ export default function Booking() {
   const { settings, priceLabel: livePriceLabel, waReady, waHref: ctxWa } = useSiteSettings();
 
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const prefillApplied = useRef(false);
+  const pendingPrefillTime = useRef(null);
+  const pendingPrefillHours = useRef(null);
+
+  // Query prefill: ?date=YYYY-MM-DD&time=HH:MM&hours=1|2|3 (optional)
+  const [date, setDate] = useState(() => {
+    const q = searchParams.get("date");
+    if (isValidYmd(q)) return q;
+    return todayYmdSaoPaulo();
+  });
+
   const [waStatus, setWaStatus] = useState(null); // CONECTADO | AGUARDANDO_QR | DESCONECTADO | ...
   const [courts, setCourts] = useState([]);
   const [courtsError, setCourtsError] = useState("");
   const [selectedCourt, setSelectedCourt] = useState(null);
-  const [date, setDate] = useState(todayISO());
   const [availability, setAvailability] = useState(null);
   const [loading, setLoading] = useState(false);
   const [availError, setAvailError] = useState("");
@@ -125,6 +139,16 @@ export default function Booking() {
   const [wlMsg, setWlMsg] = useState("");
   const [wlErr, setWlErr] = useState("");
 
+  // Capture time/hours query once (applied after availability loads)
+  useEffect(() => {
+    const t = normalizeTimeHm(searchParams.get("time") || searchParams.get("slot"));
+    if (t) pendingPrefillTime.current = t;
+    const hRaw = searchParams.get("hours") || searchParams.get("duration");
+    const h = Number(hRaw);
+    if (Number.isFinite(h) && h >= 1 && h <= 3) pendingPrefillHours.current = Math.floor(h);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     api.get("/courts")
       .then(({ data }) => {
@@ -156,13 +180,40 @@ export default function Booking() {
     setLoading(true);
     setAvailError("");
     api.get("/courts/availability", { params: { court_id: selectedCourt.id, date } })
-      .then(({ data }) => setAvailability(data))
+      .then(({ data }) => {
+        setAvailability(data);
+        // One-shot prefill from ?time= when slot is free
+        if (prefillApplied.current) return;
+        const want = pendingPrefillTime.current;
+        if (!want || !data?.day_open) return;
+        const slot = (data.slots || []).find((s) => s.time === want);
+        if (!slot || !(slot.status === "available" || slot.status === "free")) return;
+        prefillApplied.current = true;
+        setPickedSlot(slot);
+        const wantH = pendingPrefillHours.current;
+        const allowMulti = settings?.allow_multi_hour !== false && (data?.settings?.allow_multi_hour !== false);
+        const maxH = Math.min(
+          3,
+          Number(data?.settings?.max_hours_per_booking || settings?.max_hours_per_booking || 2) || 2,
+          Number(slot.max_consecutive || 1) || 1,
+        );
+        if (wantH && allowMulti && wantH > 1 && maxH >= wantH) {
+          setDurationHours(wantH);
+          setStep("identify");
+        } else if (allowMulti && maxH > 1 && !wantH) {
+          setDurationHours(1);
+          setStep("duration");
+        } else {
+          setDurationHours(wantH && wantH >= 1 ? Math.min(wantH, maxH) : 1);
+          setStep("identify");
+        }
+      })
       .catch((e) => {
         setAvailability(null);
         setAvailError(formatApiErrorDetail(e.response?.data?.detail) || "Erro ao buscar horários.");
       })
       .finally(() => setLoading(false));
-  }, [selectedCourt, date]);
+  }, [selectedCourt, date, settings?.allow_multi_hour, settings?.max_hours_per_booking]);
 
   const waitlistOn = settings?.waitlist_enabled !== false && (availability?.settings?.waitlist_enabled !== false);
   const creditsOn = settings?.credits_enabled !== false;

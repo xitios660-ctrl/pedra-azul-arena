@@ -287,3 +287,8 @@ Prod smoke: `GET /api/health`, `/api/courts`, `/api/site-settings`, WhatsApp `AG
 - Rotas públicas reais do React Router: `/`, `/booking`, `/faq`, `/tournaments`, `/apresentacao`, `/minhas-reservas` (sem `/perguntas` redirect; sem aliases `/reservar`/`/torneios`).
 - Base canônica: env `PUBLIC_BASE_URL` (default `https://pedra-azul.onrender.com`). Robots: Allow públicos; Disallow `/admin`, `/login`, `/api/`.
 
+
+## Cycle 37 notes
+- Landing: faixa compacta **Hoje** (`TodayAvailabilityStrip`) com chips neon dos slots do dia (America/Sao_Paulo) via `GET /api/courts/availability`.
+- Verde = livre (tap → `/booking?date=&time=`), vermelho = reservado, cinza = indisponível; skeleton no load; oculta se `open_days` / `day_open` fechado; falha da API → só link quieto “Ver horários”.
+- Booking: lê `?date=&time=` (e opcional `hours`/`duration`) para pré-selecionar data/horário nos passos.
