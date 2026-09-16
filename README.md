@@ -15,7 +15,7 @@ Reserva de **uma** quadra (Pedra Azul — Núncio), fluxo CPF + PIX + confirmaç
 | `MONGO_URL` | sim | Connection string MongoDB Atlas |
 | `DB_NAME` | sim | Nome do DB (ex.: `arena_futsal`) |
 | `JWT_SECRET` | sim | Segredo JWT admin |
-| `CORS_ORIGINS` | não | Default `*`. Em produção, liste origens explícitas (vírgula) |
+| `CORS_ORIGINS` | não | Origens permitidas, **separadas por vírgula**. Local: default `*`. Em produção (`RENDER`/`ENV=production`), se `*` ou vazio → `https://pedra-azul.onrender.com` + localhost. Ex.: `https://pedra-azul.onrender.com` |
 | `WHATSAPP_SERVICE_URL` | não | Default `http://127.0.0.1:3001` |
 | `WHATSAPP_PORT` | não | Default `3001` |
 | `WHATSAPP_HOST` | não | Default `127.0.0.1` (só localhost) |
@@ -28,6 +28,8 @@ Reserva de **uma** quadra (Pedra Azul — Núncio), fluxo CPF + PIX + confirmaç
 | `PORT` | não | Porta HTTP pública (Render define) |
 | `BOOKING_RATE_LIMIT` | não | Max POSTs `/api/bookings` por IP/janela (default 8) |
 | `BOOKING_RATE_WINDOW_SEC` | não | Janela do rate limit em segundos (default 60) |
+| `AUTH_RATE_LIMIT` | não | Max POSTs `/api/auth/login` por IP/janela (default 10) |
+| `AUTH_RATE_WINDOW_SEC` | não | Janela do rate limit de login em segundos (default 60) |
 | `UPLOAD_DIR` | não | Pasta cache de uploads (crests/comprovantes). Local: `backend/uploads`. Render: `/var/data/uploads` (Starter+). **Comprovantes PIX: GridFS no Mongo (Free-safe)**; disk opcional. |
 
 **Nunca** commitir credenciais Baileys / `.env` / QR. Sessão fica na collection `whatsapp_auth`.
@@ -169,7 +171,7 @@ Prod smoke: `GET /api/health`, `/api/courts`, `/api/site-settings`, WhatsApp `AG
 - Admin **Configurações** (`site_settings` singleton): WhatsApp, PIX, endereço/Maps, preço/hora, abertura/fechamento, duração do slot.
 - Booking público e bot WA leem preço/horários/contato dessas settings (fallback nos defaults).
 - Hero video: `preload=metadata`, poster `baleys-poster.jpg`, cópia leve `baleys-lite.mp4` (ffmpeg).
-- Segurança: `INTERNAL_API_TOKEN` (ou legacy `WHATSAPP_INTERNAL_TOKEN`) obrigatório quando definido; CORS `*` sem credentials.
+- Segurança: `INTERNAL_API_TOKEN` (ou legacy `WHATSAPP_INTERNAL_TOKEN`) obrigatório quando definido; CORS: em produção prefira origens explícitas (vírgula); `*` sem credentials (local).
 
 ## Cycle 8 notes
 - Token unify: `start.sh` + `whatsapp_bridge` preferem `INTERNAL_API_TOKEN` (evita mismatch com sidecar).

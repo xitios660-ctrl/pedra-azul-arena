@@ -66,7 +66,7 @@ export default function Login() {
                   type="email" autoComplete="email" required
                   value={email} onChange={(e) => setEmail(e.target.value)}
                   className="bg-transparent w-full focus:outline-none text-white placeholder-white/30"
-                  placeholder="seuemail@arena.com"
+                  placeholder="seu e-mail"
                 />
               </Field>
               <Field icon={<Lock className="w-4 h-4" />} label="Senha">

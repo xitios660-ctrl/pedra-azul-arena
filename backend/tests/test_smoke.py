@@ -42,7 +42,7 @@ def s():
 def admin_session():
     """Bearer auth — cookies are Secure/SameSite=None and won't stick on plain HTTP."""
     sess = requests.Session()
-    r = sess.post(f"{API}/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD}, timeout=10)
+    r = sess.post(f"{API}/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD}, headers=_xff(), timeout=10)
     if r.status_code != 200:
         pytest.skip(f"admin login unavailable: {r.status_code} {r.text[:120]}")
     token = (r.json() or {}).get("access_token")
@@ -586,33 +586,27 @@ def test_reminder_mark_atomic(admin_session, s):
     """Cycle 12: second mark-sent loses the race (modified_count==0 → ok false)."""
     tok = (os.environ.get("INTERNAL_API_TOKEN") or os.environ.get("WHATSAPP_INTERNAL_TOKEN") or "").strip()
     headers = {"X-Internal-Token": tok} if tok else {}
-    # Create a confirmed booking via admin calendar
-    day = (datetime.now(TZ) + timedelta(days=14)).strftime("%Y-%m-%d")
-    r = admin_session.post(
-        f"{API}/admin/calendar/bookings",
-        json={
-            "date": day,
-            "start_time": "21:00",
-            "customer_name": "Reminder Race",
-            "whatsapp": "5511987654321",
-            "status": "confirmed",
-        },
-        timeout=15,
-    )
-    if r.status_code == 409:
-        # slot taken — pick another hour
-        r = admin_session.post(
-            f"{API}/admin/calendar/bookings",
-            json={
-                "date": day,
-                "start_time": "22:00",
-                "customer_name": "Reminder Race",
-                "whatsapp": "5511987654321",
-                "status": "confirmed",
-            },
-            timeout=15,
-        )
-    assert r.status_code in (200, 201), r.text
+    # Create a confirmed booking via admin calendar — rotate day/slot if occupied
+    r = None
+    for day_off in (14, 15, 16, 17):
+        day = (datetime.now(TZ) + timedelta(days=day_off)).strftime("%Y-%m-%d")
+        for start in ("18:00", "19:00", "20:00", "21:00", "22:00"):
+            r = admin_session.post(
+                f"{API}/admin/calendar/bookings",
+                json={
+                    "date": day,
+                    "start_time": start,
+                    "customer_name": "Reminder Race",
+                    "whatsapp": "5511987654321",
+                    "status": "confirmed",
+                },
+                timeout=15,
+            )
+            if r.status_code in (200, 201):
+                break
+        if r is not None and r.status_code in (200, 201):
+            break
+    assert r is not None and r.status_code in (200, 201), getattr(r, "text", "no attempt")
     bid = r.json()["id"]
     m1 = s.post(f"{API}/internal/whatsapp/reminders/{bid}/sent", headers=headers, timeout=10)
     assert m1.status_code == 200, m1.text

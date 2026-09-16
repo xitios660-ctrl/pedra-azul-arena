@@ -20,8 +20,8 @@ services:
       - key: DB_NAME
         value: arena_futsal
       - key: CORS_ORIGINS
-        # Prefer explicit origins in production (comma-separated). "*" disables credentialed CORS.
-        value: "*"
+        # Comma-separated. Runtime also replaces "*" / empty with this allowlist when RENDER is set.
+        value: "https://pedra-azul.onrender.com"
       - key: MONGO_URL
         sync: false
       - key: WHATSAPP_AUTO_START

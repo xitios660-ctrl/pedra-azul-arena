@@ -72,11 +72,15 @@ api = APIRouter(prefix="/api")
 
 
 # -----------------------------------------------------------------------------
-# Light rate limit — public booking create (per IP, in-memory)
+# Light rate limit — booking create + auth login (per IP, in-memory)
 # -----------------------------------------------------------------------------
 _BOOKING_HITS: dict[str, list[float]] = defaultdict(list)
 _BOOKING_LIMIT = int(os.environ.get("BOOKING_RATE_LIMIT", "8"))
 _BOOKING_WINDOW = int(os.environ.get("BOOKING_RATE_WINDOW_SEC", "60"))
+
+_AUTH_HITS: dict[str, list[float]] = defaultdict(list)
+_AUTH_LIMIT = int(os.environ.get("AUTH_RATE_LIMIT", "10"))
+_AUTH_WINDOW = int(os.environ.get("AUTH_RATE_WINDOW_SEC", "60"))
 
 
 def _client_ip(request: Request) -> str:
@@ -88,18 +92,35 @@ def _client_ip(request: Request) -> str:
     return "unknown"
 
 
-def _rate_limit_booking(request: Request) -> None:
+def _rate_limit(hits_map: dict, limit: int, window: float, request: Request, detail: str) -> None:
     ip = _client_ip(request)
     now = time.time()
-    hits = [t for t in _BOOKING_HITS[ip] if now - t < _BOOKING_WINDOW]
-    if len(hits) >= _BOOKING_LIMIT:
-        _BOOKING_HITS[ip] = hits
-        raise HTTPException(
-            status_code=429,
-            detail="Muitas reservas em pouco tempo. Aguarde um minuto e tente novamente.",
-        )
+    hits = [t for t in hits_map[ip] if now - t < window]
+    if len(hits) >= limit:
+        hits_map[ip] = hits
+        raise HTTPException(status_code=429, detail=detail)
     hits.append(now)
-    _BOOKING_HITS[ip] = hits
+    hits_map[ip] = hits
+
+
+def _rate_limit_booking(request: Request) -> None:
+    _rate_limit(
+        _BOOKING_HITS,
+        _BOOKING_LIMIT,
+        _BOOKING_WINDOW,
+        request,
+        "Muitas reservas em pouco tempo. Aguarde um minuto e tente novamente.",
+    )
+
+
+def _rate_limit_auth(request: Request) -> None:
+    _rate_limit(
+        _AUTH_HITS,
+        _AUTH_LIMIT,
+        _AUTH_WINDOW,
+        request,
+        "Muitas tentativas de login. Aguarde um minuto e tente novamente.",
+    )
 
 @api.get("/health")
 async def health():
@@ -179,7 +200,8 @@ COURT_BY_ID = {c["id"]: c for c in COURTS}
 # ADMIN AUTH
 # =============================================================================
 @api.post("/auth/login")
-async def login(payload: LoginIn, response: Response):
+async def login(payload: LoginIn, response: Response, request: Request):
+    _rate_limit_auth(request)
     email = payload.email.lower()
     user = await db.users.find_one({"email": email})
     if not user or not verify_password(payload.password, user["password_hash"]):
@@ -1365,6 +1387,15 @@ async def startup():
     await db.users.create_index("email", unique=True)
     await db.bookings.create_index([("court_id", 1), ("date", 1), ("start_time", 1)])
     await db.bookings.create_index("cpf")
+    # Lookups: MyBookings by CPF, WA bot / admin by phone, calendar by date+status
+    try:
+        await db.bookings.create_index([("date", 1), ("status", 1)], name="bookings_date_status")
+    except Exception as e:
+        logger.warning("bookings_date_status index: %s", e)
+    try:
+        await db.bookings.create_index("whatsapp", name="bookings_whatsapp")
+    except Exception as e:
+        logger.warning("bookings_whatsapp index: %s", e)
     # Atomic anti-double-booking: only one active booking per court+date+slot
     try:
         await db.bookings.create_index(
@@ -1459,15 +1490,33 @@ if FRONTEND_BUILD:
 
     logger.info("Serving frontend from %s", FRONTEND_BUILD)
 
-# CORS: set CORS_ORIGINS to explicit origins in production (comma-separated).
-# Wildcard + credentials is unsafe/invalid — when "*" we disable credentials (same-origin Docker OK).
-_cors_raw = os.environ.get("CORS_ORIGINS", "*").strip() or "*"
-_cors_origins = [o.strip() for o in _cors_raw.split(",") if o.strip()]
+# CORS: set CORS_ORIGINS to explicit origins (comma-separated).
+# In production (RENDER or ENV=production), "*" / empty → Pedra Azul + localhost allowlist.
+# Wildcard + credentials is unsafe/invalid — when "*" we disable credentials (local/dev OK).
+_cors_raw = (os.environ.get("CORS_ORIGINS") or "").strip()
+_cors_origins = [o.strip() for o in _cors_raw.split(",") if o.strip()] if _cors_raw else []
+_is_prod = bool(
+    os.environ.get("RENDER")
+    or (os.environ.get("ENV") or "").strip().lower() in ("production", "prod")
+)
+_DEFAULT_PROD_ORIGINS = [
+    "https://pedra-azul.onrender.com",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+]
+if not _cors_origins or _cors_origins == ["*"]:
+    if _is_prod:
+        _cors_origins = list(_DEFAULT_PROD_ORIGINS)
+        logger.info("CORS: production allowlist (CORS_ORIGINS was * or empty)")
+    else:
+        _cors_origins = ["*"]
 _cors_wildcard = _cors_origins == ["*"]
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=not _cors_wildcard,
     allow_origins=_cors_origins,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-Internal-Token", "Accept", "Origin"],
+    allow_headers=["Authorization", "Content-Type", "X-Internal-Token", "Accept", "Origin", "X-Forwarded-For"],
 )
