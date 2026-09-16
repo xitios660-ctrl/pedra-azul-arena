@@ -248,8 +248,12 @@ export function createBot(deps) {
           const priceLine = wePrice
             ? `Valor: *R$ ${s.price_per_hour}/hora* (sáb/dom *R$ ${wePrice}/hora*).`
             : `Valor: *R$ ${s.price_per_hour}/hora*.`;
+          const multi =
+            s.allow_multi_hour !== false && Number(s.max_hours_per_booking || 2) > 1
+              ? ` No site dá para reservar *1 ou 2 horas* consecutivas quando o próximo horário estiver livre.`
+              : "";
           await reply(
-            `⏱️ Cada jogo/reserva dura *${note}* na *${s.court_name}*.\n` +
+            `⏱️ Cada jogo/reserva dura *${note}* na *${s.court_name}*.${multi}\n` +
               `${priceLine} Horário: ${hoursLine}. Quer ver vagas? Ex.: "sábado à noite".`
           );
           return;

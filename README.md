@@ -73,7 +73,7 @@ SSE: `GET /api/admin/whatsapp/events` (JWT/cookie admin).
 
 ## Admin — Configurações
 
-Aba **Configurações** edita o singleton `site_settings` (WhatsApp E.164, PIX, endereço/Maps, preço/hora, abertura/fechamento, **dias abertos** `open_days`, duração do slot, estacionamento, nome da quadra).
+Aba **Configurações** edita o singleton `site_settings` (WhatsApp E.164, PIX, endereço/Maps, preço/hora, abertura/fechamento, **dias abertos** `open_days`, duração do slot, **multi-hora** `allow_multi_hour` / `max_hours_per_booking`, estacionamento, nome da quadra).
 
 - Público: `GET /api/site-settings`
 - Admin JWT: `GET|PUT /api/admin/site-settings`
@@ -216,3 +216,10 @@ Prod smoke: `GET /api/health`, `/api/courts`, `/api/site-settings`, WhatsApp `AG
 - Admin UI: “Restaurando sessão…” durante restore (sem QR grande prematuro).
 - Self-ping leve Python → sidecar `/health` a cada `WA_SELF_PING_MINUTES` (default 5, localhost). **Não** evita sleep Free; plano pago para WA 24/7.
 - Persistência Mongo (`whatsapp_auth`) inalterada em força; sem spam de QR; uma quadra.
+
+## Cycle 24 notes
+- Multi-hora: `allow_multi_hour` (default true) + `max_hours_per_booking` (1–3, default 2).
+- Disponibilidade: slots livres incluem `max_consecutive`; UI oferece “1 hora” / “2 horas”.
+- Uma reserva com `duration_minutes` / `slot_keys` + collection `slot_locks` (unique `slot_key`) bloqueia todas as horas cobertas (409 em conflito).
+- Preço = horas × preço horário (fim de semana inclusive). Cancel/expire/reschedule liberam todos os locks.
+- Admin calendário mostra continuação (`↳`) e duração; criar reserva admin aceita `duration_hours`.

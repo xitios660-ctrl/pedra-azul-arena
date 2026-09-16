@@ -1852,3 +1852,170 @@ def test_admin_customers_lookup(admin_session, s):
     finally:
         for bid in bids:
             admin_session.post(f"{API}/admin/bookings/{bid}/cancel", timeout=10)
+
+
+
+def test_multi_hour_booking_locks_both_slots(admin_session, s):
+    """Cycle 24: 2h booking locks start+next; second book on second hour → 409; cancel frees both; 1h ok."""
+    # Find a weekday far ahead with two consecutive free slots
+    day = None
+    start = None
+    next_t = None
+    for day_off in range(50, 80):
+        cand = (datetime.now(TZ) + timedelta(days=day_off)).strftime("%Y-%m-%d")
+        avail = s.get(
+            f"{API}/courts/availability",
+            params={"court_id": "court-1", "date": cand},
+            timeout=15,
+        )
+        assert avail.status_code == 200, avail.text
+        data = avail.json()
+        if data.get("day_open") is False:
+            continue
+        slots = data.get("slots") or []
+        for i, sl in enumerate(slots[:-1]):
+            if sl.get("status") != "available":
+                continue
+            nxt = slots[i + 1]
+            if nxt.get("status") != "available":
+                continue
+            if int(sl.get("max_consecutive") or 0) < 2:
+                continue
+            day, start, next_t = cand, sl["time"], nxt["time"]
+            break
+        if day:
+            break
+    assert day and start and next_t, "no free consecutive pair found for multi-hour test"
+
+    # Settings expose multi-hour flags
+    pub = s.get(f"{API}/site-settings", timeout=10)
+    assert pub.status_code == 200, pub.text
+    assert "allow_multi_hour" in pub.json()
+    assert "max_hours_per_booking" in pub.json()
+
+    # Create 2h via admin
+    r = admin_session.post(
+        f"{API}/admin/calendar/bookings",
+        json={
+            "date": day,
+            "start_time": start,
+            "customer_name": "Multi Hora Cycle24",
+            "whatsapp": "5511999001122",
+            "duration_hours": 2,
+        },
+        timeout=15,
+    )
+    assert r.status_code in (200, 201), r.text
+    booking = r.json()
+    bid = booking["id"]
+    assert booking.get("duration_minutes") == 120
+    assert booking.get("slot_key", "").endswith(start)
+    assert isinstance(booking.get("slot_keys"), list) and len(booking["slot_keys"]) == 2
+
+    try:
+        # Availability: both hours reserved
+        avail2 = s.get(
+            f"{API}/courts/availability",
+            params={"court_id": "court-1", "date": day},
+            timeout=15,
+        )
+        assert avail2.status_code == 200
+        by_t = {x["time"]: x for x in avail2.json()["slots"]}
+        assert by_t[start]["status"] == "reserved"
+        assert by_t[next_t]["status"] == "reserved"
+        assert by_t[start].get("duration_minutes") == 120
+        assert by_t[next_t].get("is_continuation") is True
+
+        # Second book on second hour → 409
+        clash = admin_session.post(
+            f"{API}/admin/calendar/bookings",
+            json={
+                "date": day,
+                "start_time": next_t,
+                "customer_name": "Clash Cycle24",
+                "whatsapp": "5511999003344",
+                "duration_hours": 1,
+            },
+            timeout=15,
+        )
+        assert clash.status_code == 409, clash.text
+
+        # Also public create on second hour → 409
+        pub_clash = s.post(
+            f"{API}/bookings",
+            json={
+                "court_id": "court-1",
+                "date": day,
+                "start_time": next_t,
+                "duration_hours": 1,
+                "cpf": SMOKE_CPF,
+                "customer_name": "Public Clash",
+                "whatsapp": "11988887777",
+                "your_team_name": "A",
+                "opponent_team_name": "B",
+            },
+            headers=_xff(),
+            timeout=15,
+        )
+        assert pub_clash.status_code == 409, pub_clash.text
+
+        # Cancel frees both
+        cancel = admin_session.post(f"{API}/admin/bookings/{bid}/cancel", timeout=15)
+        assert cancel.status_code == 200, cancel.text
+
+        avail3 = s.get(
+            f"{API}/courts/availability",
+            params={"court_id": "court-1", "date": day},
+            timeout=15,
+        )
+        by_t3 = {x["time"]: x for x in avail3.json()["slots"]}
+        assert by_t3[start]["status"] == "available"
+        assert by_t3[next_t]["status"] == "available"
+
+        # 1h still works
+        one = admin_session.post(
+            f"{API}/admin/calendar/bookings",
+            json={
+                "date": day,
+                "start_time": start,
+                "customer_name": "Uma Hora Cycle24",
+                "whatsapp": "5511999005566",
+                "duration_hours": 1,
+            },
+            timeout=15,
+        )
+        assert one.status_code in (200, 201), one.text
+        one_b = one.json()
+        assert one_b.get("duration_minutes") == 60
+        admin_session.post(f"{API}/admin/bookings/{one_b['id']}/cancel", timeout=10)
+    finally:
+        admin_session.post(f"{API}/admin/bookings/{bid}/cancel", timeout=10)
+
+
+def test_multi_hour_resolve_duration_unit():
+    """Cycle 24: unit — resolve_booking_duration caps and validates."""
+    import sys
+    from pathlib import Path as P
+    root = P(__file__).resolve().parents[1]
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    import booking_service as bsvc
+
+    settings = {
+        "slot_duration_minutes": 60,
+        "allow_multi_hour": True,
+        "max_hours_per_booking": 2,
+    }
+    assert bsvc.resolve_booking_duration(settings, duration_hours=2) == 120
+    assert bsvc.resolve_booking_duration(settings, duration_minutes=60) == 60
+    try:
+        bsvc.resolve_booking_duration(settings, duration_hours=3)
+        assert False, "expected ValueError for 3h when max=2"
+    except ValueError:
+        pass
+    off = {**settings, "allow_multi_hour": False}
+    try:
+        bsvc.resolve_booking_duration(off, duration_hours=2)
+        assert False, "expected ValueError when multi disabled"
+    except ValueError:
+        pass

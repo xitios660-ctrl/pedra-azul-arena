@@ -6,7 +6,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
-from pymongo.errors import DuplicateKeyError
+from pymongo.errors import BulkWriteError, DuplicateKeyError
 
 import site_settings as sset
 
@@ -36,6 +36,179 @@ def now_local() -> datetime:
 
 def slot_key(court_id: str, date: str, start_time: str) -> str:
     return f"{court_id}|{date}|{start_time}"
+
+
+def end_time_for(start_time: str, duration_minutes: int = 60) -> str:
+    """HH:MM end exclusive of display (start + duration)."""
+    parts = (start_time or "00:00").split(":")
+    h = int(parts[0])
+    m = int(parts[1]) if len(parts) > 1 else 0
+    total = h * 60 + m + int(duration_minutes or 60)
+    eh, em = divmod(total, 60)
+    eh = eh % 24
+    return f"{eh:02d}:{em:02d}"
+
+
+def add_minutes_to_time(start_time: str, minutes: int) -> str:
+    parts = (start_time or "00:00").split(":")
+    h = int(parts[0])
+    m = int(parts[1]) if len(parts) > 1 else 0
+    total = h * 60 + m + int(minutes)
+    eh, em = divmod(total, 60)
+    return f"{eh:02d}:{em:02d}"
+
+
+def covered_start_times(
+    start_time: str,
+    duration_minutes: int,
+    time_slots: list[str],
+    *,
+    slot_step: int = 60,
+) -> list[str]:
+    """Consecutive bookable start times covered by a booking of duration_minutes."""
+    step = int(slot_step or 60)
+    if step <= 0:
+        step = 60
+    hours = max(1, int(duration_minutes or step) // step)
+    if start_time not in time_slots:
+        raise ValueError("Horário inválido")
+    idx = time_slots.index(start_time)
+    out: list[str] = []
+    for i in range(hours):
+        if idx + i >= len(time_slots):
+            raise ValueError("Duração ultrapassa o horário de funcionamento")
+        t = time_slots[idx + i]
+        # Ensure adjacency for non-hourly grids
+        if i > 0:
+            expected = add_minutes_to_time(out[-1], step)
+            if t != expected:
+                raise ValueError("Horários consecutivos indisponíveis para esta duração")
+        out.append(t)
+    return out
+
+
+def booking_covered_times(booking: dict[str, Any], time_slots: Optional[list[str]] = None, slot_step: int = 60) -> list[str]:
+    """Times covered by an existing booking (slot_keys or duration expansion)."""
+    keys = booking.get("slot_keys")
+    if isinstance(keys, list) and keys:
+        # slot_keys are full keys court|date|HH:MM — extract times if needed
+        times = []
+        for k in keys:
+            if isinstance(k, str) and "|" in k:
+                times.append(k.split("|")[-1])
+            elif isinstance(k, str):
+                times.append(k)
+        if times:
+            return times
+    start = booking.get("start_time")
+    if not start:
+        return []
+    dur = int(booking.get("duration_minutes") or slot_step or 60)
+    if time_slots:
+        try:
+            return covered_start_times(start, dur, time_slots, slot_step=slot_step)
+        except ValueError:
+            pass
+    # Fallback: expand by step without validating open hours
+    step = int(slot_step or 60)
+    hours = max(1, dur // step)
+    return [add_minutes_to_time(start, step * i) for i in range(hours)]
+
+
+def resolve_booking_duration(
+    settings: dict[str, Any],
+    *,
+    duration_minutes: Optional[int] = None,
+    duration_hours: Optional[int] = None,
+) -> int:
+    """Return duration in minutes (multiples of slot step). Caps via max_hours_per_booking."""
+    step = int(settings.get("slot_duration_minutes") or 60)
+    if step <= 0 or step % 30 != 0:
+        step = 60
+    allow = bool(settings.get("allow_multi_hour", True))
+    max_h = int(settings.get("max_hours_per_booking") if settings.get("max_hours_per_booking") is not None else 2)
+    max_h = max(1, min(3, max_h))
+
+    if duration_hours is not None:
+        try:
+            hours = int(duration_hours)
+        except (TypeError, ValueError) as e:
+            raise ValueError("Duração inválida") from e
+        dur = hours * step
+    elif duration_minutes is not None:
+        try:
+            dur = int(duration_minutes)
+        except (TypeError, ValueError) as e:
+            raise ValueError("Duração inválida") from e
+    else:
+        dur = step
+
+    if dur < step or dur % step != 0:
+        raise ValueError("Duração inválida")
+    hours = dur // step
+    if hours > 1 and not allow:
+        raise ValueError("Reserva de múltiplas horas está desativada")
+    if hours > max_h:
+        raise ValueError(f"Máximo de {max_h} hora(s) por reserva")
+    return dur
+
+
+def max_hours_cap(settings: dict[str, Any]) -> int:
+    if not bool(settings.get("allow_multi_hour", True)):
+        return 1
+    max_h = int(settings.get("max_hours_per_booking") if settings.get("max_hours_per_booking") is not None else 2)
+    return max(1, min(3, max_h))
+
+
+async def release_slot_locks(db, booking_id: str) -> int:
+    """Delete all slot_locks for a booking (cancel / expire / reschedule)."""
+    if not booking_id:
+        return 0
+    res = await db.slot_locks.delete_many({"booking_id": booking_id})
+    return int(res.deleted_count)
+
+
+async def acquire_slot_locks(
+    db,
+    *,
+    booking_id: str,
+    court_id: str,
+    date: str,
+    times: list[str],
+) -> list[str]:
+    """Insert unique slot_locks for each start time. Raises DuplicateKeyError on conflict."""
+    docs = []
+    keys = []
+    for t in times:
+        sk = slot_key(court_id, date, t)
+        keys.append(sk)
+        docs.append(
+            {
+                "slot_key": sk,
+                "booking_id": booking_id,
+                "court_id": court_id,
+                "date": date,
+                "start_time": t,
+                "created_at": now_iso(),
+            }
+        )
+    try:
+        if docs:
+            await db.slot_locks.insert_many(docs, ordered=True)
+    except DuplicateKeyError:
+        await release_slot_locks(db, booking_id)
+        raise
+    except BulkWriteError as e:
+        await release_slot_locks(db, booking_id)
+        # insert_many surfaces unique conflicts as BulkWriteError (code 11000)
+        errs = (e.details or {}).get("writeErrors") or []
+        if any(int(x.get("code") or 0) == 11000 for x in errs):
+            raise DuplicateKeyError(str(e)) from e
+        raise
+    except Exception:
+        await release_slot_locks(db, booking_id)
+        raise
+    return keys
 
 
 def is_past_slot(date: str, start_time: str, now: Optional[datetime] = None) -> bool:
@@ -106,7 +279,33 @@ async def build_availability(
         },
         {"_id": 0},
     ).to_list(500)
-    taken = {b["start_time"]: b for b in bookings}
+    step = int(runtime["settings"].get("slot_duration_minutes") or 60)
+    taken: dict[str, Any] = {}
+    for b in bookings:
+        for t in booking_covered_times(b, time_slots, slot_step=step):
+            # Prefer the booking whose start matches (primary) when overlapping legacy data
+            if t not in taken or taken[t].get("start_time") != t:
+                if t not in taken or b.get("start_time") == t:
+                    taken[t] = b
+                elif taken[t].get("start_time") != t:
+                    taken[t] = b
+    # slot_locks as secondary source (covers races / multi-hour secondary hours)
+    try:
+        lock_rows = await db.slot_locks.find(
+            {"court_id": court_id, "date": date},
+            {"_id": 0, "start_time": 1, "booking_id": 1},
+        ).to_list(200)
+    except Exception:
+        lock_rows = []
+    booking_by_id = {b["id"]: b for b in bookings if b.get("id")}
+    for lr in lock_rows:
+        t = lr.get("start_time")
+        if not t or t in taken:
+            continue
+        bid = lr.get("booking_id")
+        b = booking_by_id.get(bid)
+        if b:
+            taken[t] = b
     blocked = await get_blocked_times(db, court_id, date)
     slots = []
     n = now_local()
@@ -136,6 +335,7 @@ async def build_availability(
             if status == "reserved"
             else ("blocked" if status == "blocked" else ("free" if status == "available" else "unavailable"))
         )
+        is_continuation = bool(b and b.get("start_time") and b.get("start_time") != t)
         slots.append(
             {
                 "time": t,
@@ -146,9 +346,29 @@ async def build_availability(
                 "customer_name": b.get("customer_name") if b else None,
                 "checked_in_at": b.get("checked_in_at") if b else None,
                 "checked_in": bool(b.get("checked_in_at")) if b else False,
+                "duration_minutes": int(b.get("duration_minutes") or step) if b else None,
+                "is_continuation": is_continuation,
                 "price": price,
             }
         )
+    # max_consecutive for free slots (UI 1h/2h chips)
+    cap = max_hours_cap(runtime["settings"])
+    for i, slot in enumerate(slots):
+        if slot["status"] != "available":
+            slot["max_consecutive"] = 0
+            continue
+        n_free = 0
+        for j in range(i, len(slots)):
+            if slots[j]["status"] != "available":
+                break
+            if j > i:
+                expected = add_minutes_to_time(slots[j - 1]["time"], step)
+                if slots[j]["time"] != expected:
+                    break
+            n_free += 1
+            if n_free >= cap:
+                break
+        slot["max_consecutive"] = n_free
     return {"court": court, "date": date, "slots": slots, "day_open": day_open, "settings": {
         "open_hour": runtime["settings"]["open_hour"],
         "close_hour": runtime["settings"]["close_hour"],
@@ -161,6 +381,8 @@ async def build_availability(
         "price_per_hour": float(runtime["settings"]["price_per_hour"]),
         "price_weekend": runtime["settings"].get("price_weekend"),
         "effective_price_per_hour": price,
+        "allow_multi_hour": bool(runtime["settings"].get("allow_multi_hour", True)),
+        "max_hours_per_booking": max_hours_cap(runtime["settings"]),
     }}
 
 
@@ -201,18 +423,29 @@ async def create_booking_atomic(
     your_team_crest: Optional[str] = None,
     opponent_team_crest: Optional[str] = None,
     duration_minutes: Optional[int] = None,
+    duration_hours: Optional[int] = None,
     source: str = "web",
     status: str = "pending",
     payment_status: Optional[str] = None,
 ) -> dict[str, Any]:
-    """Insert booking with unique slot_key. Raises DuplicateKeyError or ValueError."""
+    """Insert one booking spanning N consecutive slots + unique slot_locks.
+
+    Primary bookings.slot_key = start hour (partial unique index).
+    All covered hours also locked in slot_locks (unique slot_key) so 2h
+    blocks the second hour. Raises DuplicateKeyError or ValueError.
+    """
     if court_id != COURT_ID:
         raise ValueError("Quadra não encontrada")
     runtime = await get_runtime(db, date)
     settings = runtime["settings"]
     court = runtime["court"]
     time_slots = runtime["time_slots"]
-    dur = int(duration_minutes or settings.get("slot_duration_minutes") or 60)
+    step = int(settings.get("slot_duration_minutes") or 60)
+    dur = resolve_booking_duration(
+        settings,
+        duration_minutes=duration_minutes,
+        duration_hours=duration_hours,
+    )
     if start_time not in time_slots:
         raise ValueError("Horário inválido")
     try:
@@ -225,24 +458,49 @@ async def create_booking_atomic(
     if not sset.is_open_weekday(date, settings):
         raise ValueError("Quadra fechada neste dia da semana")
 
+    covered = covered_start_times(start_time, dur, time_slots, slot_step=step)
     blocked = await get_blocked_times(db, court_id, date)
-    if start_time in blocked:
-        raise ValueError("Horário bloqueado")
+    for t in covered:
+        if t in blocked:
+            raise ValueError("Horário bloqueado")
+        if is_past_slot(date, t):
+            raise ValueError("Horário indisponível")
 
-    total = float(court["price_per_hour"]) * (dur / 60)
+    # Conflict with active bookings (incl. multi-hour expansion / legacy without locks)
+    reserved = await _reserved_times(db, court_id, date)
+    for t in covered:
+        if t in reserved:
+            raise DuplicateKeyError("slot taken")
+
+    # Price = hours × applicable hourly (weekend-aware via get_runtime / wall-clock)
+    bill_hours = dur / 60.0
+    total = float(court["price_per_hour"]) * bill_hours
     deposit = round(total * DEPOSIT_RATE, 2)
     pay_status = payment_status or ("paid" if status == "confirmed" and source == "whatsapp" else "pending")
 
     pix_bits = _pix_payload(settings, deposit) if source == "web" else {
-        "method": "whatsapp",
+        "method": "whatsapp" if source == "whatsapp" else ("admin" if source == "admin" else "other"),
         "qr_code": None,
         "pix_copy_paste": None,
         "pix_key": settings.get("pix_key"),
         "amount": deposit,
     }
 
+    booking_id = str(uuid.uuid4())
+    primary_sk = slot_key(court_id, date, start_time)
+    end_t = end_time_for(start_time, dur)
+
+    # Lock all covered slots first (unique) — then insert booking
+    slot_keys = await acquire_slot_locks(
+        db,
+        booking_id=booking_id,
+        court_id=court_id,
+        date=date,
+        times=covered,
+    )
+
     booking = {
-        "id": str(uuid.uuid4()),
+        "id": booking_id,
         "cpf": cpf,
         "cpf_masked": cpf_masked,
         "customer_name": customer_name.strip(),
@@ -251,7 +509,9 @@ async def create_booking_atomic(
         "court_name": court["name"],
         "date": date,
         "start_time": start_time,
+        "end_time": end_t,
         "duration_minutes": dur,
+        "duration_hours": int(round(bill_hours)) if abs(bill_hours - round(bill_hours)) < 1e-9 else bill_hours,
         "your_team_name": your_team_name,
         "opponent_team_name": opponent_team_name,
         "your_team_crest": your_team_crest,
@@ -281,11 +541,16 @@ async def create_booking_atomic(
         "admin_notes": "",
         "checked_in_at": None,
         "created_at": now_iso(),
-        "slot_key": slot_key(court_id, date, start_time),
+        "slot_key": primary_sk,
+        "slot_keys": slot_keys,
     }
     try:
         await db.bookings.insert_one(booking)
     except DuplicateKeyError:
+        await release_slot_locks(db, booking_id)
+        raise
+    except Exception:
+        await release_slot_locks(db, booking_id)
         raise
     booking.pop("_id", None)
     return booking
@@ -322,6 +587,11 @@ async def expire_stale_pending(db) -> int:
         {"id": {"$in": expired_ids}, "status": "pending"},
         {"$set": {"status": "expired", "payment.status": "expired"}},
     )
+    for bid in expired_ids:
+        try:
+            await release_slot_locks(db, bid)
+        except Exception:
+            pass
     return result.modified_count
 
 
@@ -370,9 +640,13 @@ async def _reserved_times(db, court_id: str, date: str) -> set[str]:
             "date": date,
             "status": {"$in": ACTIVE_STATUSES},
         },
-        {"_id": 0, "start_time": 1},
+        {"_id": 0, "start_time": 1, "duration_minutes": 1, "slot_keys": 1},
     ).to_list(500)
-    return {r["start_time"] for r in rows if r.get("start_time")}
+    out: set[str] = set()
+    for r in rows:
+        for t in booking_covered_times(r, slot_step=60):
+            out.add(t)
+    return out
 
 
 async def block_day(
@@ -536,19 +810,68 @@ async def reschedule_booking_atomic(
     if old_date == new_date and old_time == new_start_time:
         raise ValueError("Já está neste horário")
 
-    blocked = await get_blocked_times(db, court_id, new_date)
-    if new_start_time in blocked:
-        raise ValueError("Horário bloqueado")
+    step = int(settings.get("slot_duration_minutes") or 60)
+    dur = int(existing.get("duration_minutes") or step or 60)
+    # Clamp duration to current multi-hour policy (keep same wall duration when allowed)
+    try:
+        dur = resolve_booking_duration(settings, duration_minutes=dur)
+    except ValueError:
+        # If policy tightened, fall back to single slot
+        dur = step
 
+    covered = covered_start_times(new_start_time, dur, time_slots, slot_step=step)
+    blocked = await get_blocked_times(db, court_id, new_date)
+    for t in covered:
+        if t in blocked:
+            raise ValueError("Horário bloqueado")
+        if is_past_slot(new_date, t):
+            raise ValueError("Horário indisponível")
+
+    booking_id = existing["id"]
     new_sk = slot_key(court_id, new_date, new_start_time)
-    dur = int(existing.get("duration_minutes") or settings.get("slot_duration_minutes") or 60)
+    new_keys = [slot_key(court_id, new_date, t) for t in covered]
     new_price = float(sset.price_for_date(settings, new_date))
-    new_total = new_price * (dur / 60)
+    new_total = new_price * (dur / 60.0)
     new_deposit = round(new_total * DEPOSIT_RATE, 2)
+    end_t = end_time_for(new_start_time, dur)
+
+    # Free old locks first, then acquire new — if acquire fails, re-lock old (best effort)
+    try:
+        old_runtime = await get_runtime(db, old_date) if old_date else runtime
+        old_times = booking_covered_times(existing, old_runtime["time_slots"], slot_step=step)
+    except Exception:
+        old_times = booking_covered_times(existing, slot_step=step)
+
+    await release_slot_locks(db, booking_id)
+    try:
+        await acquire_slot_locks(
+            db,
+            booking_id=booking_id,
+            court_id=court_id,
+            date=new_date,
+            times=covered,
+        )
+    except DuplicateKeyError:
+        # Restore previous locks so cancel/availability stay consistent
+        try:
+            await acquire_slot_locks(
+                db,
+                booking_id=booking_id,
+                court_id=court_id,
+                date=old_date,
+                times=old_times,
+            )
+        except Exception:
+            pass
+        raise
+
     update_fields = {
         "date": new_date,
         "start_time": new_start_time,
+        "end_time": end_t,
+        "duration_minutes": dur,
         "slot_key": new_sk,
+        "slot_keys": new_keys,
         "total": new_total,
         "deposit": new_deposit,
         "rescheduled_at": now_iso(),
@@ -570,7 +893,29 @@ async def reschedule_booking_atomic(
             projection={"_id": 0},
         )
     except DuplicateKeyError:
+        await release_slot_locks(db, booking_id)
+        try:
+            await acquire_slot_locks(
+                db,
+                booking_id=booking_id,
+                court_id=court_id,
+                date=old_date,
+                times=old_times,
+            )
+        except Exception:
+            pass
         raise
     if not updated:
+        await release_slot_locks(db, booking_id)
+        try:
+            await acquire_slot_locks(
+                db,
+                booking_id=booking_id,
+                court_id=court_id,
+                date=old_date,
+                times=old_times,
+            )
+        except Exception:
+            pass
         raise ValueError("Reserva não encontrada ou inativa")
     return updated

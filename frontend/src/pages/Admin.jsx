@@ -1364,6 +1364,8 @@ function SiteSettingsAdmin() {
           structure_blurb: data.structure_blurb || "",
           amenities: Array.isArray(data.amenities) ? data.amenities : [],
           amenities_text: Array.isArray(data.amenities) ? data.amenities.join("\n") : "",
+          allow_multi_hour: data.allow_multi_hour !== false,
+          max_hours_per_booking: data.max_hours_per_booking ?? 2,
         });
       } catch (e) {
         setErr(e.response?.data?.detail || e.message);
@@ -1396,6 +1398,8 @@ function SiteSettingsAdmin() {
         weekend_close_hour: useWeekend ? Number(form.weekend_close_hour) : null,
         open_days: Array.isArray(form.open_days) ? form.open_days.map(Number).sort((a, b) => a - b) : [0, 1, 2, 3, 4, 5, 6],
         slot_duration_minutes: Number(form.slot_duration_minutes),
+        allow_multi_hour: form.allow_multi_hour !== false,
+        max_hours_per_booking: Math.max(1, Math.min(3, Number(form.max_hours_per_booking ?? 2) || 2)),
         cancel_min_hours: Number(form.cancel_min_hours ?? 2),
         reminder_hours_before: Number(form.reminder_hours_before ?? 3),
         admin_whatsapp_e164: String(form.admin_whatsapp_e164 || "").replace(/\D/g, ""),
@@ -1475,10 +1479,20 @@ function SiteSettingsAdmin() {
         {field("Horário semana — abre (0–23)", "open_hour", { type: "number", min: 0, max: 23 })}
         {field("Horário semana — fecha último slot (0–23)", "close_hour", { type: "number", min: 0, max: 23 })}
         {field("Duração do slot (min)", "slot_duration_minutes", { type: "number", min: 30, max: 180, step: 30 })}
+        {field("Máx. horas por reserva (1–3)", "max_hours_per_booking", { type: "number", min: 1, max: 3, step: 1 })}
         {field("Cancelamento cliente (horas antes)", "cancel_min_hours", { type: "number", min: 0, max: 168, step: 1 })}
         {field("Lembrete WA (horas antes)", "reminder_hours_before", { type: "number", min: 1, max: 48, step: 1 })}
         {field("Nome da quadra", "court_name")}
       </div>
+      <label className="flex items-center gap-3 min-h-[44px] cursor-pointer" data-testid="admin-allow-multi-hour">
+        <input
+          type="checkbox"
+          className="w-5 h-5 accent-[var(--brand)]"
+          checked={form.allow_multi_hour !== false}
+          onChange={(e) => set("allow_multi_hour", e.target.checked)}
+        />
+        <span className="text-sm text-white/80">Permitir reserva de 1–2 horas consecutivas (multi-hora)</span>
+      </label>
       <div className="border border-white/10 rounded-lg p-4 space-y-3 bg-black/20" data-testid="admin-weekend-hours">
         <div className="text-[10px] uppercase tracking-[0.25em] text-[var(--brand)]">Horário fim de semana (opcional)</div>
         <p className="text-white/55 text-xs">

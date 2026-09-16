@@ -178,7 +178,8 @@ class BookingCreate(BaseModel):
     court_id: str
     date: str
     start_time: str
-    duration_minutes: int = 60
+    duration_minutes: Optional[int] = None
+    duration_hours: Optional[int] = None
     cpf: str
     customer_name: str = Field(min_length=2, max_length=80)
     whatsapp: str = Field(min_length=8, max_length=20)
@@ -477,6 +478,7 @@ async def create_booking(payload: BookingCreate, request: Request):
             your_team_crest=payload.your_team_crest,
             opponent_team_crest=payload.opponent_team_crest,
             duration_minutes=payload.duration_minutes,
+            duration_hours=payload.duration_hours,
             source="web",
             status="pending",
         )
@@ -565,6 +567,7 @@ async def cancel_booking(booking_id: str, cpf: str):
     )
     if res.modified_count != 1:
         raise HTTPException(status_code=409, detail="Não foi possível cancelar (já alterada)")
+    await bsvc.release_slot_locks(db, booking_id)
     ops_metrics.note_booking_cancel("customer")
     await daily_metrics.note_cancelled(db)
     wa_ok = await _notify_cancel_wa(b, source="customer")
@@ -1193,8 +1196,10 @@ async def admin_cancel_booking(booking_id: str, admin: dict = Depends(require_ad
     if res.modified_count != 1:
         # already cancelled/expired — still ok for idempotent admin UX
         if b.get("status") in ("cancelled", "expired"):
+            await bsvc.release_slot_locks(db, booking_id)
             return {"ok": True, "status": b["status"], "whatsapp_notified": False}
         raise HTTPException(status_code=409, detail="Não foi possível cancelar")
+    await bsvc.release_slot_locks(db, booking_id)
     ops_metrics.note_booking_cancel("admin")
     await daily_metrics.note_cancelled(db)
     wa_ok = await _notify_cancel_wa(b, source="admin")
@@ -1413,6 +1418,7 @@ async def admin_reject_booking(booking_id: str, admin: dict = Depends(require_ad
             "payment.rejected_by": admin.get("email"),
         }},
     )
+    await bsvc.release_slot_locks(db, booking_id)
     ops_metrics.note_booking_cancel("admin_reject")
     await daily_metrics.note_cancelled(db)
     logger.info("event=booking_reject source=admin booking_id=%s", booking_id[:8])
@@ -1463,7 +1469,8 @@ class WaBookingIn(BaseModel):
     customer_name: str = Field(min_length=2, max_length=80)
     date: str
     start_time: str
-    duration_minutes: int = 60
+    duration_minutes: Optional[int] = None
+    duration_hours: Optional[int] = None
 
 
 class WaCancelIn(BaseModel):
@@ -1498,6 +1505,8 @@ class AdminBookingIn(BaseModel):
     customer_name: str = Field(min_length=2, max_length=80)
     whatsapp: str = Field(min_length=8, max_length=20)
     status: Literal["confirmed", "pending"] = "confirmed"
+    duration_minutes: Optional[int] = None
+    duration_hours: Optional[int] = None
 
 
 @api.get("/internal/whatsapp/availability")
@@ -1527,6 +1536,7 @@ async def internal_wa_create_booking(request: Request, payload: WaBookingIn):
             your_team_name="WhatsApp",
             opponent_team_name="A definir",
             duration_minutes=payload.duration_minutes,
+            duration_hours=payload.duration_hours,
             source="whatsapp",
             status="confirmed",
             payment_status="pending",
@@ -1594,6 +1604,7 @@ async def internal_wa_cancel(request: Request, payload: WaCancelIn):
     )
     if res.modified_count != 1:
         return {"cancelled": False, "message": "Nenhuma reserva ativa neste número"}
+    await bsvc.release_slot_locks(db, b["id"])
     ops_metrics.note_booking_cancel("whatsapp")
     await daily_metrics.note_cancelled(db)
     logger.info(
@@ -1919,6 +1930,8 @@ async def admin_calendar_create_booking(payload: AdminBookingIn, admin: dict = D
             cpf_masked="Admin",
             your_team_name="Admin",
             opponent_team_name="A definir",
+            duration_minutes=payload.duration_minutes,
+            duration_hours=payload.duration_hours,
             source="admin",
             status=payload.status,
             payment_status="paid" if payload.status == "confirmed" else "pending",
@@ -2109,6 +2122,13 @@ async def startup():
         await db.blocked_slots.create_index([("court_id", 1), ("date", 1)])
     except Exception as e:
         logger.warning("blocked_slots index: %s", e)
+    # Cycle 24: unique locks per hour so multi-hour bookings block every covered slot
+    try:
+        await db.slot_locks.create_index([("slot_key", 1)], unique=True, name="uniq_slot_lock")
+        await db.slot_locks.create_index([("booking_id", 1)], name="slot_locks_booking")
+        await db.slot_locks.create_index([("court_id", 1), ("date", 1)], name="slot_locks_day")
+    except Exception as e:
+        logger.warning("slot_locks index: %s", e)
     try:
         await db.bookings.update_many(
             {"reminder_sent": {"$exists": False}},

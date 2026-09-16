@@ -87,7 +87,8 @@ export default function Booking() {
   const [availError, setAvailError] = useState("");
 
   const [pickedSlot, setPickedSlot] = useState(null);
-  // step: idle | identify | matchmaking | pix | awaiting | done
+  const [durationHours, setDurationHours] = useState(1);
+  // step: idle | duration | identify | matchmaking | pix | awaiting | done
   const [step, setStep] = useState("idle");
 
   const [cpf, setCpf] = useState("");
@@ -146,9 +147,28 @@ export default function Booking() {
   const pickSlot = (slot) => {
     if (!isSlotAvailable(slot)) return;
     setPickedSlot(slot);
-    setStep("identify");
+    setDurationHours(1);
+    const allowMulti = settings?.allow_multi_hour !== false && (availability?.settings?.allow_multi_hour !== false);
+    const maxH = Math.min(
+      3,
+      Number(availability?.settings?.max_hours_per_booking || settings?.max_hours_per_booking || 2) || 2,
+      Number(slot.max_consecutive || 1) || 1,
+    );
+    if (allowMulti && maxH > 1) {
+      setStep("duration");
+    } else {
+      setStep("identify");
+    }
     setErr("");
   };
+
+  const maxHoursForPicked = (() => {
+    if (!pickedSlot) return 1;
+    const allowMulti = settings?.allow_multi_hour !== false && (availability?.settings?.allow_multi_hour !== false);
+    if (!allowMulti) return 1;
+    const cap = Math.min(3, Number(availability?.settings?.max_hours_per_booking || settings?.max_hours_per_booking || 2) || 2);
+    return Math.min(cap, Number(pickedSlot.max_consecutive || 1) || 1);
+  })();
 
   const onIdentifyContinue = (e) => {
     e?.preventDefault();
@@ -184,7 +204,8 @@ export default function Booking() {
         court_id: selectedCourt.id,
         date,
         start_time: pickedSlot.time,
-        duration_minutes: settings?.slot_duration_minutes || 60,
+        duration_hours: durationHours || 1,
+        duration_minutes: (durationHours || 1) * (settings?.slot_duration_minutes || 60),
         cpf,
         customer_name: name.trim(),
         whatsapp,
@@ -230,7 +251,7 @@ export default function Booking() {
   };
 
   const closeAll = () => {
-    setStep("idle"); setPickedSlot(null); setBooking(null); setErr("");
+    setStep("idle"); setPickedSlot(null); setDurationHours(1); setBooking(null); setErr("");
     setCpf(""); setName(""); setWhatsapp("");
     setYourTeam(""); setOppTeam(""); setYourCrest("⚽"); setOppCrest("🔥");
   };
@@ -426,7 +447,7 @@ export default function Booking() {
               <div className="mt-4 pt-3 border-t border-white/10 space-y-1">
                 <div>Calção PIX = 30% · restante na quadra.</div>
                 <div>Após pagar: envie comprovante → admin confirma → WhatsApp.</div>
-                <div>1 horário = 1 hora na Quadra Pedra Azul.</div>
+                <div>Escolha 1 ou 2 horas consecutivas quando o próximo horário estiver livre.</div>
               </div>
             </div>
           </div>
@@ -544,7 +565,9 @@ export default function Booking() {
                     </div>
                     <div className="text-right relative z-[1]">
                       <div className="font-display text-[var(--brand)] text-lg">{fmtBRL(s.price)}</div>
-                      <div className="text-[10px] text-white/40 uppercase tracking-[0.3em]">60min</div>
+                      <div className="text-[10px] text-white/40 uppercase tracking-[0.3em]">
+                        {isFree && (s.max_consecutive || 1) > 1 ? `até ${s.max_consecutive}h` : "60min"}
+                      </div>
                     </div>
                   </motion.button>
                   );
@@ -558,6 +581,78 @@ export default function Booking() {
 
       {/* ====== MODALS ====== */}
       <AnimatePresence>
+        {step === "duration" && pickedSlot && (
+          <Overlay onClose={closeAll}>
+            <motion.div
+              data-testid="booking-duration-modal"
+              {...m.modalMotion}
+              className="relative glass-strong booking-modal-sheet w-[min(480px,95vw)] p-5 sm:p-8 max-h-[92vh] overflow-y-auto"
+            >
+              <CloseBtn onClick={closeAll} />
+              <div className="text-[11px] tracking-[0.35em] uppercase text-[var(--brand)] mt-2">// Duração</div>
+              <h2 className="font-heading text-3xl sm:text-4xl uppercase italic">
+                Quanto <span className="text-[var(--brand)]">tempo</span>?
+              </h2>
+              <p className="text-white/60 mt-2 text-sm">
+                {selectedCourt?.name} · {new Date(date+"T00:00:00").toLocaleDateString("pt-BR")} · início {pickedSlot.time}
+              </p>
+              <div className="mt-6 flex flex-wrap gap-3">
+                {[1, 2].map((h) => {
+                  const enabled = h <= maxHoursForPicked;
+                  const selected = durationHours === h;
+                  return (
+                    <button
+                      key={h}
+                      type="button"
+                      data-testid={`booking-duration-${h}h`}
+                      disabled={!enabled}
+                      onClick={() => enabled && setDurationHours(h)}
+                      className={`min-h-[52px] px-5 py-3 border text-sm uppercase tracking-[0.2em] transition ${
+                        selected
+                          ? "border-[var(--brand)] bg-[var(--brand)]/15 text-[var(--brand)]"
+                          : enabled
+                            ? "border-white/20 text-white/80 hover:border-[var(--brand)]/60"
+                            : "border-white/10 text-white/30 cursor-not-allowed"
+                      }`}
+                    >
+                      {h} hora{h > 1 ? "s" : ""}
+                      {!enabled && h === 2 ? " · próximo ocupado" : ""}
+                    </button>
+                  );
+                })}
+                {maxHoursForPicked >= 3 && (
+                  <button
+                    type="button"
+                    data-testid="booking-duration-3h"
+                    onClick={() => setDurationHours(3)}
+                    className={`min-h-[52px] px-5 py-3 border text-sm uppercase tracking-[0.2em] transition ${
+                      durationHours === 3
+                        ? "border-[var(--brand)] bg-[var(--brand)]/15 text-[var(--brand)]"
+                        : "border-white/20 text-white/80 hover:border-[var(--brand)]/60"
+                    }`}
+                  >
+                    3 horas
+                  </button>
+                )}
+              </div>
+              <div className="mt-6 glass p-4 flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-[10px] uppercase tracking-[0.3em] text-white/40">Total estimado</div>
+                  <div className="font-heading text-2xl">{fmtBRL((effectiveHourly || 0) * (durationHours || 1))}</div>
+                </div>
+                <button
+                  type="button"
+                  data-testid="booking-duration-continue"
+                  className="btn-neon justify-center"
+                  onClick={() => { setStep("identify"); setErr(""); }}
+                >
+                  Continuar <ChevronRight className="w-5 h-5" />
+                </button>
+              </div>
+            </motion.div>
+          </Overlay>
+        )}
+
         {step === "identify" && (
           <Overlay onClose={closeAll}>
             <motion.form
@@ -572,6 +667,7 @@ export default function Booking() {
               <h2 className="font-heading text-3xl sm:text-4xl uppercase italic">Quase lá, <span className="text-[var(--brand)]">jogador</span></h2>
               <p className="text-white/60 mt-1 text-sm">
                 {selectedCourt?.name} · {new Date(date+"T00:00:00").toLocaleDateString("pt-BR")} · {pickedSlot?.time}
+                {" "}· {durationHours || 1}h
               </p>
 
               <div className="mt-6 space-y-4">
@@ -632,10 +728,10 @@ export default function Booking() {
               </h2>
               <div className="mt-3 glass px-4 py-3 text-sm text-white/70">
                 <strong className="text-white">{name}</strong> · CPF {cpf} · WhatsApp {whatsapp}<br />
-                {selectedCourt?.name} · {new Date(date+"T00:00:00").toLocaleDateString("pt-BR")} · {pickedSlot?.time}
+                {selectedCourt?.name} · {new Date(date+"T00:00:00").toLocaleDateString("pt-BR")} · {pickedSlot?.time} · {durationHours || 1}h
               </div>
               <p className="text-white/60 mt-1 text-sm">
-                {selectedCourt?.name} · {new Date(date+"T00:00:00").toLocaleDateString("pt-BR")} · {pickedSlot?.time}
+                {selectedCourt?.name} · {new Date(date+"T00:00:00").toLocaleDateString("pt-BR")} · {pickedSlot?.time} · {durationHours || 1}h
               </p>
 
               <div className="grid grid-cols-1 md:grid-cols-[1fr_auto_1fr] items-center gap-4 md:gap-6 mt-8">
@@ -653,7 +749,7 @@ export default function Booking() {
               <div className="mt-8 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4 glass p-4">
                 <div>
                   <div className="text-[10px] uppercase tracking-[0.3em] text-white/40">Total · Calção (30%)</div>
-                  <div className="font-heading text-2xl sm:text-3xl">{fmtBRL(effectiveHourly || 0)} · <span className="text-[var(--brand)]">{fmtBRL((effectiveHourly || 0) * 0.3)}</span></div>
+                  <div className="font-heading text-2xl sm:text-3xl">{fmtBRL((effectiveHourly || 0) * (durationHours || 1))} · <span className="text-[var(--brand)]">{fmtBRL((effectiveHourly || 0) * (durationHours || 1) * 0.3)}</span></div>
                 </div>
                 <button
                   data-testid={BOOKING.confirmReservation}

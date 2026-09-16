@@ -7,6 +7,7 @@ Weekend hours (Cycle 21): optional weekend_open_hour / weekend_close_hour
 (null or -1 = use weekday open_hour/close_hour). Weekend = Sat/Sun (5,6).
 
 Weekend price (Cycle 23): optional price_weekend (null/0 = use price_per_hour on Sat/Sun).
+Multi-hour (Cycle 24): allow_multi_hour + max_hours_per_booking (1–3, default 2).
 maps_url may be empty — Landing/Footer hide "Como chegar" when unset.
 
 Amenities / FAQ (Cycle 17): has_parking, parking_note, game_duration_note,
@@ -49,6 +50,9 @@ DEFAULTS: dict[str, Any] = {
     # Weekdays court is open: Python datetime.weekday() — 0=Mon .. 6=Sun (ISO Mon-first, zero-based).
     "open_days": [0, 1, 2, 3, 4, 5, 6],
     "slot_duration_minutes": 60,
+    # Cycle 24: multi-hour bookings (1–2 consecutive slots by default)
+    "allow_multi_hour": True,
+    "max_hours_per_booking": 2,  # capped 1–3
     "parking_note": "Estacionamento no entorno da quadra — chegue ~10 min antes.",
     "has_parking": True,
     "game_duration_note": "1 hora (60 min)",  # default aligned with slot_duration_minutes=60
@@ -91,6 +95,8 @@ class SiteSettingsUpdate(BaseModel):
     weekend_close_hour: Optional[int] = Field(default=None)
     open_days: list[int] = Field(default_factory=lambda: [0, 1, 2, 3, 4, 5, 6])
     slot_duration_minutes: int = Field(ge=30, le=180)
+    allow_multi_hour: bool = Field(default=True)
+    max_hours_per_booking: int = Field(default=2, ge=1, le=3)
     parking_note: str = Field(min_length=0, max_length=240)
     has_parking: bool = Field(default=True)
     game_duration_note: str = Field(default="", max_length=120)
@@ -139,6 +145,14 @@ class SiteSettingsUpdate(BaseModel):
         if v % 30 != 0:
             raise ValueError("slot_duration_minutes deve ser múltiplo de 30")
         return v
+
+    @field_validator("max_hours_per_booking")
+    @classmethod
+    def cap_max_hours(cls, v: int) -> int:
+        n = int(v)
+        if n < 1 or n > 3:
+            raise ValueError("max_hours_per_booking deve ser 1–3")
+        return n
 
     @field_validator("open_days")
     @classmethod
@@ -318,6 +332,10 @@ def public_view(doc: dict[str, Any]) -> dict[str, Any]:
         "weekend_close_hour": _normalize_optional_hour(d.get("weekend_close_hour")),
         "open_days": _normalize_open_days(d.get("open_days")),
         "slot_duration_minutes": int(d["slot_duration_minutes"]),
+        "allow_multi_hour": bool(d["allow_multi_hour"]) if d.get("allow_multi_hour") is not None else bool(DEFAULTS["allow_multi_hour"]),
+        "max_hours_per_booking": max(1, min(3, int(
+            d.get("max_hours_per_booking") if d.get("max_hours_per_booking") is not None else DEFAULTS["max_hours_per_booking"]
+        ))),
         "parking_note": d.get("parking_note") if d.get("parking_note") is not None else DEFAULTS["parking_note"],
         "has_parking": bool(d["has_parking"]) if d.get("has_parking") is not None else bool(DEFAULTS["has_parking"]),
         "game_duration_note": (

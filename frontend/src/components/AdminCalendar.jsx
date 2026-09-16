@@ -185,7 +185,7 @@ export default function AdminCalendar() {
     }
   };
 
-  const [createForm, setCreateForm] = useState({ customer_name: "", whatsapp: "" });
+  const [createForm, setCreateForm] = useState({ customer_name: "", whatsapp: "", duration_hours: 1 });
   const [rangeForm, setRangeForm] = useState({
     date_from: todayYmd(),
     date_to: todayYmd(),
@@ -257,7 +257,7 @@ export default function AdminCalendar() {
   };
 
   const openCreate = () => {
-    setCreateForm({ customer_name: "", whatsapp: "" });
+    setCreateForm({ customer_name: "", whatsapp: "", duration_hours: 1 });
     setDialog((d) => ({ ...d, type: "create" }));
   };
 
@@ -271,6 +271,7 @@ export default function AdminCalendar() {
         customer_name: createForm.customer_name,
         whatsapp: createForm.whatsapp,
         status: "confirmed",
+        duration_hours: Number(createForm.duration_hours) || 1,
       });
       setDialog(null);
       load();
@@ -572,7 +573,14 @@ export default function AdminCalendar() {
                       </div>
                       <div className="text-[9px] uppercase tracking-[0.15em] mt-1 truncate">
                         {slot.status === "reserved"
-                          ? (slot.checked_in ? "Chegou · " : "") + (slot.customer_name || "Reservado")
+                          ? (
+                              (slot.checked_in ? "Chegou · " : "")
+                              + (slot.is_continuation ? "↳ " : "")
+                              + (slot.customer_name || "Reservado")
+                              + (slot.duration_minutes > 60 && !slot.is_continuation
+                                  ? ` · ${Math.round(slot.duration_minutes / 60)}h`
+                                  : "")
+                            )
                           : st.label}
                       </div>
                     </button>
@@ -596,6 +604,10 @@ export default function AdminCalendar() {
                 <p className="text-white/50 text-sm mt-1">
                   Status: {SLOT_STYLE[dialog.slot?.status]?.label || dialog.slot?.status}
                   {dialog.slot?.customer_name ? ` · ${dialog.slot.customer_name}` : ""}
+                  {dialog.slot?.duration_minutes > 60
+                    ? ` · ${Math.round(dialog.slot.duration_minutes / 60)}h`
+                    : ""}
+                  {dialog.slot?.is_continuation ? " · continuação" : ""}
                 </p>
               </div>
               <button type="button" onClick={() => setDialog(null)} className="text-white/50 hover:text-white">
@@ -660,6 +672,32 @@ export default function AdminCalendar() {
                     onChange={(e) => setCreateForm({ ...createForm, whatsapp: e.target.value })}
                     placeholder="11999999999"
                     className="mt-1 w-full bg-black/40 border border-white/15 px-3 py-2 text-white focus:border-[var(--brand)] focus:outline-none" />
+                </div>
+                <div>
+                  <label className="text-[10px] uppercase tracking-[0.3em] text-white/40">Duração</label>
+                  <div className="mt-2 flex gap-2">
+                    {[1, 2].map((h) => {
+                      const maxC = dialog.slot?.max_consecutive || 1;
+                      const enabled = h <= maxC;
+                      return (
+                        <button
+                          key={h}
+                          type="button"
+                          disabled={!enabled}
+                          onClick={() => enabled && setCreateForm({ ...createForm, duration_hours: h })}
+                          className={`px-3 py-2 text-xs border uppercase tracking-wider ${
+                            createForm.duration_hours === h
+                              ? "border-[var(--brand)] text-[var(--brand)]"
+                              : enabled
+                                ? "border-white/20 text-white/70"
+                                : "border-white/10 text-white/30"
+                          }`}
+                        >
+                          {h}h
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
                 <div className="flex gap-2 pt-2">
                   <button type="submit" className="btn-neon flex-1 justify-center !text-sm">Confirmar criação</button>
