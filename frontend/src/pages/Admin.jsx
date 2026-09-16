@@ -206,7 +206,9 @@ function AdminOnboardingChecklist({ onGoTab }) {
       title: "Conectar WhatsApp (Baileys)",
       hint: waStatus === "AGUARDANDO_QR"
         ? "QR pronto — escaneie na aba WhatsApp."
-        : `Status: ${waStatus}. Abra a aba WhatsApp e gere o QR.`,
+        : waStatus === "CONECTANDO"
+          ? "Restaurando sessão WhatsApp após cold start…"
+          : `Status: ${waStatus}. Abra a aba WhatsApp e gere o QR.`,
       tab: "whatsapp",
       cta: "Abrir WhatsApp",
     });
@@ -402,7 +404,9 @@ function WhatsAppAdmin() {
             role="status"
             aria-live="polite"
           >
-            {st.label}
+            {state.status === "CONECTANDO" && (state.restoring || state.has_saved_session)
+              ? "RESTAURANDO SESSÃO"
+              : st.label}
           </span>
         </div>
         {state.number && (
@@ -471,9 +475,10 @@ function WhatsAppAdmin() {
             <Activity className="w-3.5 h-3.5" /> Troubleshooting WhatsApp
           </summary>
           <ul className="mt-3 text-xs text-white/55 leading-relaxed space-y-2 list-disc pl-5 max-w-lg">
-            <li>QR não aparece: clique em <strong className="text-white">Conectar / Gerar QR</strong> e aguarde status AGUARDANDO_QR (até ~30s).</li>
-            <li>Fica em CONECTANDO: confira logs do sidecar; reinicie o serviço no Render se travar.</li>
+            <li>QR não aparece: só deve surgir se não houver sessão no Mongo (ou após logout). Aguarde <strong className="text-white">Restaurando sessão…</strong> no cold start.</li>
+            <li>Fica em CONECTANDO / Restaurando: normal após Free sleep — backoff reconecta; reinicie no Render se passar de ~2 min.</li>
             <li>Desconectou sozinho: clique Conectar de novo — sessão no Mongo costuma restaurar sem QR.</li>
+            <li>Render Free dorme o serviço: WhatsApp cai; plano pago é necessário para 24/7.</li>
             <li>loggedOut / ERRO: use <strong className="text-white">Desconectar</strong> (limpa sessão) e gere QR novo no celular.</li>
             <li>Bot não responde: health deve mostrar whatsapp CONECTADO; mensagens de grupo são ignoradas.</li>
             <li>Nunca compartilhe QR ou dump de <code className="text-white/70">whatsapp_auth</code>.</li>
@@ -507,9 +512,16 @@ function WhatsAppAdmin() {
             <p className="text-white/50 text-sm mt-2">Confirmações de reserva serão enviadas automaticamente.</p>
           </div>
         ) : state.status === "CONECTANDO" ? (
-          <div className="text-center text-white/60">
+          <div className="text-center text-white/60" data-testid="admin-whatsapp-restoring">
             <Loader2 className="w-10 h-10 animate-spin text-[var(--brand)] mx-auto mb-3" />
-            Conectando…
+            <div className="font-heading text-xl uppercase text-[var(--brand)]">
+              {state.restoring || state.has_saved_session ? "Restaurando sessão…" : "Conectando…"}
+            </div>
+            <p className="text-sm text-white/45 mt-2 max-w-xs mx-auto leading-relaxed">
+              {state.restoring || state.has_saved_session
+                ? "Sessão salva no Mongo — tentando reconectar sem novo QR após o cold start."
+                : "Aguardando o sidecar Baileys…"}
+            </p>
           </div>
         ) : (
           <div className="text-center text-white/50 max-w-xs">

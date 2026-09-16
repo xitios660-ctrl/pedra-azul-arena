@@ -33,7 +33,11 @@ export UPLOAD_DIR
 mkdir -p "${UPLOAD_DIR}/crests" "${UPLOAD_DIR}/comprovantes" || true
 echo "[start] upload_dir=${UPLOAD_DIR}"
 
-echo "[start] WhatsApp sidecar on ${WHATSAPP_HOST}:${WHATSAPP_PORT} (API ${API_INTERNAL_URL}, internal_token=${_tok_state})"
+# Prefer restore-from-Mongo on boot (Cycle 18). Override with WHATSAPP_AUTO_START=false.
+export WHATSAPP_AUTO_START="${WHATSAPP_AUTO_START:-true}"
+
+echo "[start] WhatsApp sidecar on ${WHATSAPP_HOST}:${WHATSAPP_PORT} (API ${API_INTERNAL_URL}, internal_token=${_tok_state}, auto_start=${WHATSAPP_AUTO_START})"
+echo "[start] WA cold-start: restore Mongo session before QR (Free sleep still needs paid plan for 24/7)"
 cd /app/whatsapp
 node server.js &
 WA_PID=$!

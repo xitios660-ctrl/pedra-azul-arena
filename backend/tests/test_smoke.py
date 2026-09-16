@@ -906,3 +906,19 @@ def test_amenities_settings_roundtrip(admin_session, s):
         assert "admin_whatsapp_e164" not in pdata
     finally:
         admin_session.put(f"{API}/admin/site-settings", json=original, timeout=10)
+
+
+def test_health_whatsapp_restore_fields(s):
+    """Cycle 18: health exposes restoring / has_saved_session flags (no secrets)."""
+    r = s.get(f"{API}/health", timeout=15)
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert "whatsapp" in data
+    # Flags may be false when sidecar down; keys must exist for accurate UI after sleep
+    assert "whatsapp_restoring" in data
+    assert "whatsapp_has_saved_session" in data
+    assert isinstance(data["whatsapp_restoring"], bool)
+    assert isinstance(data["whatsapp_has_saved_session"], bool)
+    blob = r.text.lower()
+    for bad in ("password", "jwt_secret", "mongo_url", "private"):
+        assert bad not in blob

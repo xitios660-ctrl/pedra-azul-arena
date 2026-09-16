@@ -58,25 +58,25 @@ else
   bad "site-settings" "$SS"
 fi
 
-# 4) WhatsApp — expect AGUARDANDO_QR or CONECTADO (retry for sidecar boot)
+# 4) WhatsApp — CONECTANDO (restore), AGUARDANDO_QR, or CONECTADO (retry for cold start)
 WA=""
-for _try in 1 2 3; do
+for _try in 1 2 3 4 5; do
   fetch_health || true
   if [ -s "$HFILE" ]; then
     WA=$(python3 -c "import json; print(json.load(open('$HFILE')).get('whatsapp') or '')" 2>/dev/null || true)
   fi
   case "$WA" in
-    AGUARDANDO_QR|CONECTADO) break ;;
+    AGUARDANDO_QR|CONECTADO|CONECTANDO) break ;;
   esac
   sleep 2
 done
 
 case "$WA" in
-  AGUARDANDO_QR|CONECTADO)
-    ok "whatsapp status=$WA (expected AGUARDANDO_QR|CONECTADO)"
+  AGUARDANDO_QR|CONECTADO|CONECTANDO)
+    ok "whatsapp status=$WA (expected CONECTANDO|AGUARDANDO_QR|CONECTADO)"
     ;;
   *)
-    bad "whatsapp" "got '${WA:-empty}' — expected AGUARDANDO_QR or CONECTADO (Admin → WhatsApp → Gerar QR)"
+    bad "whatsapp" "got '${WA:-empty}' — expected CONECTANDO, AGUARDANDO_QR or CONECTADO after cold start"
     ;;
 esac
 

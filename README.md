@@ -30,6 +30,7 @@ Reserva de **uma** quadra (Pedra Azul — Núncio), fluxo CPF + PIX + confirmaç
 | `BOOKING_RATE_WINDOW_SEC` | não | Janela do rate limit em segundos (default 60) |
 | `AUTH_RATE_LIMIT` | não | Max POSTs `/api/auth/login` por IP/janela (default 10) |
 | `AUTH_RATE_WINDOW_SEC` | não | Janela do rate limit de login em segundos (default 60) |
+| `WA_SELF_PING_MINUTES` | não | Default `5`. Ping localhost do sidecar WA (mín. 3). `0` desliga. **Não** impede sleep do Render Free. |
 | `UPLOAD_DIR` | não | Pasta cache de uploads (crests/comprovantes). Local: `backend/uploads`. Render: `/var/data/uploads` (Starter+). **Comprovantes PIX: GridFS no Mongo (Free-safe)**; disk opcional. |
 
 **Nunca** commitir credenciais Baileys / `.env` / QR. Sessão fica na collection `whatsapp_auth`.
@@ -60,10 +61,13 @@ Uploads: **Free uses MongoDB GridFS for PIX comprovantes** (survive restarts); d
 
 1. Login em `/login` (admin seed acima)
 2. Aba **WhatsApp** no dashboard
-3. **Conectar / Gerar QR** → status `AGUARDANDO_QR`
-4. Celular: WhatsApp → Aparelhos conectados → escanear QR grande
-5. Status vira `CONECTADO` + número; confirmações de reserva enviam mensagem automática
-6. Se cair para `DESCONECTADO` / `ERRO`: Gerar QR de novo (auth state fica em Mongo `whatsapp_auth`)
+3. No boot / após cold start: status `CONECTANDO` / **Restaurando sessão…** se já houver auth no Mongo (sem QR prematuro)
+4. Só sem sessão (ou após logout): **Conectar / Gerar QR** → `AGUARDANDO_QR`
+5. Celular: WhatsApp → Aparelhos conectados → escanear QR grande
+6. Status vira `CONECTADO` + número; confirmações de reserva enviam mensagem automática
+7. Se `loggedOut` / sessão inválida: **Desconectar** e gerar QR novo (`whatsapp_auth` no Mongo)
+
+**Render Free:** o serviço dorme sem tráfego — o sidecar WA cai. O restore no Mongo ajuda no wake, mas **24/7 WhatsApp exige plano pago** (sem sleep). Self-ping (`WA_SELF_PING_MINUTES`) só faz nudge localhost enquanto o dyno já está acordado.
 
 SSE: `GET /api/admin/whatsapp/events` (JWT/cookie admin).
 
@@ -198,3 +202,9 @@ Prod smoke: `GET /api/health`, `/api/courts`, `/api/site-settings`, WhatsApp `AG
 - Bot WA: intents estacionamento / endereço / duração / PIX leem settings ao vivo (pt-BR curto).
 - Sem inventar número de rua — `address_label` / `maps_url` inalterados na semântica.
 
+## Cycle 18 notes
+- WhatsApp cold-start: sempre tenta **restaurar sessão do Mongo** antes de gerar QR; QR só se credenciais ausentes ou `loggedOut`.
+- Status: `CONECTANDO` (restaurando / backoff) ≠ `AGUARDANDO_QR` ≠ `DESCONECTADO`; logs `restore_ok` / `restore_fail` / `need_qr`.
+- Admin UI: “Restaurando sessão…” durante restore (sem QR grande prematuro).
+- Self-ping leve Python → sidecar `/health` a cada `WA_SELF_PING_MINUTES` (default 5, localhost). **Não** evita sleep Free; plano pago para WA 24/7.
+- Persistência Mongo (`whatsapp_auth`) inalterada em força; sem spam de QR; uma quadra.

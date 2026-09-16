@@ -124,6 +124,9 @@ def _rate_limit_auth(request: Request) -> None:
         "Muitas tentativas de login. Aguarde um minuto e tente novamente.",
     )
 
+_wa_self_ping_task = None  # Cycle 18 optional localhost WA nudge
+
+
 @api.get("/health")
 async def health():
     """Public health — no secrets. Used by Render healthCheckPath.
@@ -144,6 +147,8 @@ async def health():
         "db": "ok" if db_ok else "error",
         "whatsapp": wa,
         "whatsapp_bot": bool(wa_status.get("bot")),
+        "whatsapp_restoring": bool(wa_status.get("restoring")),
+        "whatsapp_has_saved_session": bool(wa_status.get("has_saved_session")),
         "court": COURT_ID,
         "upload_backend": "gridfs",
     }
@@ -1615,9 +1620,60 @@ async def startup():
     await daily_metrics.ensure_indexes(db)
     logger.info("Arena Futsal Premium API initialized (CPF + WA bot + calendar)")
 
+    # Cycle 18: lightweight localhost WA sidecar self-ping (optional).
+    # Does NOT prevent Render Free sleep — only nudges restore while the dyno is already awake.
+    # Paid plan still required for 24/7 WhatsApp.
+    global _wa_self_ping_task
+    try:
+        interval_min = float(os.environ.get("WA_SELF_PING_MINUTES", "5") or "5")
+    except ValueError:
+        interval_min = 5.0
+    # Clamp: min 3 min (avoid quota burn), max 30; 0 disables
+    if interval_min <= 0:
+        logger.info("WA self-ping disabled (WA_SELF_PING_MINUTES<=0)")
+        _wa_self_ping_task = None
+    else:
+        interval_min = max(3.0, min(30.0, interval_min))
+
+        async def _wa_self_ping_loop():
+            await asyncio.sleep(20)  # let sidecar bind after start.sh
+            while True:
+                try:
+                    h = await whatsapp_bridge.ping_health()
+                    wa = h.get("whatsapp")
+                    logger.info(
+                        "wa_self_ping status=%s restoring=%s saved=%s",
+                        wa,
+                        h.get("restoring"),
+                        h.get("has_saved_session"),
+                    )
+                    if wa in ("DESCONECTADO", "ERRO"):
+                        await whatsapp_bridge.ensure_started_if_saved()
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    logger.warning("wa_self_ping error: %s", e)
+                await asyncio.sleep(interval_min * 60)
+
+        _wa_self_ping_task = asyncio.create_task(_wa_self_ping_loop())
+        logger.info(
+            "WA self-ping every %.0f min (localhost only; Free sleep still drops WA — use paid for 24/7)",
+            interval_min,
+        )
+
 
 @app.on_event("shutdown")
 async def shutdown():
+    global _wa_self_ping_task
+    try:
+        if _wa_self_ping_task:
+            _wa_self_ping_task.cancel()
+            try:
+                await _wa_self_ping_task
+            except (asyncio.CancelledError, Exception):
+                pass
+    except Exception:
+        pass
     client.close()
 
 

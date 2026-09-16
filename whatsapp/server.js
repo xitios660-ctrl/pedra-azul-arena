@@ -3,6 +3,7 @@
  * Internal HTTP only (bound to 127.0.0.1). FastAPI proxies admin routes.
  * Auth state persisted in MongoDB (whatsapp_auth). Never expose creds to FE.
  * Cycle 2: NL inbound bot + ~3h reminders.
+ * Cycle 18: cold-start Mongo restore before QR; CONECTANDO vs AGUARDANDO_QR.
  */
 import express from "express";
 import { MongoClient } from "mongodb";
@@ -39,6 +40,10 @@ let starting = false;
 let reconnectAttempt = 0;
 let reconnectTimer = null;
 let intentionalLogout = false;
+/** True when Mongo has paired creds — prefer restore over QR. */
+let hasSavedSession = false;
+/** True while cold-start / reconnect is trying Mongo session before QR. */
+let restoringSession = false;
 let mongoClient = null;
 let db = null;
 let authHelpers = null;
@@ -69,6 +74,8 @@ function publicState() {
     last_error: lastError,
     last_disconnect_reason: lastDisconnectReason,
     reconnect_attempt: reconnectAttempt,
+    has_saved_session: hasSavedSession,
+    restoring: restoringSession && status === "CONECTANDO",
     bot: true,
     reminders: true,
   };
@@ -184,6 +191,18 @@ function wireInbound(socket) {
   });
 }
 
+async function endSocketQuiet() {
+  const s = sock;
+  sock = null;
+  if (!s) return;
+  try {
+    s.ev?.removeAllListeners?.();
+  } catch {}
+  try {
+    s.end?.(undefined);
+  } catch {}
+}
+
 async function startSocket() {
   if (starting) {
     logger.warn("start ignored — already starting");
@@ -198,9 +217,37 @@ async function startSocket() {
     throw new Error("Mongo auth not ready");
   }
 
+  // Cancel pending reconnect to avoid duplicate sockets
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+
   starting = true;
   intentionalLogout = false;
+  await endSocketQuiet();
+
+  // Always reload Mongo creds before open — cold start / Free wake restore path
+  try {
+    const re = await authHelpers.reload();
+    hasSavedSession = Boolean(authHelpers.isRegistered?.() || re?.registered);
+  } catch (e) {
+    logger.warn({ err: String(e), event: "restore_fail" }, "Mongo creds reload failed");
+    hasSavedSession = Boolean(authHelpers.isRegistered?.());
+  }
+
+  restoringSession = hasSavedSession;
   setState({ status: "CONECTANDO", qr: null, last_error: null });
+
+  if (hasSavedSession) {
+    const keyCount = await authHelpers.countKeys?.().catch(() => -1);
+    logger.info(
+      { event: "restore_ok", phase: "attempt", keys: keyCount, attempt: reconnectAttempt },
+      "restoring WhatsApp session from Mongo (no QR yet)"
+    );
+  } else {
+    logger.info({ event: "need_qr", reason: "no_registered_creds" }, "no paired Mongo session — QR required");
+  }
 
   try {
     const { state, saveCreds } = authHelpers;
@@ -226,6 +273,17 @@ async function startSocket() {
       const { connection, lastDisconnect, qr } = update;
 
       if (qr) {
+        // Only surface QR when there is no paired session, or restore clearly failed
+        const expectRestore = hasSavedSession && restoringSession;
+        if (expectRestore) {
+          logger.warn(
+            { event: "restore_fail", need_qr: true, reason: "qr_while_restoring" },
+            "QR received while restoring Mongo session — session may be invalid"
+          );
+          restoringSession = false;
+        } else {
+          logger.info({ event: "need_qr" }, "QR ready for pairing");
+        }
         try {
           const dataUrl = await QRCode.toDataURL(qr, {
             errorCorrectionLevel: "M",
@@ -242,6 +300,8 @@ async function startSocket() {
 
       if (connection === "open") {
         reconnectAttempt = 0;
+        restoringSession = false;
+        hasSavedSession = true;
         const id = sock?.user?.id || "";
         const num = id.split(":")[0] || id.split("@")[0] || null;
         setState({
@@ -251,7 +311,10 @@ async function startSocket() {
           last_error: null,
           last_disconnect_reason: null,
         });
-        logger.info({ event: "wa_connect", number: num }, "WhatsApp connected");
+        logger.info(
+          { event: "restore_ok", number: num },
+          "WhatsApp connected"
+        );
       }
 
       if (connection === "close") {
@@ -264,20 +327,30 @@ async function startSocket() {
         starting = false;
 
         const loggedOut = statusCode === DisconnectReason.loggedOut;
-        logger.warn({ event: "wa_disconnect", reason: reasonName, intentionalLogout, code: statusCode ?? null }, "WhatsApp disconnected");
+        logger.warn(
+          { event: "wa_disconnect", reason: reasonName, intentionalLogout, code: statusCode ?? null },
+          "WhatsApp disconnected"
+        );
 
         if (intentionalLogout || loggedOut) {
+          restoringSession = false;
+          hasSavedSession = false;
           setState({
             status: "DESCONECTADO",
             qr: null,
             number: null,
             last_disconnect_reason: reasonName,
           });
+          if (loggedOut && !intentionalLogout) {
+            logger.info({ event: "need_qr", reason: "loggedOut" }, "logged out — new QR required");
+          }
           return;
         }
 
+        // Cold disconnect / Free sleep wake: keep CONECTANDO while backoff reconnects
+        restoringSession = hasSavedSession;
         setState({
-          status: "DESCONECTADO",
+          status: "CONECTANDO",
           qr: null,
           number: null,
           last_disconnect_reason: reasonName,
@@ -292,7 +365,7 @@ async function startSocket() {
     starting = false;
     sock = null;
     const msg = e?.message || String(e);
-    logger.error({ err: msg }, "startSocket failed");
+    logger.error({ err: msg, event: "restore_fail" }, "startSocket failed");
     setState({ status: "ERRO", last_error: msg, qr: null });
     scheduleReconnect();
     return publicState();
@@ -301,10 +374,16 @@ async function startSocket() {
 
 function scheduleReconnect() {
   if (intentionalLogout) return;
+  if (starting) return;
   if (reconnectTimer) clearTimeout(reconnectTimer);
   reconnectAttempt += 1;
   const delay = Math.min(30_000, 1000 * 2 ** Math.min(reconnectAttempt, 5));
   logger.info({ event: "wa_reconnect", delay, attempt: reconnectAttempt }, "scheduling reconnect");
+  // Accurate health after sleep: reconnecting ≠ waiting for QR
+  if (status !== "AGUARDANDO_QR" && status !== "CONECTADO") {
+    restoringSession = hasSavedSession;
+    setState({ status: "CONECTANDO", qr: null });
+  }
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
     startSocket().catch((e) => logger.error({ err: String(e) }, "reconnect failed"));
@@ -329,6 +408,8 @@ async function logout() {
   if (authHelpers?.clearAll) {
     await authHelpers.clearAll();
   }
+  hasSavedSession = false;
+  restoringSession = false;
   setState({
     status: "DESCONECTADO",
     qr: null,
@@ -353,6 +434,8 @@ app.get("/health", (_req, res) => {
   res.json({
     ok: true,
     whatsapp: status,
+    has_saved_session: hasSavedSession,
+    restoring: restoringSession && status === "CONECTANDO",
     bot: Boolean(bot),
     reminders: Boolean(stopReminders),
   });
@@ -367,6 +450,8 @@ app.get("/metrics", (_req, res) => {
     wa_status: status,
     last_error_code: lastDisconnectReason || lastError || null,
     reconnect_attempt: reconnectAttempt,
+    has_saved_session: hasSavedSession,
+    restoring: restoringSession && status === "CONECTANDO",
     bot: Boolean(bot),
     reminders: Boolean(stopReminders),
   });
@@ -442,7 +527,16 @@ async function main() {
     conv,
     logger,
   });
-  logger.info({ db: DB_NAME, conv_ttl_ms: conv.ttlMs }, "Mongo auth + bot ready");
+  hasSavedSession = Boolean(authHelpers.isRegistered?.());
+  logger.info(
+    {
+      db: DB_NAME,
+      conv_ttl_ms: conv.ttlMs,
+      has_saved_session: hasSavedSession,
+      created_fresh: Boolean(authHelpers.createdFresh?.()),
+    },
+    "Mongo auth + bot ready"
+  );
 
   // Periodic idle timeout sweep — clears stale mid-flow conversation state
   setInterval(async () => {
@@ -495,6 +589,16 @@ async function main() {
   });
 
   if (AUTO_START) {
+    logger.info(
+      {
+        event: hasSavedSession ? "restore_ok" : "need_qr",
+        phase: "boot",
+        has_saved_session: hasSavedSession,
+      },
+      hasSavedSession
+        ? "auto-start: restore session from Mongo before any QR"
+        : "auto-start: no paired session — will wait for QR"
+    );
     startSocket().catch((e) => logger.error({ err: String(e) }, "auto-start failed"));
   }
 }

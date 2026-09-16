@@ -91,3 +91,33 @@ async def send_text(phone: str, text: str) -> Optional[dict[str, Any]]:
     except Exception as e:
         logger.warning("whatsapp send error: %s", e)
         return None
+
+
+async def ping_health() -> dict[str, Any]:
+    """Lightweight localhost sidecar health (does not keep Render Free awake)."""
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            r = await client.get(f"{WHATSAPP_SERVICE_URL}/health", headers=_headers())
+            if r.status_code == 200:
+                return r.json()
+            return {"ok": False, "whatsapp": "ERRO", "http": r.status_code}
+    except Exception as e:
+        logger.warning("whatsapp health ping failed: %s", e)
+        return {"ok": False, "whatsapp": "DESCONECTADO", "sidecar_up": False}
+
+
+async def ensure_started_if_saved() -> None:
+    """If sidecar reports CONECTANDO/DESCONECTADO with saved session, nudge /start once."""
+    try:
+        st = await get_status()
+        status = st.get("status") or ""
+        saved = bool(st.get("has_saved_session") or st.get("restoring"))
+        if status in ("DESCONECTADO", "ERRO") and saved:
+            logger.info("wa self-ping: saved session idle (%s) — calling /start", status)
+            await start_session()
+        elif status == "DESCONECTADO" and not saved:
+            # No paired session — leave for admin QR; do not spam start
+            pass
+    except Exception as e:
+        logger.warning("wa ensure_started_if_saved: %s", e)
+

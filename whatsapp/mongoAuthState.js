@@ -1,6 +1,7 @@
 /**
  * Persist Baileys auth state in MongoDB so Render restarts restore the session.
  * Never expose these docs to the frontend.
+ * Cycle 18: detect registered session before QR; reload creds on each start.
  */
 import { initAuthCreds, BufferJSON, proto } from "@whiskeysockets/baileys";
 
@@ -9,6 +10,17 @@ const SESSION_ID = process.env.WHATSAPP_SESSION_ID || "default";
 
 function keyId(type, id) {
   return `${SESSION_ID}:${type}:${id}`;
+}
+
+/**
+ * True when Mongo/Baileys creds look like a paired session (restore, don't spam QR).
+ * @param {any} creds
+ */
+export function isRegisteredCreds(creds) {
+  if (!creds || typeof creds !== "object") return false;
+  if (creds.registered === true) return true;
+  const meId = creds.me?.id || creds.me?.lid;
+  return Boolean(meId);
 }
 
 /**
@@ -39,10 +51,33 @@ export async function useMongoAuthState(db) {
 
   const credsKey = keyId("creds", "app");
   let creds = await read(credsKey);
+  let createdFresh = false;
   if (!creds) {
     creds = initAuthCreds();
     await write(credsKey, creds);
+    createdFresh = true;
   }
+
+  const reload = async () => {
+    const fresh = await read(credsKey);
+    if (fresh) {
+      // Mutate in place so Baileys state.creds reference stays valid
+      for (const k of Object.keys(creds)) {
+        if (!(k in fresh)) delete creds[k];
+      }
+      Object.assign(creds, fresh);
+      return { ok: true, registered: isRegisteredCreds(creds) };
+    }
+    return { ok: false, registered: false };
+  };
+
+  const countKeys = async () => {
+    try {
+      return await col.countDocuments({ key: { $regex: `^${SESSION_ID}:` } });
+    } catch {
+      return -1;
+    }
+  };
 
   return {
     state: {
@@ -82,5 +117,10 @@ export async function useMongoAuthState(db) {
       creds = initAuthCreds();
       await write(credsKey, creds);
     },
+    /** Re-read creds from Mongo before socket start (cold-start restore). */
+    reload,
+    isRegistered: () => isRegisteredCreds(creds),
+    createdFresh: () => createdFresh,
+    countKeys,
   };
 }
