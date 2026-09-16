@@ -59,6 +59,9 @@ def test_health_safe(s):
     assert "ok" in data
     assert "db" in data
     assert "whatsapp" in data
+    assert data.get("upload_backend") == "gridfs"
+    # WA may be DESCONECTADO after sleep; ok still follows DB
+    assert isinstance(data.get("whatsapp"), str)
     blob = r.text.lower()
     for leak in ("password", "jwt_secret", "mongo_url", "private_key", "whatsapp_auth"):
         assert leak not in blob
@@ -81,6 +84,53 @@ def test_admin_auth_reject(s):
     assert r2.status_code in (401, 403), r2.text
     r3 = bare.get(f"{API}/admin/bookings/awaiting", timeout=10)
     assert r3.status_code in (401, 403), r3.text
+    r4 = bare.get(f"{API}/admin/bookings/export.csv", timeout=10)
+    assert r4.status_code in (401, 403), r4.text
+
+
+def test_admin_bookings_export_csv(admin_session):
+    """Admin CSV export — auth, BOM, header columns, optional filters."""
+    bare = requests.Session()
+    assert bare.get(f"{API}/admin/bookings/export.csv", timeout=10).status_code in (401, 403)
+
+    r = admin_session.get(f"{API}/admin/bookings/export.csv", timeout=15)
+    assert r.status_code == 200, r.text[:200]
+    ctype = (r.headers.get("content-type") or "").lower()
+    assert "csv" in ctype or "text/" in ctype
+    raw = r.content
+    assert raw.startswith(b"\xef\xbb\xbf"), f"missing UTF-8 BOM: {raw[:8]!r}"
+    text_body = raw.decode("utf-8-sig")
+    header = text_body.splitlines()[0] if text_body else ""
+    for col in (
+        "id",
+        "date",
+        "start",
+        "end",
+        "customer_name",
+        "phone_whatsapp",
+        "cpf",
+        "status",
+        "payment_status",
+        "amount",
+        "created_at",
+    ):
+        assert col in header, f"missing column {col} in {header!r}"
+    day = (datetime.now(TZ) + timedelta(days=1)).strftime("%Y-%m-%d")
+    r2 = admin_session.get(
+        f"{API}/admin/bookings/export.csv",
+        params={"date_from": day, "date_to": day, "status": "confirmed"},
+        timeout=15,
+    )
+    assert r2.status_code == 200, r2.text[:200]
+    assert r2.content.startswith(b"\xef\xbb\xbf")
+
+
+def test_admin_bookings_list_filters(admin_session):
+    r = admin_session.get(f"{API}/admin/bookings", params={"status": "confirmed"}, timeout=10)
+    assert r.status_code == 200, r.text
+    assert isinstance(r.json(), list)
+    for b in r.json():
+        assert b.get("status") == "confirmed"
 
 
 def test_booking_conflict_409(s):

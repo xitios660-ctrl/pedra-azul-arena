@@ -96,4 +96,9 @@ export const ADMIN = {
   saveScore: (id) => `save-score-${id}`,
   siteSettings: "admin-site-settings",
   siteSettingsSave: "admin-site-settings-save",
+  exportCsv: "admin-export-csv",
+  bookingsDateFrom: "admin-bookings-date-from",
+  bookingsDateTo: "admin-bookings-date-to",
+  bookingsSearch: "admin-bookings-search",
+  bookingsEmpty: "admin-bookings-empty",
 };

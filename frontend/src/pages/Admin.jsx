@@ -7,7 +7,7 @@ import { ADMIN } from "@/constants/testIds";
 import {
   TrendingUp, CheckCircle2, Hourglass, Activity, DollarSign, BarChart3, Save,
   Eye, MessageCircle, FileCheck, Wifi, WifiOff, QrCode, RefreshCw, LogOut, Loader2,
-  Calendar, Clock, Ticket, X, Settings, AlertCircle
+  Calendar, Clock, Ticket, X, Settings, AlertCircle, Download, Search
 } from "lucide-react";
 import { isWhatsAppPlaceholder, isPixKeyPlaceholder } from "@/lib/siteConfig";
 import AdminCalendar from "@/components/AdminCalendar";
@@ -632,6 +632,10 @@ function DashboardView({ stats, bookings = [], onConfirm, onReject }) {
 function BookingsAdmin({ bookings, onConfirm, onCancel, onReject }) {
   const awaitingCount = bookings.filter((b) => b.status === "awaiting_admin").length;
   const [filter, setFilter] = useState("all");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [search, setSearch] = useState("");
+  const [exporting, setExporting] = useState(false);
   const [autoFocused, setAutoFocused] = useState(false);
   useEffect(() => {
     if (!autoFocused && awaitingCount > 0) {
@@ -639,7 +643,62 @@ function BookingsAdmin({ bookings, onConfirm, onCancel, onReject }) {
       setAutoFocused(true);
     }
   }, [awaitingCount, autoFocused]);
-  const filtered = filter === "all" ? bookings : bookings.filter(b => b.status === filter);
+
+  const needle = search.trim().toLowerCase();
+  const digits = search.replace(/\D/g, "");
+  const filtered = bookings.filter((b) => {
+    if (filter !== "all" && b.status !== filter) return false;
+    if (dateFrom && (b.date || "") < dateFrom) return false;
+    if (dateTo && (b.date || "") > dateTo) return false;
+    if (needle) {
+      const name = (b.customer_name || "").toLowerCase();
+      const wa = String(b.whatsapp || "");
+      const hitName = name.includes(needle);
+      const hitPhone = wa.includes(needle) || (digits && wa.includes(digits));
+      if (!hitName && !hitPhone) return false;
+    }
+    return true;
+  });
+
+  const hasActiveFilters = filter !== "all" || dateFrom || dateTo || needle;
+  const clearFilters = () => {
+    setFilter("all");
+    setDateFrom("");
+    setDateTo("");
+    setSearch("");
+  };
+
+  const exportCsv = async () => {
+    setExporting(true);
+    try {
+      const params = new URLSearchParams();
+      if (filter !== "all") params.set("status", filter);
+      if (dateFrom) params.set("date_from", dateFrom);
+      if (dateTo) params.set("date_to", dateTo);
+      if (search.trim()) params.set("q", search.trim());
+      const qs = params.toString();
+      const url = `${API_BASE}/admin/bookings/export.csv${qs ? `?${qs}` : ""}`;
+      const token = localStorage.getItem("arena_token");
+      const res = await fetch(url, {
+        credentials: "include",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "pedra-azul-reservas.csv";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(a.href);
+    } catch (e) {
+      window.alert("Não foi possível exportar o CSV. Tente novamente.");
+    } finally {
+      setExporting(false);
+    }
+  };
+
   return (
     <div>
       <AwaitingPixQueue
@@ -647,6 +706,56 @@ function BookingsAdmin({ bookings, onConfirm, onCancel, onReject }) {
         onConfirm={onConfirm}
         onReject={onReject}
       />
+
+      <div className="flex flex-wrap items-end justify-between gap-3 mb-4">
+        <div className="flex flex-wrap gap-3 items-end">
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.3em] text-white/40 block mb-1">De</label>
+            <input
+              data-testid={ADMIN.bookingsDateFrom}
+              type="date"
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+              className="bg-black/40 border border-white/15 px-3 py-2 text-sm text-white focus:border-[var(--brand)] focus:outline-none"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.3em] text-white/40 block mb-1">Até</label>
+            <input
+              data-testid={ADMIN.bookingsDateTo}
+              type="date"
+              value={dateTo}
+              onChange={(e) => setDateTo(e.target.value)}
+              className="bg-black/40 border border-white/15 px-3 py-2 text-sm text-white focus:border-[var(--brand)] focus:outline-none"
+            />
+          </div>
+          <div className="min-w-[200px]">
+            <label className="text-[10px] uppercase tracking-[0.3em] text-white/40 block mb-1">Buscar</label>
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-white/30" />
+              <input
+                data-testid={ADMIN.bookingsSearch}
+                type="search"
+                placeholder="Nome ou WhatsApp"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="w-full bg-black/40 border border-white/15 pl-9 pr-3 py-2 text-sm text-white placeholder:text-white/30 focus:border-[var(--brand)] focus:outline-none"
+              />
+            </div>
+          </div>
+        </div>
+        <button
+          type="button"
+          data-testid={ADMIN.exportCsv}
+          onClick={exportCsv}
+          disabled={exporting}
+          className="px-4 py-2 text-[11px] uppercase tracking-[0.2em] border border-[var(--brand)] text-[var(--brand)] hover:bg-[var(--brand)]/15 disabled:opacity-50 flex items-center gap-2 shrink-0"
+        >
+          {exporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+          Exportar CSV
+        </button>
+      </div>
+
       <div className="flex gap-2 mb-4 flex-wrap">
         {[
           { id: "all", label: "Todas" },
@@ -664,15 +773,46 @@ function BookingsAdmin({ bookings, onConfirm, onCancel, onReject }) {
             {f.label}
           </button>
         ))}
+        {hasActiveFilters && (
+          <button type="button" onClick={clearFilters}
+            className="px-3 py-1 text-[11px] uppercase tracking-[0.2em] border border-white/20 text-white/50 hover:text-white hover:border-white/40">
+            Limpar filtros
+          </button>
+        )}
       </div>
+
+      <div className="text-[11px] text-white/40 mb-2 uppercase tracking-[0.2em]">
+        {filtered.length} reserva{filtered.length === 1 ? "" : "s"}
+        {hasActiveFilters ? " · filtros ativos" : ""}
+      </div>
+
       <div className="glass overflow-x-auto">
         <div className="min-w-[1100px] grid grid-cols-[160px_220px_1fr_100px_140px_120px_220px] px-4 py-3 text-[10px] uppercase tracking-[0.3em] text-white/40 border-b border-white/10">
           <div>Data / Hora</div><div>Cliente</div><div>Partida</div><div>CPF</div><div>WhatsApp</div><div>Status</div><div>Ações</div>
         </div>
         {filtered.length === 0 ? (
-          <div className="p-10 text-center text-white/50">
-            <div className="font-heading text-2xl uppercase text-white/70">Nenhuma reserva neste filtro</div>
-            <p className="text-sm mt-2 max-w-sm mx-auto">Ajuste o filtro ou aguarde novas reservas do site / WhatsApp. Use o Calendário para bloquear horários.</p>
+          <div data-testid={ADMIN.bookingsEmpty} className="p-10 text-center text-white/50">
+            {bookings.length === 0 ? (
+              <>
+                <Ticket className="w-10 h-10 mx-auto mb-3 text-[var(--brand)]/50" />
+                <div className="font-heading text-2xl uppercase text-white/70">Nenhuma reserva ainda</div>
+                <p className="text-sm mt-2 max-w-md mx-auto">
+                  Quando clientes reservarem pelo site ou WhatsApp, elas aparecem aqui. Use o Calendário para bloquear horários ou criar reservas manuais.
+                </p>
+              </>
+            ) : (
+              <>
+                <Search className="w-10 h-10 mx-auto mb-3 text-[var(--brand)]/50" />
+                <div className="font-heading text-2xl uppercase text-white/70">Nenhuma reserva neste filtro</div>
+                <p className="text-sm mt-2 max-w-sm mx-auto">
+                  Ajuste datas, status ou busca — ou limpe os filtros para ver todas as {bookings.length} reservas carregadas.
+                </p>
+                <button type="button" onClick={clearFilters}
+                  className="mt-4 px-4 py-2 text-[11px] uppercase tracking-[0.2em] border border-[var(--brand)] text-[var(--brand)] hover:bg-[var(--brand)]/15">
+                  Limpar filtros
+                </button>
+              </>
+            )}
           </div>
         ) : filtered.map((b) => (
           <BookingRow key={b.id} b={b} onConfirm={onConfirm} onCancel={onCancel} onReject={onReject} />

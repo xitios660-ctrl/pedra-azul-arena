@@ -7,6 +7,8 @@ ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
 import os
+import csv
+import io
 import uuid
 import logging
 import time
@@ -124,7 +126,9 @@ def _rate_limit_auth(request: Request) -> None:
 
 @api.get("/health")
 async def health():
-    """Public health — no secrets. Used by Render healthCheckPath."""
+    """Public health — no secrets. Used by Render healthCheckPath.
+    WhatsApp may be DESCONECTADO after free-tier sleep; ok still tracks DB only.
+    """
     db_ok = False
     try:
         await db.command("ping")
@@ -141,6 +145,7 @@ async def health():
         "whatsapp": wa,
         "whatsapp_bot": bool(wa_status.get("bot")),
         "court": COURT_ID,
+        "upload_backend": "gridfs",
     }
 
 
@@ -757,13 +762,132 @@ async def admin_dashboard(admin: dict = Depends(require_admin)):
     }
 
 
-@api.get("/admin/bookings")
-async def admin_list_bookings(admin: dict = Depends(require_admin), status: Optional[str] = None):
-    q = {}
+def _booking_end_time(start_time: str, duration_minutes: int = 60) -> str:
+    try:
+        h, m = map(int, (start_time or "00:00").split(":")[:2])
+    except ValueError:
+        return ""
+    total = h * 60 + m + int(duration_minutes or 60)
+    return f"{(total // 60) % 24:02d}:{total % 60:02d}"
+
+
+def _mask_cpf_export(b: dict) -> str:
+    """Prefer stored cpf_masked; else format digits. Never dump raw secrets."""
+    masked = (b.get("cpf_masked") or "").strip()
+    if masked:
+        return masked
+    return mask_cpf(b.get("cpf") or "")
+
+
+def _admin_bookings_query(
+    status: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    q: Optional[str] = None,
+) -> dict:
+    query: dict = {}
     if status:
-        q["status"] = status
-    items = await db.bookings.find(q, {"_id": 0}).sort("created_at", -1).to_list(500)
-    return items
+        query["status"] = status
+    date_clause: dict = {}
+    if date_from:
+        date_clause["$gte"] = date_from
+    if date_to:
+        date_clause["$lte"] = date_to
+    if date_clause:
+        query["date"] = date_clause
+    needle = (q or "").strip()
+    if needle:
+        # Case-insensitive name / phone / whatsapp search (digits help phone match)
+        digits = only_digits(needle)
+        or_clause = [
+            {"customer_name": {"$regex": needle, "$options": "i"}},
+            {"whatsapp": {"$regex": needle, "$options": "i"}},
+        ]
+        if digits and digits != needle:
+            or_clause.append({"whatsapp": {"$regex": digits}})
+        query["$or"] = or_clause
+    return query
+
+
+async def _admin_fetch_bookings(
+    status: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    q: Optional[str] = None,
+    limit: int = 2000,
+) -> list:
+    query = _admin_bookings_query(status=status, date_from=date_from, date_to=date_to, q=q)
+    return await db.bookings.find(query, {"_id": 0}).sort("created_at", -1).to_list(limit)
+
+
+@api.get("/admin/bookings")
+async def admin_list_bookings(
+    admin: dict = Depends(require_admin),
+    status: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    q: Optional[str] = None,
+):
+    return await _admin_fetch_bookings(status=status, date_from=date_from, date_to=date_to, q=q, limit=500)
+
+
+@api.get("/admin/bookings/export.csv")
+async def admin_export_bookings_csv(
+    admin: dict = Depends(require_admin),
+    status: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    q: Optional[str] = None,
+):
+    """CSV export for admin ops — same filters as list. UTF-8 BOM for Excel."""
+    items = await _admin_fetch_bookings(status=status, date_from=date_from, date_to=date_to, q=q, limit=5000)
+    buf = io.StringIO()
+    # UTF-8 BOM so Excel (pt-BR) opens accents correctly
+    buf.write("\ufeff")
+    writer = csv.writer(buf)
+    writer.writerow([
+        "id",
+        "date",
+        "start",
+        "end",
+        "customer_name",
+        "phone_whatsapp",
+        "cpf",
+        "status",
+        "payment_status",
+        "amount",
+        "created_at",
+    ])
+    for b in items:
+        pay = b.get("payment") or {}
+        amount = b.get("deposit")
+        if amount is None:
+            amount = pay.get("amount")
+        if amount is None:
+            amount = b.get("total")
+        writer.writerow([
+            b.get("id") or "",
+            b.get("date") or "",
+            b.get("start_time") or "",
+            _booking_end_time(b.get("start_time") or "", b.get("duration_minutes") or 60),
+            b.get("customer_name") or "",
+            b.get("whatsapp") or "",
+            _mask_cpf_export(b),
+            b.get("status") or "",
+            pay.get("status") or "",
+            amount if amount is not None else "",
+            b.get("created_at") or "",
+        ])
+    raw = buf.getvalue().encode("utf-8")
+    filename = "pedra-azul-reservas.csv"
+    return Response(
+        content=raw,
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 @api.post("/admin/bookings/{booking_id}/confirm")

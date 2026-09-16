@@ -20,6 +20,8 @@ H=$(curl -fsS "$API/health" || true)
 if echo "$H" | grep -q '"ok"'; then
   if echo "$H" | grep -Eiq 'password|jwt|secret|mongo_url|private'; then
     bad "health" "possible secret leak"
+  elif echo "$H" | grep -q 'upload_backend'; then
+    ok "GET /api/health (upload_backend)"
   else
     ok "GET /api/health"
   fi
@@ -78,6 +80,13 @@ if [ "$CODE3" = "401" ] || [ "$CODE3" = "403" ]; then
   ok "GET /api/admin/bookings/awaiting → $CODE3 (auth reject)"
 else
   bad "awaiting auth" "expected 401/403 got $CODE3"
+fi
+
+CODE4=$(curl -s -o /tmp/pa_export.csv -w "%{http_code}" "$API/admin/bookings/export.csv" || echo "000")
+if [ "$CODE4" = "401" ] || [ "$CODE4" = "403" ]; then
+  ok "GET /api/admin/bookings/export.csv → $CODE4 (auth reject)"
+else
+  bad "export csv auth" "expected 401/403 got $CODE4"
 fi
 
 # 4) Create booking conflict 409
