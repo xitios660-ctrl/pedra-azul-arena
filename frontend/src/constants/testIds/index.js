@@ -82,6 +82,8 @@ export const ADMIN = {
   viewComprovante: (id) => `admin-view-comprovante-${id}`,
   confirmBooking: (id) => `admin-confirm-${id}`,
   cancelBooking: (id) => `admin-cancel-${id}`,
+  rejectBooking: (id) => `admin-reject-${id}`,
+  awaitingQueue: "admin-awaiting-queue",
   sendWhatsapp: (id) => `admin-send-whatsapp-${id}`,
   tournamentSelect: "admin-tournament-select",
   scoreInputA: (id) => `score-a-${id}`,

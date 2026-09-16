@@ -123,3 +123,9 @@ cd whatsapp && node tests/nl_smoke.mjs
 ```
 
 Cobertura smoke: health (sem leak), courts, create booking + **409** conflict, admin auth reject (dashboard + metrics).
+
+## Cycle 5 notes
+- WhatsApp **image comprovante** → booking `awaiting_admin` (informado); **never** auto-confirms.
+- Persisted funnel metrics in Mongo (`daily_metrics`); `GET /api/admin/metrics` includes `last_7_days`.
+- Admin **Fila PIX** for informados + one-click confirm / reject.
+

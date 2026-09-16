@@ -1,4 +1,4 @@
-"""Cycle 4 smoke / regression tests — hit local or BASE_URL API.
+"""Cycle 5 smoke / regression tests — hit local or BASE_URL API.
 
 Run:
   BASE_URL=http://127.0.0.1:8000 python -m pytest backend/tests/test_smoke.py -q
@@ -7,8 +7,8 @@ Or from repo root with API up:
 """
 from __future__ import annotations
 
+import io
 import os
-import uuid
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -21,11 +21,27 @@ TZ = ZoneInfo("America/Sao_Paulo")
 
 # Valid CPF for create tests
 SMOKE_CPF = "52998224725"
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "Gugu123@")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "Gugu123@")
 
 
 @pytest.fixture(scope="module")
 def s():
     return requests.Session()
+
+
+@pytest.fixture(scope="module")
+def admin_session():
+    """Bearer auth — cookies are Secure/SameSite=None and won't stick on plain HTTP."""
+    sess = requests.Session()
+    r = sess.post(f"{API}/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD}, timeout=10)
+    if r.status_code != 200:
+        pytest.skip(f"admin login unavailable: {r.status_code} {r.text[:120]}")
+    token = (r.json() or {}).get("access_token")
+    if not token:
+        pytest.skip("login returned no access_token")
+    sess.headers["Authorization"] = f"Bearer {token}"
+    return sess
 
 
 def test_health_safe(s):
@@ -49,10 +65,14 @@ def test_courts(s):
 
 
 def test_admin_auth_reject(s):
-    r = s.get(f"{API}/admin/dashboard", timeout=10)
+    # fresh session without cookies
+    bare = requests.Session()
+    r = bare.get(f"{API}/admin/dashboard", timeout=10)
     assert r.status_code in (401, 403), r.text
-    r2 = s.get(f"{API}/admin/metrics", timeout=10)
+    r2 = bare.get(f"{API}/admin/metrics", timeout=10)
     assert r2.status_code in (401, 403), r2.text
+    r3 = bare.get(f"{API}/admin/bookings/awaiting", timeout=10)
+    assert r3.status_code in (401, 403), r3.text
 
 
 def test_booking_conflict_409(s):
@@ -72,12 +92,160 @@ def test_booking_conflict_409(s):
     r1 = s.post(f"{API}/bookings", json=payload, timeout=15)
     assert r1.status_code in (200, 201, 409), r1.text
     if r1.status_code == 409:
-        # slot already taken — conflict path exists
         return
     booking = r1.json()
     r2 = s.post(f"{API}/bookings", json=payload, timeout=15)
     assert r2.status_code == 409, r2.text
-    # cleanup
     bid = booking.get("id")
     if bid:
         s.post(f"{API}/bookings/{bid}/cancel", params={"cpf": SMOKE_CPF}, timeout=10)
+
+
+def test_comprovante_sets_informado_never_confirms(s):
+    """Upload image proof → awaiting_admin; must NOT become confirmed."""
+    day = (datetime.now(TZ) + timedelta(days=22)).strftime("%Y-%m-%d")
+    slot = "20:00"
+    payload = {
+        "court_id": "court-1",
+        "date": day,
+        "start_time": slot,
+        "duration_minutes": 60,
+        "cpf": SMOKE_CPF,
+        "customer_name": "Smoke Comprovante",
+        "whatsapp": "11977776666",
+        "your_team_name": "A",
+        "opponent_team_name": "B",
+    }
+    r1 = s.post(f"{API}/bookings", json=payload, timeout=15)
+    assert r1.status_code in (200, 201, 409), r1.text
+    if r1.status_code == 409:
+        # reuse lookup by creating different slot
+        payload["start_time"] = "19:00"
+        r1 = s.post(f"{API}/bookings", json=payload, timeout=15)
+        assert r1.status_code in (200, 201), r1.text
+    booking = r1.json()
+    bid = booking["id"]
+    assert booking["status"] == "pending"
+    # tiny PNG
+    png = (
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+        b"\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\xf8\x0f\x00"
+        b"\x00\x01\x01\x00\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB`\x82"
+    )
+    files = {"file": ("comprovante.png", io.BytesIO(png), "image/png")}
+    r2 = s.post(f"{API}/bookings/{bid}/comprovante", files=files, timeout=15)
+    assert r2.status_code == 200, r2.text
+    data = r2.json()
+    assert data["status"] == "awaiting_admin"
+    assert data["payment"]["status"] == "awaiting_confirmation"
+    assert data["payment"].get("comprovante_url")
+    assert data["status"] != "confirmed"
+    assert data["payment"]["status"] != "paid"
+    # cleanup
+    s.post(f"{API}/bookings/{bid}/cancel", params={"cpf": SMOKE_CPF}, timeout=10)
+
+
+def test_internal_wa_comprovante_by_phone(s):
+    day = (datetime.now(TZ) + timedelta(days=23)).strftime("%Y-%m-%d")
+    phone = "11966665555"
+    payload = {
+        "court_id": "court-1",
+        "date": day,
+        "start_time": "18:00",
+        "duration_minutes": 60,
+        "cpf": SMOKE_CPF,
+        "customer_name": "Smoke WA Img",
+        "whatsapp": phone,
+        "your_team_name": "A",
+        "opponent_team_name": "B",
+    }
+    r1 = s.post(f"{API}/bookings", json=payload, timeout=15)
+    if r1.status_code == 409:
+        payload["start_time"] = "17:00"
+        r1 = s.post(f"{API}/bookings", json=payload, timeout=15)
+    assert r1.status_code in (200, 201), r1.text
+    bid = r1.json()["id"]
+    png = (
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+        b"\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\xf8\x0f\x00"
+        b"\x00\x01\x01\x00\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB`\x82"
+    )
+    files = {"file": ("wa.png", io.BytesIO(png), "image/png")}
+    headers = {}
+    tok = os.environ.get("WHATSAPP_INTERNAL_TOKEN") or ""
+    if tok:
+        headers["X-Internal-Token"] = tok
+    r2 = s.post(
+        f"{API}/internal/whatsapp/comprovante",
+        data={"phone": phone},
+        files=files,
+        headers=headers,
+        timeout=15,
+    )
+    assert r2.status_code == 200, r2.text
+    body = r2.json()
+    assert body.get("auto_confirmed") is False
+    assert body.get("status") == "awaiting_admin"
+    assert body["booking"]["status"] == "awaiting_admin"
+    s.post(f"{API}/bookings/{bid}/cancel", params={"cpf": SMOKE_CPF}, timeout=10)
+
+
+def test_admin_metrics_last_7_days(admin_session):
+    r = admin_session.get(f"{API}/admin/metrics", timeout=10)
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert "bookings_today" in data or "wa_status" in data
+    assert "last_7_days" in data
+    funnel = data["last_7_days"]
+    assert "series" in funnel and "totals" in funnel
+    assert isinstance(funnel["series"], list)
+    assert len(funnel["series"]) == 7
+    for day in funnel["series"]:
+        assert "bookings_created" in day
+        assert "bookings_confirmed" in day
+        assert "bookings_cancelled" in day
+        assert "occupancy_hours" in day
+
+
+def test_admin_awaiting_queue_and_reject(admin_session):
+    day = (datetime.now(TZ) + timedelta(days=24)).strftime("%Y-%m-%d")
+    payload = {
+        "court_id": "court-1",
+        "date": day,
+        "start_time": "16:00",
+        "duration_minutes": 60,
+        "cpf": SMOKE_CPF,
+        "customer_name": "Smoke Reject",
+        "whatsapp": "11955554444",
+        "your_team_name": "A",
+        "opponent_team_name": "B",
+    }
+    r1 = admin_session.post(f"{API}/bookings", json=payload, timeout=15)
+    if r1.status_code == 409:
+        payload["start_time"] = "15:00"
+        r1 = admin_session.post(f"{API}/bookings", json=payload, timeout=15)
+    assert r1.status_code in (200, 201), r1.text
+    bid = r1.json()["id"]
+    png = (
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+        b"\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\xf8\x0f\x00"
+        b"\x00\x01\x01\x00\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB`\x82"
+    )
+    files = {"file": ("c.png", io.BytesIO(png), "image/png")}
+    r2 = admin_session.post(f"{API}/bookings/{bid}/comprovante", files=files, timeout=15)
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["status"] == "awaiting_admin"
+
+    q = admin_session.get(f"{API}/admin/bookings/awaiting", timeout=10)
+    assert q.status_code == 200, q.text
+    ids = [b["id"] for b in q.json().get("bookings", [])]
+    assert bid in ids
+
+    rj = admin_session.post(f"{API}/admin/bookings/{bid}/reject", timeout=10)
+    assert rj.status_code == 200, rj.text
+    assert rj.json().get("status") == "cancelled"
+    # must not be confirmed
+    got = admin_session.get(f"{API}/bookings/{bid}", timeout=10)
+    assert got.status_code == 200
+    assert got.json()["status"] == "cancelled"
+    assert got.json()["payment"]["status"] == "cancelled"

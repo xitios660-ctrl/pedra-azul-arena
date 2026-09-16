@@ -65,6 +65,11 @@ export default function AdminDashboard() {
     await api.post(`/admin/bookings/${id}/cancel`);
     refresh();
   };
+  const rejectBooking = async (id) => {
+    if (!window.confirm("Recusar comprovante / rejeitar PIX? A reserva será cancelada (sem auto-confirmação).")) return;
+    await api.post(`/admin/bookings/${id}/reject`);
+    refresh();
+  };
 
   return (
     <PageShell hideWhatsApp>
@@ -97,11 +102,16 @@ export default function AdminDashboard() {
             {Array.from({ length: 4 }).map((_, i) => <div key={i} className="skeleton-card h-28" />)}
           </div>
         )}
-        {activeTab === "dashboard" && stats && <DashboardView stats={stats} />}
+        {activeTab === "dashboard" && stats && (
+          <DashboardView stats={stats} bookings={bookings}
+            onConfirm={confirmAndPrepareWhatsapp}
+            onReject={rejectBooking} />
+        )}
         {activeTab === "bookings" && (
           <BookingsAdmin bookings={bookings}
             onConfirm={confirmAndPrepareWhatsapp}
-            onCancel={cancelBooking} />
+            onCancel={cancelBooking}
+            onReject={rejectBooking} />
         )}
         {activeTab === "calendar" && <AdminCalendar />}
         {activeTab === "whatsapp" && <WhatsAppAdmin />}
@@ -313,6 +323,20 @@ function WhatsAppAdmin() {
             </div>
           </div>
         )}
+        {metrics?.last_7_days?.series?.length > 0 && (
+          <div className="mt-4 p-3 bg-black/30 border border-white/10" data-testid="admin-funnel-7d">
+            <div className="text-[10px] uppercase tracking-[0.3em] text-white/40 mb-2">Funil / ocupação · 7 dias (Mongo)</div>
+            <div className="grid grid-cols-4 gap-2 text-center text-xs">
+              <div><div className="text-white/40">Criadas</div><div className="font-heading text-lg text-[var(--brand)]">{metrics.last_7_days.totals?.bookings_created ?? 0}</div></div>
+              <div><div className="text-white/40">Confirmadas</div><div className="font-heading text-lg text-[var(--success)]">{metrics.last_7_days.totals?.bookings_confirmed ?? 0}</div></div>
+              <div><div className="text-white/40">Canceladas</div><div className="font-heading text-lg text-[var(--danger)]">{metrics.last_7_days.totals?.bookings_cancelled ?? 0}</div></div>
+              <div><div className="text-white/40">Horas ocup.</div><div className="font-heading text-lg">{metrics.last_7_days.totals?.occupancy_hours ?? 0}</div></div>
+            </div>
+            {metrics.awaiting_admin_count > 0 && (
+              <div className="mt-2 text-[11px] text-[var(--brand)]">{metrics.awaiting_admin_count} informado(s) na fila</div>
+            )}
+          </div>
+        )}
         <details className="mt-6 group">
           <summary className="cursor-pointer text-[11px] uppercase tracking-[0.25em] text-[var(--brand)] list-none flex items-center gap-2">
             <Activity className="w-3.5 h-3.5" /> Troubleshooting WhatsApp
@@ -381,16 +405,24 @@ function KPI({ icon, label, value, accent = "var(--brand)", testId }) {
   );
 }
 
-function DashboardView({ stats }) {
+function DashboardView({ stats, bookings = [], onConfirm, onReject }) {
   const maxRev = Math.max(1, ...stats.revenue_series.map(d => d.revenue));
+  const awaiting = (bookings || []).filter((b) => b.status === "awaiting_admin");
   return (
     <>
       <div className="grid md:grid-cols-4 gap-4 mb-8">
         <KPI testId={ADMIN.kpiRevenue} icon={<DollarSign className="w-4 h-4 text-[var(--brand)]" />} label="Receita PIX (calção)" value={fmtBRL(stats.revenue_deposits)} />
         <KPI testId={ADMIN.kpiOccupancy} icon={<TrendingUp className="w-4 h-4 text-[var(--success)]" />} label="Ocupação Hoje" value={`${stats.occupancy_today_pct}%`} accent="var(--success)" />
         <KPI testId={ADMIN.kpiConfirmed} icon={<CheckCircle2 className="w-4 h-4 text-[var(--success)]" />} label="Confirmadas" value={stats.confirmed_bookings} accent="var(--success)" />
-        <KPI testId={ADMIN.kpiAwaiting} icon={<Hourglass className="w-4 h-4 text-[var(--brand)]" />} label="A validar" value={stats.awaiting_admin_bookings || 0} accent="var(--brand)" />
+        <KPI testId={ADMIN.kpiAwaiting} icon={<Hourglass className="w-4 h-4 text-[var(--brand)]" />} label="Informados (fila)" value={stats.awaiting_admin_bookings || awaiting.length || 0} accent="var(--brand)" />
       </div>
+
+      <AwaitingPixQueue
+        bookings={awaiting}
+        onConfirm={onConfirm}
+        onReject={onReject}
+      />
+
 
       <div className="grid lg:grid-cols-[1.5fr_1fr] gap-6">
         <div className="glass p-6">
@@ -432,15 +464,28 @@ function DashboardView({ stats }) {
   );
 }
 
-function BookingsAdmin({ bookings, onConfirm, onCancel }) {
+function BookingsAdmin({ bookings, onConfirm, onCancel, onReject }) {
+  const awaitingCount = bookings.filter((b) => b.status === "awaiting_admin").length;
   const [filter, setFilter] = useState("all");
+  const [autoFocused, setAutoFocused] = useState(false);
+  useEffect(() => {
+    if (!autoFocused && awaitingCount > 0) {
+      setFilter("awaiting_admin");
+      setAutoFocused(true);
+    }
+  }, [awaitingCount, autoFocused]);
   const filtered = filter === "all" ? bookings : bookings.filter(b => b.status === filter);
   return (
     <div>
-      <div className="flex gap-2 mb-4">
+      <AwaitingPixQueue
+        bookings={bookings.filter((b) => b.status === "awaiting_admin")}
+        onConfirm={onConfirm}
+        onReject={onReject}
+      />
+      <div className="flex gap-2 mb-4 flex-wrap">
         {[
           { id: "all", label: "Todas" },
-          { id: "awaiting_admin", label: "A validar", color: "var(--brand)" },
+          { id: "awaiting_admin", label: `Informados (${awaitingCount})`, color: "var(--brand)" },
           { id: "pending", label: "Pendentes" },
           { id: "confirmed", label: "Confirmadas" },
           { id: "cancelled", label: "Canceladas" },
@@ -465,14 +510,65 @@ function BookingsAdmin({ bookings, onConfirm, onCancel }) {
             <p className="text-sm mt-2 max-w-sm mx-auto">Ajuste o filtro ou aguarde novas reservas do site / WhatsApp. Use o Calendário para bloquear horários.</p>
           </div>
         ) : filtered.map((b) => (
-          <BookingRow key={b.id} b={b} onConfirm={onConfirm} onCancel={onCancel} />
+          <BookingRow key={b.id} b={b} onConfirm={onConfirm} onCancel={onCancel} onReject={onReject} />
         ))}
       </div>
     </div>
   );
 }
 
-function BookingRow({ b, onConfirm, onCancel }) {
+
+function AwaitingPixQueue({ bookings, onConfirm, onReject }) {
+  if (!bookings?.length) return null;
+  return (
+    <div data-testid={ADMIN.awaitingQueue} className="glass p-5 mb-6 border border-[var(--brand)]/40">
+      <div className="flex items-center justify-between gap-3 mb-3">
+        <div>
+          <div className="text-[11px] uppercase tracking-[0.35em] text-[var(--brand)] flex items-center gap-2">
+            <Hourglass className="w-4 h-4" /> Fila PIX — Informados
+          </div>
+          <p className="text-white/50 text-sm mt-1">
+            Comprovante recebido. Confirme ou recuse — nunca confirma sozinho.
+          </p>
+        </div>
+        <div className="font-heading text-3xl text-[var(--brand)]">{bookings.length}</div>
+      </div>
+      <div className="space-y-2">
+        {bookings.slice(0, 12).map((b) => (
+          <div key={b.id} className="flex flex-wrap items-center gap-3 p-3 bg-black/30 border border-white/10">
+            <div className="min-w-[120px]">
+              <div className="text-xs text-white/50">{new Date(b.date + "T00:00:00").toLocaleDateString("pt-BR")}</div>
+              <div className="font-heading text-xl text-[var(--brand)]">{b.start_time}</div>
+            </div>
+            <div className="flex-1 min-w-[140px]">
+              <div className="text-sm">{b.customer_name}</div>
+              <div className="font-mono text-[11px] text-white/40">+{b.whatsapp}</div>
+            </div>
+            {b.payment?.comprovante_url ? (
+              <a href={`${process.env.REACT_APP_BACKEND_URL}${b.payment.comprovante_url}`}
+                target="_blank" rel="noopener noreferrer"
+                className="text-[10px] uppercase tracking-[0.2em] px-2 py-1 border border-[var(--brand)] text-[var(--brand)] hover:bg-[var(--brand)]/15 flex items-center gap-1">
+                <Eye className="w-3 h-3" /> Ver comprovante
+              </a>
+            ) : (
+              <span className="text-[10px] text-white/30 uppercase">Sem link</span>
+            )}
+            <button onClick={() => onConfirm?.(b.id)}
+              className="text-[10px] uppercase tracking-[0.2em] px-3 py-1.5 border border-[var(--success)] text-[var(--success)] hover:bg-[var(--success)]/15 flex items-center gap-1">
+              <CheckCircle2 className="w-3 h-3" /> Confirmar
+            </button>
+            <button onClick={() => onReject?.(b.id)}
+              className="text-[10px] uppercase tracking-[0.2em] px-3 py-1.5 border border-[var(--warning)] text-[var(--warning)] hover:bg-[var(--warning)]/15">
+              Recusar
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function BookingRow({ b, onConfirm, onCancel, onReject }) {
   return (
     <motion.div data-testid={ADMIN.bookingRow(b.id)} initial={{ opacity: 0 }} animate={{ opacity: 1 }}
       className="min-w-[1100px] grid grid-cols-[160px_220px_1fr_100px_140px_120px_220px] px-4 py-3 items-center border-b border-white/5 hover:bg-white/[0.03] text-sm">
@@ -512,12 +608,24 @@ function BookingRow({ b, onConfirm, onCancel }) {
         {(b.status === "awaiting_admin" || b.status === "pending") && (
           <button data-testid={ADMIN.confirmBooking(b.id)} onClick={() => onConfirm(b.id)}
             className="text-[10px] uppercase tracking-[0.2em] px-2 py-1 border border-[var(--success)] text-[var(--success)] hover:bg-[var(--success)]/15 flex items-center gap-1">
-            <CheckCircle2 className="w-3 h-3" /> Confirmar (admin)
+            <CheckCircle2 className="w-3 h-3" /> Confirmar
           </button>
         )}
-        {b.status !== "cancelled" && b.status !== "expired" && (
+        {b.status === "awaiting_admin" && onReject && (
+          <button data-testid={ADMIN.rejectBooking(b.id)} onClick={() => onReject(b.id)}
+            className="text-[10px] uppercase tracking-[0.2em] px-2 py-1 border border-[var(--warning)] text-[var(--warning)] hover:bg-[var(--warning)]/15 flex items-center gap-1">
+            <FileCheck className="w-3 h-3" /> Recusar PIX
+          </button>
+        )}
+        {b.status !== "cancelled" && b.status !== "expired" && b.status !== "awaiting_admin" && (
           <button data-testid={ADMIN.cancelBooking(b.id)} onClick={() => onCancel(b.id)}
             className="text-[10px] uppercase tracking-[0.2em] px-2 py-1 border border-[var(--danger)]/60 text-[var(--danger)] hover:bg-[var(--danger)]/15">
+            Cancelar
+          </button>
+        )}
+        {b.status === "awaiting_admin" && (
+          <button data-testid={ADMIN.cancelBooking(b.id)} onClick={() => onCancel(b.id)}
+            className="text-[10px] uppercase tracking-[0.2em] px-2 py-1 border border-[var(--danger)]/40 text-white/40 hover:text-[var(--danger)] hover:border-[var(--danger)]/60">
             Cancelar
           </button>
         )}

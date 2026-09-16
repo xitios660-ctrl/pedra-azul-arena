@@ -8,6 +8,7 @@ import express from "express";
 import { MongoClient } from "mongodb";
 import makeWASocket, {
   DisconnectReason,
+  downloadMediaMessage,
   fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
 } from "@whiskeysockets/baileys";
@@ -131,13 +132,50 @@ function wireInbound(socket) {
             seenMsgIds.delete(first);
           }
         }
+        if (!bot) continue;
+
+        const imageMsg = msg.message.imageMessage;
+        if (imageMsg) {
+          try {
+            const buffer = await downloadMediaMessage(
+              msg,
+              "buffer",
+              {},
+              {
+                logger,
+                reuploadRequest: socket.updateMediaMessage,
+              }
+            );
+            const mimetype = imageMsg.mimetype || "image/jpeg";
+            const ext = mimetype.includes("png")
+              ? "png"
+              : mimetype.includes("webp")
+                ? "webp"
+                : "jpg";
+            await bot.handleImage(jid, buffer, {
+              filename: `wa-comprovante.${ext}`,
+              caption: imageMsg.caption || "",
+              mimetype,
+            });
+          } catch (e) {
+            logger.warn({ err: String(e), event: "wa_image_download_fail" }, "image download failed");
+            try {
+              await sendToJid(
+                jid,
+                "Recebi sua imagem, mas não consegui baixar agora. Pode reenviar o comprovante?"
+              );
+            } catch (_) {}
+          }
+          // Image handled as comprovante path — do not also run NL on caption alone
+          // (caption is logged inside handleImage; never auto-confirms)
+          continue;
+        }
+
         const text =
           msg.message.conversation ||
           msg.message.extendedTextMessage?.text ||
-          msg.message.imageMessage?.caption ||
           "";
         if (!String(text).trim()) continue;
-        if (!bot) continue;
         await bot.handle(jid, text);
       } catch (e) {
         logger.warn({ err: String(e) }, "inbound handler error");

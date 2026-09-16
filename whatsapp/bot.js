@@ -67,7 +67,8 @@ function helpFallback() {
     `• preço, duração, PIX e estacionamento\n` +
     `• endereço / maps\n` +
     `• reservar (ex.: "quero reservar amanhã às 20h")\n` +
-    `• cancelar ou remarcar (só no seu WhatsApp)\n\n` +
+    `• cancelar ou remarcar (só no seu WhatsApp)\n` +
+    `• enviar *foto do comprovante PIX* (admin valida — nunca confirma sozinho)\n\n` +
     `É só escrever em texto livre 🙂`
   );
 }
@@ -179,9 +180,9 @@ export function createBot(deps) {
           await reply(
             `💳 *Como pagar (PIX)*\n` +
               `1) Reserve no *site* (fluxo com CPF) → gera PIX do *calção (30%)*.\n` +
-              `2) Pague e *envie o comprovante* (imagem) no site.\n` +
-              `3) Status: *aguardando → informado → confirmado* (só o admin confirma).\n` +
-              `Pelo WhatsApp a reserva fica confirmada e o pagamento combinamos na hora.\n` +
+              `2) Pague e *envie a foto do comprovante* no site *ou aqui no WhatsApp*.\n` +
+              `3) Status: *aguardando → informado → confirmado* (só o admin confirma — nunca automático).\n` +
+              `Pelo WhatsApp você também pode reservar; se já tiver PIX pendente, mande a *imagem* do comprovante.\n` +
               `PIX do site expira em ~45 min se não pagar.`
           );
           return;
@@ -501,5 +502,69 @@ export function createBot(deps) {
     }
   }
 
-  return { handle, phoneFromJid, phoneVariants, phonesMatch, notifyAdmin };
+
+  /**
+   * Inbound image = possible PIX comprovante.
+   * Attaches to pending/awaiting booking for this phone → status informado (awaiting_admin).
+   * NEVER auto-confirms.
+   */
+  async function handleImage(jid, buffer, meta = {}) {
+    const phone = phoneFromJid(jid);
+    const reply = async (msg) => {
+      await sendToJid(jid, msg);
+    };
+    const filename = meta.filename || "comprovante.jpg";
+    const caption = String(meta.caption || "").trim();
+    logger.info(
+      { event: "wa_image_in", jid: phone, bytes: buffer?.length || 0, filename },
+      "inbound image"
+    );
+    if (!buffer || !buffer.length) {
+      await reply(`Recebi a imagem, mas ela veio vazia. Pode reenviar o comprovante?`);
+      return;
+    }
+    try {
+      const result = await api.uploadComprovante(phone, buffer, filename);
+      const b = result.booking || {};
+      logger.info(
+        {
+          event: "comprovante_wa",
+          booking_id: b.id?.slice?.(0, 8),
+          status: result.status || b.status,
+          auto_confirmed: false,
+        },
+        "comprovante attached — awaiting admin"
+      );
+      await reply(
+        `🧾 *Comprovante recebido!*\n` +
+          `Reserva: *${b.date || "—"}* às *${b.start_time || "—"}*\n` +
+          `Status: *informado* (aguardando o admin validar o PIX).\n\n` +
+          `⚠️ A confirmação *não é automática* — o admin vai revisar e te avisa.`
+      );
+      await notifyAdmin(
+        `🧾 Comprovante WhatsApp (informado)\n` +
+          `${b.customer_name || "Cliente"} · ${b.date || ""} ${b.start_time || ""}\n` +
+          `Tel: +${phone}\n` +
+          `ID: ${(b.id || "").slice(0, 8)}\n` +
+          `Link: ${b.payment?.comprovante_url || "(anexado)"}\n` +
+          `⚠️ Validar no Admin — NÃO auto-confirmado`
+      );
+      if (caption) {
+        logger.info({ event: "comprovante_caption", caption: caption.slice(0, 80) }, "caption ignored for confirm");
+      }
+    } catch (e) {
+      if (e.status === 404) {
+        await reply(
+          `Recebi sua imagem, mas *não achei reserva pendente* neste WhatsApp.\n` +
+            `Faça a reserva no *site* (PIX), depois reenvie o comprovante aqui ou pelo site.\n` +
+            `Lembre: só o admin confirma o pagamento.`
+        );
+      } else {
+        logger.warn({ err: String(e), event: "comprovante_wa_fail" }, "comprovante upload failed");
+        await reply(`Não consegui gravar o comprovante agora (${e.message}). Tente de novo ou use o site.`);
+      }
+    }
+  }
+
+  return { handle, handleImage, phoneFromJid, phoneVariants, phonesMatch, notifyAdmin };
 }

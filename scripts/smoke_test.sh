@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
-# Pedra Azul — local/API smoke tests (Cycle 4)
+# Pedra Azul — local/API smoke tests (Cycle 5)
 # Usage:
 #   BASE_URL=http://127.0.0.1:8000 ./scripts/smoke_test.sh
-#   # or with pytest (preferred if API is up):
-#   BASE_URL=http://127.0.0.1:8000 python -m pytest backend/tests/test_smoke.py -q
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -20,7 +18,6 @@ echo "== Pedra Azul smoke @ $API =="
 # 1) Health (safe public)
 H=$(curl -fsS "$API/health" || true)
 if echo "$H" | grep -q '"ok"'; then
-  # Must not leak secrets
   if echo "$H" | grep -Eiq 'password|jwt|secret|mongo_url|private'; then
     bad "health" "possible secret leak"
   else
@@ -35,7 +32,6 @@ C=$(curl -fsS "$API/courts" || true)
 if echo "$C" | grep -q 'court-1\|Pedra Azul\|price'; then
   ok "GET /api/courts"
 else
-  # some deployments return array with id
   if echo "$C" | grep -q '\['; then
     ok "GET /api/courts (array)"
   else
@@ -43,12 +39,12 @@ else
   fi
 fi
 
-# 3) Admin auth reject (no cookie / bad token)
+# 3) Admin auth reject
 CODE=$(curl -s -o /tmp/pa_admin.json -w "%{http_code}" "$API/admin/dashboard" || echo "000")
 if [ "$CODE" = "401" ] || [ "$CODE" = "403" ]; then
   ok "GET /api/admin/dashboard → $CODE (auth reject)"
 else
-  bad "admin auth reject" "expected 401/403 got $CODE body=$(head -c 120 /tmp/pa_admin.json 2>/dev/null || true)"
+  bad "admin auth reject" "expected 401/403 got $CODE"
 fi
 
 CODE2=$(curl -s -o /tmp/pa_metrics.json -w "%{http_code}" "$API/admin/metrics" || echo "000")
@@ -58,14 +54,19 @@ else
   bad "admin metrics auth" "expected 401/403 got $CODE2"
 fi
 
-# 4) Create booking conflict 409 (best-effort: create twice same slot)
-# Needs a free future slot — use a far date evening hour
+CODE3=$(curl -s -o /tmp/pa_await.json -w "%{http_code}" "$API/admin/bookings/awaiting" || echo "000")
+if [ "$CODE3" = "401" ] || [ "$CODE3" = "403" ]; then
+  ok "GET /api/admin/bookings/awaiting → $CODE3 (auth reject)"
+else
+  bad "awaiting auth" "expected 401/403 got $CODE3"
+fi
+
+# 4) Create booking conflict 409
 DATE=$(python3 - <<'PY'
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 tz = ZoneInfo("America/Sao_Paulo")
 d = datetime.now(tz) + timedelta(days=14)
-# pick a Wednesday-ish far date
 print(d.strftime("%Y-%m-%d"))
 PY
 )
@@ -95,14 +96,20 @@ if [ "$R1" = "200" ] || [ "$R1" = "201" ]; then
   if [ "$R2" = "409" ]; then
     ok "POST /api/bookings conflict → 409"
   else
-    bad "booking 409" "second create got $R2 (body=$(head -c 160 /tmp/pa_b2.json))"
+    bad "booking 409" "second create got $R2"
   fi
-  # cleanup cancel if we have id + cpf
   BID=$(python3 -c "import json;print(json.load(open('/tmp/pa_b1.json')).get('id',''))" 2>/dev/null || true)
   if [ -n "$BID" ]; then
-    curl -fsS -X POST "$API/bookings/$BID/cancel?cpf=52998224725" >/dev/null 2>&1 || \
-      curl -fsS -X POST "$API/bookings/$BID/cancel" -H "Content-Type: application/json" \
-        -d '{"cpf":"52998224725"}' >/dev/null 2>&1 || true
+    # 5) Comprovante → informado (not confirmed)
+    printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\xf8\x0f\x00\x00\x01\x01\x00\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB`\x82' > /tmp/pa_comp.png
+    RC=$(curl -s -o /tmp/pa_comp.json -w "%{http_code}" -X POST "$API/bookings/$BID/comprovante" \
+      -F "file=@/tmp/pa_comp.png;type=image/png" || echo "000")
+    if [ "$RC" = "200" ] && grep -q 'awaiting_admin' /tmp/pa_comp.json && ! grep -q '"status":"confirmed"' /tmp/pa_comp.json; then
+      ok "POST comprovante → awaiting_admin (no auto-confirm)"
+    else
+      bad "comprovante" "code=$RC body=$(head -c 180 /tmp/pa_comp.json)"
+    fi
+    curl -fsS -X POST "$API/bookings/$BID/cancel?cpf=52998224725" >/dev/null 2>&1 || true
   fi
 elif [ "$R1" = "409" ]; then
   ok "POST /api/bookings already conflict on first try (slot busy) — treat as 409 path OK"

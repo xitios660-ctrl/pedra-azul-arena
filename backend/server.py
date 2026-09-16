@@ -42,6 +42,7 @@ from auth_utils import (
 )
 from cpf_utils import validate_cpf, mask_cpf, only_digits, normalize_whatsapp, phone_variants, phones_match
 import metrics as ops_metrics
+import daily_metrics as daily_metrics
 from seed_data import run_all_seeds
 
 # -----------------------------------------------------------------------------
@@ -233,6 +234,40 @@ def _save_upload(file: UploadFile, subdir: str) -> str:
     out_path.write_bytes(content)
     return f"/api/uploads/{subdir}/{fname}"
 
+def _save_upload_bytes(content: bytes, subdir: str, filename: str | None = None) -> str:
+    """Save raw image bytes (WhatsApp comprovante path). Reuses same public URL layout."""
+    name = filename or "comprovante.jpg"
+    ext = name.rsplit(".", 1)[-1].lower() if "." in name else "jpg"
+    if ext not in {"png", "jpg", "jpeg", "webp", "gif"}:
+        ext = "jpg"
+    if len(content) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Imagem muito grande (máx 5MB)")
+    if not content:
+        raise HTTPException(status_code=400, detail="Imagem vazia")
+    fname = f"{uuid.uuid4().hex}.{ext}"
+    out_path = UPLOAD_DIR / subdir / fname
+    out_path.write_bytes(content)
+    return f"/api/uploads/{subdir}/{fname}"
+
+
+async def _attach_comprovante(booking_id: str, url: str) -> dict:
+    """Mark booking as awaiting_admin (informado). NEVER confirms payment."""
+    await db.bookings.update_one(
+        {"id": booking_id},
+        {"$set": {
+            "status": "awaiting_admin",
+            "payment.status": "awaiting_confirmation",
+            "payment.comprovante_url": url,
+            "payment.comprovante_uploaded_at": _now_iso(),
+        }},
+    )
+    updated = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    logger.info(
+        "event=comprovante_attached booking_id=%s status=awaiting_admin auto_confirm=false",
+        booking_id[:8],
+    )
+    return updated
+
 
 @api.post("/uploads/crest")
 async def upload_crest(file: UploadFile = File(...)):
@@ -283,6 +318,7 @@ async def create_booking(payload: BookingCreate, request: Request):
         code = 404 if "não encontrada" in msg else 400
         raise HTTPException(status_code=code, detail=msg)
     ops_metrics.note_booking_create("web")
+    await daily_metrics.note_created(db)
     logger.info(
         "event=booking_create source=web booking_id=%s date=%s time=%s",
         booking["id"][:8],
@@ -294,7 +330,7 @@ async def create_booking(payload: BookingCreate, request: Request):
 
 @api.post("/bookings/{booking_id}/comprovante")
 async def upload_comprovante(booking_id: str, file: UploadFile = File(...)):
-    """Customer uploads PIX payment proof. Marks booking as awaiting_admin.
+    """Customer uploads PIX payment proof. Marks booking as awaiting_admin (informado).
     Never auto-confirms — only admin confirm path sets payment paid."""
     await bsvc.expire_stale_pending(db)
     b = await db.bookings.find_one({"id": booking_id})
@@ -305,17 +341,7 @@ async def upload_comprovante(booking_id: str, file: UploadFile = File(...)):
     if b["status"] not in ("pending", "awaiting_admin"):
         raise HTTPException(status_code=400, detail="Reserva não aceita comprovante neste estado")
     url = _save_upload(file, "comprovantes")
-    await db.bookings.update_one(
-        {"id": booking_id},
-        {"$set": {
-            "status": "awaiting_admin",
-            "payment.status": "awaiting_confirmation",
-            "payment.comprovante_url": url,
-            "payment.comprovante_uploaded_at": _now_iso(),
-        }},
-    )
-    updated = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
-    return updated
+    return await _attach_comprovante(booking_id, url)
 
 
 @api.get("/bookings/{booking_id}")
@@ -352,6 +378,7 @@ async def cancel_booking(booking_id: str, cpf: str):
         {"$set": {"status": "cancelled", "payment.status": "cancelled"}},
     )
     ops_metrics.note_booking_cancel("customer")
+    await daily_metrics.note_cancelled(db)
     logger.info(
         "event=booking_cancel source=customer booking_id=%s",
         booking_id[:8],
@@ -522,6 +549,8 @@ async def admin_confirm_booking(booking_id: str, admin: dict = Depends(require_a
         }},
     )
     updated = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    await daily_metrics.note_confirmed(db, updated.get("duration_minutes") or 60)
+    logger.info("event=booking_confirm source=admin booking_id=%s", booking_id[:8])
     msg = _build_whatsapp_message(updated)
     wa_link = f"https://wa.me/{updated['whatsapp']}?text={quote(msg)}"
     updated["whatsapp_link"] = wa_link
@@ -556,11 +585,55 @@ async def admin_cancel_booking(booking_id: str, admin: dict = Depends(require_ad
         {"$set": {"status": "cancelled", "payment.status": "cancelled"}},
     )
     ops_metrics.note_booking_cancel("admin")
+    await daily_metrics.note_cancelled(db)
     logger.info("event=booking_cancel source=admin booking_id=%s", booking_id[:8])
     return {"ok": True}
 
 
 
+
+
+
+@api.post("/admin/bookings/{booking_id}/reject")
+async def admin_reject_booking(booking_id: str, admin: dict = Depends(require_admin)):
+    """Reject PIX comprovante / pending booking — cancels, never confirms.
+    One-click from admin fila de informados."""
+    b = await db.bookings.find_one({"id": booking_id})
+    if not b:
+        raise HTTPException(status_code=404, detail="Reserva não encontrada")
+    if b["status"] not in ("pending", "awaiting_admin"):
+        raise HTTPException(status_code=400, detail="Só rejeita pendente ou informado")
+    await db.bookings.update_one(
+        {"id": booking_id},
+        {"$set": {
+            "status": "cancelled",
+            "payment.status": "cancelled",
+            "payment.rejected_at": _now_iso(),
+            "payment.rejected_by": admin.get("email"),
+        }},
+    )
+    ops_metrics.note_booking_cancel("admin_reject")
+    await daily_metrics.note_cancelled(db)
+    logger.info("event=booking_reject source=admin booking_id=%s", booking_id[:8])
+    # Best-effort WA notify customer
+    msg = (
+        f"Pedra Azul: o comprovante da reserva "
+        f"{b.get('date')} {b.get('start_time')} não foi validado. "
+        f"A reserva foi cancelada. Se precisar, envie outro comprovante após nova reserva no site."
+    )
+    sent = await whatsapp_bridge.send_text(b.get("whatsapp") or "", msg)
+    return {"ok": True, "id": booking_id, "status": "cancelled", "whatsapp_notified": bool(sent)}
+
+
+@api.get("/admin/bookings/awaiting")
+async def admin_awaiting_queue(admin: dict = Depends(require_admin)):
+    """Fila de reservas informadas (awaiting_admin) — precisam validação PIX."""
+    await bsvc.expire_stale_pending(db)
+    items = await db.bookings.find(
+        {"status": "awaiting_admin"},
+        {"_id": 0},
+    ).sort("payment.comprovante_uploaded_at", 1).to_list(200)
+    return {"bookings": items, "count": len(items)}
 
 
 # =============================================================================
@@ -637,6 +710,7 @@ async def internal_wa_create_booking(request: Request, payload: WaBookingIn):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     ops_metrics.note_booking_create("whatsapp")
+    await daily_metrics.note_created(db)
     logger.info(
         "event=booking_create source=whatsapp booking_id=%s date=%s time=%s",
         booking["id"][:8],
@@ -685,6 +759,7 @@ async def internal_wa_cancel(request: Request, payload: WaCancelIn):
     if res.modified_count != 1:
         return {"cancelled": False, "message": "Nenhuma reserva ativa neste número"}
     ops_metrics.note_booking_cancel("whatsapp")
+    await daily_metrics.note_cancelled(db)
     logger.info(
         "event=booking_cancel source=whatsapp booking_id=%s date=%s time=%s",
         b["id"][:8],
@@ -696,6 +771,71 @@ async def internal_wa_cancel(request: Request, payload: WaCancelIn):
         "id": b["id"],
         "date": b["date"],
         "start_time": b["start_time"],
+    }
+
+
+
+@api.post("/internal/whatsapp/comprovante")
+async def internal_wa_comprovante(
+    request: Request,
+    phone: str = Form(...),
+    booking_id: Optional[str] = Form(None),
+    file: UploadFile = File(...),
+):
+    """WhatsApp image as PIX proof → awaiting_admin (informado). NEVER auto-confirm."""
+    _require_internal(request)
+    await bsvc.expire_stale_pending(db)
+    variants = phone_variants(phone) or [normalize_whatsapp(phone)]
+    q = {
+        "whatsapp": {"$in": variants},
+        "status": {"$in": ["pending", "awaiting_admin"]},
+    }
+    if booking_id:
+        q["id"] = booking_id
+    b = await db.bookings.find_one(q, sort=[("created_at", -1)])
+    demote_to_informado = True
+    if not b or not phones_match(phone, b.get("whatsapp") or ""):
+        # WA-created bookings are often already confirmed with payment pending —
+        # attach proof for admin review but do NOT demote the reservation slot.
+        q2 = {
+            "whatsapp": {"$in": variants},
+            "status": "confirmed",
+            "payment.status": {"$in": ["pending", "awaiting_confirmation"]},
+        }
+        b = await db.bookings.find_one(q2, sort=[("created_at", -1)])
+        if not b or not phones_match(phone, b.get("whatsapp") or ""):
+            raise HTTPException(
+                status_code=404,
+                detail="Nenhuma reserva pendente neste WhatsApp para anexar comprovante",
+            )
+        demote_to_informado = False
+    content = await file.read()
+    url = _save_upload_bytes(content, "comprovantes", file.filename or "wa-comprovante.jpg")
+    if demote_to_informado:
+        updated = await _attach_comprovante(b["id"], url)
+        status_out = "awaiting_admin"
+    else:
+        await db.bookings.update_one(
+            {"id": b["id"]},
+            {"$set": {
+                "payment.status": "awaiting_confirmation",
+                "payment.comprovante_url": url,
+                "payment.comprovante_uploaded_at": _now_iso(),
+            }},
+        )
+        updated = await db.bookings.find_one({"id": b["id"]}, {"_id": 0})
+        status_out = updated.get("status")
+        logger.info(
+            "event=comprovante_attached booking_id=%s status=%s keep_confirmed=true auto_confirm=false",
+            b["id"][:8],
+            status_out,
+        )
+    return {
+        "ok": True,
+        "booking": updated,
+        "status": status_out,
+        "auto_confirmed": False,
+        "message": "Comprovante recebido. Aguardando validação do admin.",
     }
 
 
@@ -823,6 +963,7 @@ async def admin_calendar_create_booking(payload: AdminBookingIn, admin: dict = D
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     ops_metrics.note_booking_create("admin")
+    await daily_metrics.note_created(db)
     logger.info(
         "event=booking_create source=admin booking_id=%s date=%s time=%s",
         booking["id"][:8],
@@ -848,6 +989,14 @@ async def admin_metrics(admin: dict = Depends(require_admin)):
         snap = ops_metrics.snapshot(wa)
     elif last_err:
         snap["last_error_code"] = str(last_err)[:80]
+    # Persisted funnel / occupancy (last 7 days)
+    try:
+        funnel = await daily_metrics.summary_last_n(db, 7)
+    except Exception as e:
+        logger.warning("daily_metrics summary failed: %s", e)
+        funnel = {"days": 7, "series": [], "totals": {}}
+    snap["last_7_days"] = funnel
+    snap["awaiting_admin_count"] = await db.bookings.count_documents({"status": "awaiting_admin"})
     return snap
 
 
@@ -994,6 +1143,7 @@ async def startup():
     except Exception as e:
         logger.warning("reminder_sent backfill: %s", e)
     await run_all_seeds(db)
+    await daily_metrics.ensure_indexes(db)
     logger.info("Arena Futsal Premium API initialized (CPF + WA bot + calendar)")
 
 
