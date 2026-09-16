@@ -114,7 +114,7 @@ export function Field({ icon, label, children }) {
     <label className="block">
       <div className="text-[10px] tracking-[0.35em] uppercase text-white/40 mb-2">{label}</div>
       <div className="flex items-center gap-3 px-4 py-3 bg-black/40 border border-white/10 focus-within:border-[var(--brand)] transition-colors">
-        <span className="text-[var(--brand)]">{icon}</span>
+        <span className="text-[var(--brand)]" aria-hidden="true">{icon}</span>
         {children}
       </div>
     </label>

@@ -389,7 +389,7 @@ function AdminOnboardingChecklist({ onGoTab }) {
           aria-label="Dispensar checklist nesta sessão"
           data-testid="admin-onboarding-dismiss"
         >
-          <X className="w-4 h-4" />
+          <X className="w-4 h-4" aria-hidden />
         </button>
       </div>
       <ul className="space-y-2">

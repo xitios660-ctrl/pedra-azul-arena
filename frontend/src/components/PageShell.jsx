@@ -11,10 +11,15 @@ export default function PageShell({ children, hideFooter = false, hideWhatsApp =
 
   return (
     <div className="min-h-screen flex flex-col">
+      <a href="#main-content" className="skip-link" data-testid="skip-to-content">
+        Ir para o conteúdo
+      </a>
       <Navbar />
       <div className={`pt-[72px] flex-1 flex flex-col ${showFab ? "pb-[calc(5.5rem+env(safe-area-inset-bottom,0px))]" : ""}`}>
         <AnnouncementBanner />
-        <main className="flex-1">{children}</main>
+        <main id="main-content" role="main" className="flex-1" tabIndex={-1}>
+          {children}
+        </main>
         {!hideFooter && <Footer />}
       </div>
       {showFab && <WhatsAppFab />}

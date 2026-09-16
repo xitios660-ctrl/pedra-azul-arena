@@ -138,7 +138,10 @@ export default function DeskCheckIn() {
       className="min-h-screen bg-[var(--bg-base,#030305)] text-white px-4 py-6 pb-10"
       data-testid="desk-checkin-page"
     >
-      <div className="max-w-md mx-auto">
+      <a href="#main-content" className="skip-link" data-testid="skip-to-content">
+        Ir para o conteúdo
+      </a>
+      <main id="main-content" role="main" tabIndex={-1} className="max-w-md mx-auto">
         <div className="flex items-center justify-between mb-6">
           <div>
             <div className="text-[11px] tracking-[0.35em] uppercase text-[var(--brand,#00E5FF)]">
@@ -199,6 +202,7 @@ export default function DeskCheckIn() {
                     data-testid={
                       isOk ? "desk-pin-submit" : isBk ? "desk-pin-backspace" : `desk-pin-digit-${key}`
                     }
+                    aria-label={isBk ? "Apagar" : isOk ? "Confirmar PIN" : `Dígito ${key}`}
                     onClick={() => {
                       if (isBk) onBackspace();
                       else if (isOk) submitPin(pin);
@@ -297,7 +301,7 @@ export default function DeskCheckIn() {
             )}
           </div>
         )}
-      </div>
+      </main>
     </div>
   );
 }

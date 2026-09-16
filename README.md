@@ -316,3 +316,9 @@ Prod smoke: `GET /api/health`, `/api/courts`, `/api/site-settings`, WhatsApp `AG
 - CSP pragmática (enforcing): `self` + inline styles/scripts (CRA), Google Fonts, `img-src` data/blob (QR WhatsApp), `connect-src 'self'` (API + EventSource SSE). Links `wa.me` / Maps são navegação — não quebram.
 - Sem `/.well-known/security.txt` (contato e-mail não estava no projeto).
 
+## Cycle 42 notes
+- Acessibilidade: skip link **Ir para o conteúdo** (primeiro focável no `PageShell` e no Balcão) → `#main-content`.
+- Landmark `<main id="main-content" role="main">` nos shells de página.
+- `:focus-visible` global com anel ciano claro (vence `focus:outline-none` das utilities); skip-link visível no foco por teclado.
+- Spot-check aria-labels: PIN pad do balcão, escudos emoji no Booking, bloquear/desbloquear no calendário admin; ícones decorativos em Field/FormField.
+

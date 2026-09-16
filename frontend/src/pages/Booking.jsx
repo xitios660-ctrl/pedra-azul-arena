@@ -1430,7 +1430,7 @@ function FormField({ icon, label, children }) {
     <label className="block">
       <div className="text-[10px] tracking-[0.35em] uppercase text-white/40 mb-2">{label}</div>
       <div className="flex items-center gap-3 px-4 py-3 min-h-[48px] bg-black/40 border border-white/10 focus-within:border-[var(--brand)] transition-colors">
-        <span className="text-[var(--brand)] shrink-0">{icon}</span>
+        <span className="text-[var(--brand)] shrink-0" aria-hidden="true">{icon}</span>
         {children}
       </div>
     </label>
@@ -1487,10 +1487,16 @@ function TeamCard({ side, name, onName, crest, onCrest, nameTestId, uploadTestId
         <div className="text-[10px] uppercase tracking-[0.3em] text-white/40 mb-2">Escudo</div>
         <div className="flex flex-wrap gap-2">
           {EMOJI_CRESTS.map((c) => (
-            <button key={c} type="button" onClick={() => onCrest(c)}
+            <button
+              key={c}
+              type="button"
+              onClick={() => onCrest(c)}
+              aria-label={`Escudo ${c}`}
+              aria-pressed={crest === c}
               className={`w-9 h-9 grid place-items-center text-xl border transition-all ${
                 crest === c ? "border-[var(--brand)] bg-[var(--brand)]/15" : "border-white/10 hover:border-white/40"
-              }`}>{c}</button>
+              }`}
+            >{c}</button>
           ))}
           <button
             type="button"

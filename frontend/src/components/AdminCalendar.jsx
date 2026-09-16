@@ -516,6 +516,7 @@ export default function AdminCalendar() {
                     <button
                       type="button"
                       title="Bloquear dia"
+                      aria-label={`Bloquear dia ${day.date}`}
                       disabled={dayBusy}
                       onClick={(e) => { e.stopPropagation(); doBlockDay(day.date); }}
                       className="text-[9px] uppercase tracking-wider px-1 py-0.5 border border-[var(--danger)]/40 text-[var(--danger)] hover:bg-[var(--danger)]/10 disabled:opacity-40"
@@ -525,6 +526,7 @@ export default function AdminCalendar() {
                     <button
                       type="button"
                       title="Desbloquear dia"
+                      aria-label={`Desbloquear dia ${day.date}`}
                       disabled={dayBusy}
                       onClick={(e) => { e.stopPropagation(); doUnblockDay(day.date); }}
                       className="text-[9px] uppercase tracking-wider px-1 py-0.5 border border-white/20 text-white/50 hover:bg-white/5 disabled:opacity-40"

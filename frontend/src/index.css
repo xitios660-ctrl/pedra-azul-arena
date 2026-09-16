@@ -548,13 +548,58 @@ h1, h2, h3, h4 { font-family: 'Teko', 'Rajdhani', sans-serif; letter-spacing: -0
   border: 0;
 }
 
+/* ----- Cycle 42: skip link + focus-visible rings ----- */
+.skip-link {
+  position: absolute;
+  left: 1rem;
+  top: 0.75rem;
+  z-index: 10000;
+  padding: 0.65rem 1.1rem;
+  font-family: 'Rajdhani', 'Teko', sans-serif;
+  font-size: 0.875rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  text-decoration: none;
+  color: #030305;
+  background: var(--brand);
+  border: 2px solid var(--brand);
+  box-shadow: 0 0 24px var(--brand-glow);
+  transform: translateY(-160%);
+  transition: transform 0.15s ease;
+}
+.skip-link:focus,
+.skip-link:focus-visible {
+  transform: translateY(0);
+  outline: 2px solid #fff !important;
+  outline-offset: 3px;
+}
+
+/* Clear cyan keyboard ring — beats utility focus:outline-none */
+:focus:not(:focus-visible) {
+  outline: none;
+}
 :focus-visible {
-  outline: 2px solid var(--brand);
+  outline: 2px solid var(--brand) !important;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px rgba(0, 229, 255, 0.28);
+}
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+summary:focus-visible,
+[role="button"]:focus-visible,
+[tabindex]:not([tabindex="-1"]):focus-visible {
+  outline: 2px solid var(--brand) !important;
   outline-offset: 2px;
 }
-button:focus:not(:focus-visible),
-a:focus:not(:focus-visible) {
-  outline: none;
+.btn-neon:focus-visible,
+.btn-blue:focus-visible,
+.btn-ghost:focus-visible {
+  outline-offset: 4px;
+  box-shadow: 0 0 0 4px rgba(0, 229, 255, 0.35), 0 0 28px rgba(0, 229, 255, 0.35);
 }
 
 .btn-neon,
