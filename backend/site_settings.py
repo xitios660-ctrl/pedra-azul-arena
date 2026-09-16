@@ -134,6 +134,8 @@ class SiteSettingsUpdate(BaseModel):
     policy_cancel: str = Field(default="", max_length=800)
     policy_rain: str = Field(default="", max_length=800)
     credits_enabled: bool = Field(default=True)
+    # Cycle 38: write-only desk PIN (4–8 digits). None=unchanged; ""=clear; never stored plaintext.
+    desk_pin: Optional[str] = Field(default=None, max_length=16)
 
     @field_validator("whatsapp_e164")
     @classmethod
@@ -232,6 +234,19 @@ class SiteSettingsUpdate(BaseModel):
     @classmethod
     def strip_text(cls, v: str) -> str:
         return (v or "").strip()
+
+    @field_validator("desk_pin")
+    @classmethod
+    def validate_desk_pin(cls, v: Optional[str]) -> Optional[str]:
+        """None = leave unchanged; empty = clear; else 4–8 digits."""
+        if v is None:
+            return None
+        s = str(v).strip()
+        if s == "":
+            return ""
+        if not re.fullmatch(r"\d{4,8}", s):
+            raise ValueError("PIN do balcão deve ter 4 a 8 dígitos (ou vazio para desativar)")
+        return s
 
     @field_validator("weekend_open_hour", "weekend_close_hour", mode="before")
     @classmethod
@@ -621,6 +636,8 @@ def admin_view(doc: dict[str, Any]) -> dict[str, Any]:
     out["admin_alerts_enabled"] = bool(
         d.get("admin_alerts_enabled") if d.get("admin_alerts_enabled") is not None else True
     )
+    # Cycle 38: never return hash/plaintext — only whether a PIN is configured in settings
+    out["desk_pin_set"] = bool(str(d.get("desk_pin_hash") or "").strip())
     return out
 
 
@@ -634,6 +651,7 @@ async def get_admin_settings(db) -> dict[str, Any]:
 
 async def update_settings(db, payload: SiteSettingsUpdate) -> dict[str, Any]:
     data = payload.model_dump()
+    desk_pin = data.pop("desk_pin", None)
     if not data.get("court_name"):
         data["court_name"] = DEFAULTS["court_name"]
     if not (data.get("game_duration_note") or "").strip():
@@ -646,4 +664,42 @@ async def update_settings(db, payload: SiteSettingsUpdate) -> dict[str, Any]:
         {"$set": data, "$setOnInsert": {"id": SINGLETON_ID, "created_at": data["updated_at"]}},
         upsert=True,
     )
+    # Cycle 38: write-only PIN — store bcrypt hash only; never plaintext
+    if desk_pin is not None:
+        from auth_utils import hash_password
+        if desk_pin == "":
+            await db.site_settings.update_one(
+                {"id": SINGLETON_ID},
+                {"$unset": {"desk_pin_hash": ""}, "$set": {"updated_at": data["updated_at"]}},
+            )
+        else:
+            await db.site_settings.update_one(
+                {"id": SINGLETON_ID},
+                {"$set": {
+                    "desk_pin_hash": hash_password(desk_pin),
+                    "updated_at": data["updated_at"],
+                }},
+            )
     return await get_admin_settings(db)
+
+
+async def get_desk_pin_hash(db) -> Optional[str]:
+    """Return bcrypt hash for desk PIN verification, or None if feature disabled.
+
+    Prefer site_settings.desk_pin_hash; fall back to env DESK_PIN_HASH.
+    Empty settings + empty env → feature disabled.
+    """
+    import os
+    doc = await db.site_settings.find_one({"id": SINGLETON_ID}, {"_id": 0, "desk_pin_hash": 1})
+    h = str((doc or {}).get("desk_pin_hash") or "").strip()
+    if h:
+        return h
+    env_h = str(os.environ.get("DESK_PIN_HASH") or "").strip()
+    return env_h or None
+
+
+def desk_pin_configured_from_doc(doc: dict[str, Any] | None) -> bool:
+    import os
+    if str((doc or {}).get("desk_pin_hash") or "").strip():
+        return True
+    return bool(str(os.environ.get("DESK_PIN_HASH") or "").strip())

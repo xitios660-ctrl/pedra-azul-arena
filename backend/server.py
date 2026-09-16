@@ -7,6 +7,7 @@ ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
 import os
+import re
 import csv
 import io
 import uuid
@@ -43,6 +44,9 @@ from auth_utils import (
     require_admin,
     set_auth_cookies,
     clear_auth_cookies,
+    create_desk_token,
+    require_desk,
+    DESK_TTL_HOURS,
 )
 from cpf_utils import validate_cpf, mask_cpf, only_digits, normalize_whatsapp, phone_variants, phones_match
 import metrics as ops_metrics
@@ -94,6 +98,10 @@ _WAITLIST_HITS: dict[str, list[float]] = defaultdict(list)
 _WAITLIST_LIMIT = int(os.environ.get("WAITLIST_RATE_LIMIT", "10"))
 _WAITLIST_WINDOW = int(os.environ.get("WAITLIST_RATE_WINDOW_SEC", "60"))
 
+_DESK_HITS: dict[str, list[float]] = defaultdict(list)
+_DESK_LIMIT = int(os.environ.get("DESK_PIN_RATE_LIMIT", "8"))
+_DESK_WINDOW = int(os.environ.get("DESK_PIN_RATE_WINDOW_SEC", "60"))
+
 
 def _client_ip(request: Request) -> str:
     forwarded = request.headers.get("x-forwarded-for")
@@ -142,6 +150,16 @@ def _rate_limit_waitlist(request: Request) -> None:
         _WAITLIST_WINDOW,
         request,
         "Muitas tentativas na lista de espera. Aguarde um minuto e tente novamente.",
+    )
+
+
+def _rate_limit_desk_pin(request: Request) -> None:
+    _rate_limit(
+        _DESK_HITS,
+        _DESK_LIMIT,
+        _DESK_WINDOW,
+        request,
+        "Muitas tentativas de PIN. Aguarde um minuto e tente novamente.",
     )
 
 _wa_self_ping_task = None  # Cycle 18 optional localhost WA nudge
@@ -345,14 +363,166 @@ async def admin_put_site_settings(payload: SiteSettingsUpdate, admin: dict = Dep
         updated = await sset.update_settings(db, payload)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+    meta_keys = sorted((payload.model_dump(exclude_unset=True) or {}).keys())
+    # Never audit plaintext PIN — only whether desk_pin was touched
+    if "desk_pin" in meta_keys:
+        meta_keys = [k for k in meta_keys if k != "desk_pin"] + ["desk_pin_changed"]
     await audit_log.audit(
         db, admin, "settings_save",
         entity_type="site_settings",
         entity_id="singleton",
         summary="Configurações do site salvas",
-        meta={"keys": sorted((payload.model_dump(exclude_unset=True) or {}).keys())},
+        meta={"keys": meta_keys},
     )
     return updated
+
+
+# =============================================================================
+# DESK / BALCÃO — PIN check-in (Cycle 38)
+# =============================================================================
+
+class DeskSessionIn(BaseModel):
+    pin: str = Field(min_length=1, max_length=16)
+
+
+@api.post("/desk/session")
+async def desk_session(payload: DeskSessionIn, request: Request):
+    """Exchange desk PIN for short-lived desk JWT (12h). Rate-limited."""
+    _rate_limit_desk_pin(request)
+    pin = (payload.pin or "").strip()
+    pin_hash = await sset.get_desk_pin_hash(db)
+    if not pin_hash:
+        raise HTTPException(status_code=401, detail="Check-in no balcão desativado")
+    if not re.fullmatch(r"\d{4,8}", pin) or not verify_password(pin, pin_hash):
+        raise HTTPException(status_code=401, detail="PIN inválido")
+    token = create_desk_token()
+    logger.info("event=desk_session_ok")
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "expires_in": DESK_TTL_HOURS * 3600,
+        "scope": "desk",
+    }
+
+
+def _desk_today_ymd() -> str:
+    return datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%Y-%m-%d")
+
+
+def _desk_booking_public(b: dict) -> dict:
+    """Fields useful for desk list — no admin secrets."""
+    pay = b.get("payment") or {}
+    return {
+        "id": b.get("id"),
+        "date": b.get("date"),
+        "start_time": b.get("start_time"),
+        "end_time": b.get("end_time"),
+        "duration_minutes": b.get("duration_minutes"),
+        "customer_name": b.get("customer_name"),
+        "whatsapp": b.get("whatsapp"),
+        "status": b.get("status"),
+        "payment_status": pay.get("status"),
+        "checked_in_at": b.get("checked_in_at"),
+        "checked_in_by": b.get("checked_in_by"),
+        "court_id": b.get("court_id") or "court-1",
+    }
+
+
+@api.get("/desk/today")
+async def desk_today(desk: dict = Depends(require_desk)):
+    """Today's confirmed/paid bookings for front-desk check-in."""
+    today = _desk_today_ymd()
+    cursor = db.bookings.find(
+        {
+            "date": today,
+            "$or": [
+                {"status": "confirmed"},
+                {"payment.status": "paid"},
+            ],
+        },
+        {"_id": 0},
+    ).sort([("start_time", 1)])
+    rows = await cursor.to_list(500)
+    # Exclude cancelled / expired / no_show even if somehow paid flag present
+    out = []
+    for b in rows:
+        st = b.get("status")
+        if st in ("cancelled", "canceled", "expired", "no_show", "rejected"):
+            continue
+        out.append(_desk_booking_public(b))
+    return {"date": today, "bookings": out, "count": len(out)}
+
+
+@api.post("/desk/bookings/{booking_id}/check-in")
+async def desk_check_in_booking(booking_id: str, desk: dict = Depends(require_desk)):
+    """Desk check-in — today + confirmed/paid only. Actor audit = desk."""
+    today = _desk_today_ymd()
+    b = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    if not b:
+        raise HTTPException(status_code=404, detail="Reserva não encontrada")
+    if b.get("checked_in_at"):
+        return {
+            "ok": True,
+            "checked_in": True,
+            "checked_in_at": b.get("checked_in_at"),
+            "booking": _desk_booking_public(b),
+        }
+    ok, reason = _check_in_eligible(b, today)
+    if not ok:
+        raise HTTPException(status_code=400, detail=reason)
+    now = _now_iso()
+    res = await db.bookings.update_one(
+        {"id": booking_id, "checked_in_at": {"$in": [None, ""]}},
+        {"$set": {
+            "checked_in_at": now,
+            "checked_in_by": "desk",
+        }},
+    )
+    updated = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    if res.modified_count != 1 and not (updated and updated.get("checked_in_at")):
+        raise HTTPException(status_code=409, detail="Não foi possível registrar check-in")
+    logger.info("event=desk_booking_check_in booking_id=%s", booking_id[:8])
+    await audit_log.audit(
+        db, desk, "booking_check_in",
+        entity_type="booking", entity_id=booking_id,
+        summary=f"Check-in balcão · {updated.get('date')} {updated.get('start_time')} · {updated.get('customer_name') or ''}",
+        meta={"date": updated.get("date"), "start_time": updated.get("start_time"), "actor": "desk"},
+    )
+    return {
+        "ok": True,
+        "checked_in": True,
+        "checked_in_at": updated.get("checked_in_at"),
+        "booking": _desk_booking_public(updated),
+    }
+
+
+@api.post("/desk/bookings/{booking_id}/check-in/undo")
+async def desk_undo_check_in_booking(booking_id: str, desk: dict = Depends(require_desk)):
+    """Undo desk check-in (today bookings only)."""
+    today = _desk_today_ymd()
+    b = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    if not b:
+        raise HTTPException(status_code=404, detail="Reserva não encontrada")
+    if (b.get("date") or "") != today:
+        raise HTTPException(status_code=400, detail="Check-in só para reservas de hoje")
+    await db.bookings.update_one(
+        {"id": booking_id},
+        {"$set": {"checked_in_at": None, "checked_in_by": None}},
+    )
+    updated = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    logger.info("event=desk_booking_check_in_undo booking_id=%s", booking_id[:8])
+    await audit_log.audit(
+        db, desk, "booking_check_in_undo",
+        entity_type="booking", entity_id=booking_id,
+        summary=f"Desfazer check-in balcão · {updated.get('date')} {updated.get('start_time')}",
+        meta={"actor": "desk"},
+    )
+    return {
+        "ok": True,
+        "checked_in": False,
+        "checked_in_at": None,
+        "booking": _desk_booking_public(updated),
+    }
 
 
 # =============================================================================
@@ -3296,6 +3466,8 @@ async def robots_txt():
         "Allow: /minhas-reservas\n"
         "Disallow: /admin\n"
         "Disallow: /login\n"
+        "Disallow: /balcao\n"
+        "Disallow: /checkin\n"
         "Disallow: /api/\n"
         "\n"
         f"Sitemap: {base}/sitemap.xml\n"

@@ -19,6 +19,7 @@ const TournamentDetail = lazy(() =>
   import("@/pages/Tournaments").then((m) => ({ default: m.TournamentDetail }))
 );
 const Faq = lazy(() => import("@/pages/Faq"));
+const DeskCheckIn = lazy(() => import("@/pages/DeskCheckIn"));
 
 /** Neon skeleton fallback matching Pedra Azul dark + cyan brand */
 function NeonRouteFallback() {
@@ -65,6 +66,8 @@ function App() {
           <Route path="/apresentacao" element={<Presentation />} />
           <Route path="/faq" element={<Faq />} />
           <Route path="/perguntas" element={<Navigate to="/faq" replace />} />
+          <Route path="/balcao" element={<DeskCheckIn />} />
+          <Route path="/checkin" element={<DeskCheckIn />} />
           {/* Legacy redirects */}
           <Route path="/me" element={<Navigate to="/minhas-reservas" replace />} />
           <Route path="/register" element={<Navigate to="/login" replace />} />

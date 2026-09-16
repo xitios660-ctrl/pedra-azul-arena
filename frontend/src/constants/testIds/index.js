@@ -132,3 +132,13 @@ export const FAQ = {
   ctaWhatsapp: "faq-cta-whatsapp",
 };
 
+export const DESK = {
+  page: "desk-checkin-page",
+  pinPad: "desk-pin-pad",
+  pinSubmit: "desk-pin-submit",
+  pinError: "desk-pin-error",
+  logout: "desk-logout",
+  todayList: "desk-today-list",
+  chegou: (id) => `desk-chegou-${id}`,
+  undo: (id) => `desk-undo-${id}`,
+};

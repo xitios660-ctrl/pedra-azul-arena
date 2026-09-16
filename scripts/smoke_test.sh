@@ -202,7 +202,7 @@ else
 fi
 
 RB=$(curl -s -o /tmp/pa_robots.txt -w "%{http_code}" "$BASE_URL/robots.txt" || echo "000")
-if [ "$RB" = "200" ] && grep -q 'Disallow: /admin' /tmp/pa_robots.txt && grep -q 'Disallow: /api/' /tmp/pa_robots.txt && grep -q 'Sitemap:' /tmp/pa_robots.txt; then
+if [ "$RB" = "200" ] && grep -q 'Disallow: /admin' /tmp/pa_robots.txt && grep -q 'Disallow: /balcao' /tmp/pa_robots.txt && grep -q 'Disallow: /api/' /tmp/pa_robots.txt && grep -q 'Sitemap:' /tmp/pa_robots.txt; then
   ok "GET /robots.txt"
 else
   bad "robots.txt" "code=$RB body=$(head -c 120 /tmp/pa_robots.txt 2>/dev/null || true)"

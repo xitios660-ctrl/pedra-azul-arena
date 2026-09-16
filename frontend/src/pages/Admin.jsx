@@ -1936,6 +1936,9 @@ function SiteSettingsAdmin() {
           policy_cancel: data.policy_cancel || "",
           policy_rain: data.policy_rain || "",
           credits_enabled: data.credits_enabled !== false,
+          desk_pin_set: data.desk_pin_set === true,
+          desk_pin_input: "",
+          desk_pin_clear: false,
         });
       } catch (e) {
         setErr(e.response?.data?.detail || e.message);
@@ -1989,6 +1992,23 @@ function SiteSettingsAdmin() {
       };
       delete payload.amenities_text;
       delete payload.use_weekend_hours;
+      delete payload.desk_pin_set;
+      delete payload.desk_pin_input;
+      delete payload.desk_pin_clear;
+      delete payload.desk_pin_hash;
+      if (form.desk_pin_clear) {
+        payload.desk_pin = "";
+      } else {
+        const pinRaw = String(form.desk_pin_input || "").replace(/\D/g, "");
+        if (pinRaw) {
+          if (pinRaw.length < 4 || pinRaw.length > 8) {
+            setErr("PIN do balcão deve ter 4 a 8 dígitos");
+            setBusy(false);
+            return;
+          }
+          payload.desk_pin = pinRaw;
+        }
+      }
       const { data } = await api.put("/admin/site-settings", payload);
       const wo2 = data.weekend_open_hour;
       const wc2 = data.weekend_close_hour;
@@ -2001,6 +2021,9 @@ function SiteSettingsAdmin() {
         weekend_close_hour: useWeekend2 ? Number(wc2) : (form.weekend_close_hour ?? 22),
         use_weekend_hours: useWeekend2,
         amenities_text: Array.isArray(data.amenities) ? data.amenities.join("\n") : "",
+        desk_pin_set: data.desk_pin_set === true,
+        desk_pin_input: "",
+        desk_pin_clear: false,
       });
       try { await refreshPublicSettings(); } catch (_) { /* public cache best-effort */ }
       setOk("Configurações salvas. Booking, landing e bot usam os novos valores.");
@@ -2268,6 +2291,41 @@ function SiteSettingsAdmin() {
             data-testid="admin-policy-rain"
             placeholder="Em caso de chuva, entre em contato pelo WhatsApp."
           />
+        </label>
+      </div>
+      <div className="border-t border-white/10 pt-4 space-y-3" data-testid="admin-desk-pin-section">
+        <div className="text-[11px] uppercase tracking-[0.3em] text-[var(--brand)]">// Balcão · PIN check-in</div>
+        <p className="text-white/55 text-sm">
+          PIN de 4–8 dígitos para staff em <code className="text-[var(--brand)]">/balcao</code> (ou /checkin).
+          Salvo só como hash — nunca exibido. Vazio / limpar desativa o recurso.
+          Status: {form.desk_pin_set ? (
+            <span className="text-[var(--success)]">PIN ativo</span>
+          ) : (
+            <span className="text-white/40">desativado</span>
+          )}
+        </p>
+        <label className="block max-w-xs">
+          <div className="text-[10px] uppercase tracking-[0.25em] text-white/55 mb-1">Novo PIN do balcão</div>
+          <input
+            type="password"
+            inputMode="numeric"
+            autoComplete="new-password"
+            className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm min-h-[44px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--brand)]"
+            value={form.desk_pin_input ?? ""}
+            onChange={(e) => set("desk_pin_input", e.target.value.replace(/\D/g, "").slice(0, 8))}
+            placeholder={form.desk_pin_set ? "•••• (deixe em branco para manter)" : "4–8 dígitos"}
+            data-testid="admin-desk-pin-input"
+            maxLength={8}
+          />
+        </label>
+        <label className="flex items-center gap-3 min-h-[44px] cursor-pointer" data-testid="admin-desk-pin-clear">
+          <input
+            type="checkbox"
+            className="w-5 h-5 accent-[var(--brand)]"
+            checked={form.desk_pin_clear === true}
+            onChange={(e) => set("desk_pin_clear", e.target.checked)}
+          />
+          <span className="text-sm text-white/80">Remover PIN (desativar check-in no balcão)</span>
         </label>
       </div>
       {err && <div className="text-[var(--danger)] text-sm" role="alert">{err}</div>}

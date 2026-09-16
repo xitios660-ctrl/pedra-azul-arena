@@ -292,3 +292,9 @@ Prod smoke: `GET /api/health`, `/api/courts`, `/api/site-settings`, WhatsApp `AG
 - Landing: faixa compacta **Hoje** (`TodayAvailabilityStrip`) com chips neon dos slots do dia (America/Sao_Paulo) via `GET /api/courts/availability`.
 - Verde = livre (tap → `/booking?date=&time=`), vermelho = reservado, cinza = indisponível; skeleton no load; oculta se `open_days` / `day_open` fechado; falha da API → só link quieto “Ver horários”.
 - Booking: lê `?date=&time=` (e opcional `hours`/`duration`) para pré-selecionar data/horário nos passos.
+
+## Cycle 38 notes
+- Check-in no balcão com PIN: rotas `/balcao` e `/checkin` (mobile neon) — PIN pad → lista de hoje → **Chegou**.
+- Settings: `desk_pin` write-only (4–8 dígitos); armazena só `desk_pin_hash` (bcrypt). Vazio = desativado. Admin vê apenas `desk_pin_set`. Fallback opcional `DESK_PIN_HASH` (env).
+- API: `POST /api/desk/session` → JWT `scope=desk` 12h; `GET /api/desk/today`; `POST /api/desk/bookings/{id}/check-in` (+ undo). Rate-limit de PIN; audit actor `desk`.
+- robots: Disallow `/balcao` e `/checkin`.

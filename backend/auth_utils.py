@@ -112,3 +112,45 @@ def set_auth_cookies(response, access_token: str, refresh_token: str) -> None:
 def clear_auth_cookies(response) -> None:
     response.delete_cookie("access_token", path="/")
     response.delete_cookie("refresh_token", path="/")
+
+
+DESK_TTL_HOURS = 12
+
+
+def create_desk_token() -> str:
+    """Short-lived JWT scoped to front-desk check-in (no admin privileges)."""
+    payload = {
+        "sub": "desk",
+        "scope": "desk",
+        "type": "desk",
+        "role": "desk",
+        "exp": datetime.now(timezone.utc) + timedelta(hours=DESK_TTL_HOURS),
+    }
+    return jwt.encode(payload, _secret(), algorithm=JWT_ALGORITHM)
+
+
+async def require_desk(request: Request) -> dict:
+    """Accept only desk-scoped JWT (Bearer or desk_token cookie)."""
+    token = request.cookies.get("desk_token")
+    if not token:
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+    if not token:
+        raise HTTPException(status_code=401, detail="Não autenticado (balcão)")
+    try:
+        payload = decode_token(token)
+        if payload.get("type") != "desk" or payload.get("scope") != "desk":
+            raise HTTPException(status_code=401, detail="Token de balcão inválido")
+        return {
+            "id": "desk",
+            "email": "desk",
+            "role": "desk",
+            "scope": "desk",
+        }
+    except HTTPException:
+        raise
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Sessão do balcão expirada")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Token de balcão inválido")

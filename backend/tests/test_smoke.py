@@ -674,9 +674,9 @@ def test_reminder_mark_atomic(admin_session, s):
     headers = {"X-Internal-Token": tok} if tok else {}
     # Create a confirmed booking via admin calendar — rotate day/slot if occupied
     r = None
-    for day_off in (14, 15, 16, 17):
+    for day_off in range(14, 50):
         day = (datetime.now(TZ) + timedelta(days=day_off)).strftime("%Y-%m-%d")
-        for start in ("18:00", "19:00", "20:00", "21:00", "22:00"):
+        for start in ("10:00", "11:00", "12:00", "18:00", "19:00", "20:00", "21:00", "22:00"):
             r = admin_session.post(
                 f"{API}/admin/calendar/bookings",
                 json={
@@ -3663,8 +3663,199 @@ def test_robots_txt(s):
     assert "User-agent:" in body
     assert "Disallow: /admin" in body
     assert "Disallow: /login" in body
+    assert "Disallow: /balcao" in body
+    assert "Disallow: /checkin" in body
     assert "Disallow: /api/" in body
     assert "Allow: /" in body
     assert "Sitemap:" in body
     assert "sitemap.xml" in body
 
+
+def test_desk_pin_checkin_flow(admin_session, s):
+    """Cycle 38: desk PIN session, today check-in, wrong day rejected, bad pin 401."""
+    from pymongo import MongoClient
+
+    # Snapshot settings
+    r0 = admin_session.get(f"{API}/admin/site-settings", timeout=10)
+    assert r0.status_code == 200, r0.text
+    original = dict(r0.json())
+    # Strip admin-only UI flags that are not write fields
+    original.pop("desk_pin_set", None)
+    original.pop("policy_cancel_resolved", None)
+    original.pop("policy_rain_resolved", None)
+
+    pin = "482917"
+    bid_future = None
+    bid_today = None
+    try:
+        # Feature disabled → 401
+        mongo_url = os.environ.get("MONGO_URL", "mongodb://127.0.0.1:27017")
+        db_name = os.environ.get("DB_NAME", "arena_futsal")
+        client = MongoClient(mongo_url, serverSelectionTimeoutMS=3000)
+        client[db_name].site_settings.update_one(
+            {"id": "singleton"},
+            {"$unset": {"desk_pin_hash": ""}},
+        )
+        disabled = s.post(f"{API}/desk/session", json={"pin": pin}, headers=_xff(), timeout=10)
+        assert disabled.status_code == 401, disabled.text
+
+        # Set PIN via admin settings (write-only)
+        patched = dict(original)
+        patched["desk_pin"] = pin
+        rput = admin_session.put(f"{API}/admin/site-settings", json=patched, timeout=10)
+        assert rput.status_code == 200, rput.text
+        got = rput.json()
+        assert got.get("desk_pin_set") is True
+        assert "desk_pin" not in got
+        assert "desk_pin_hash" not in got
+        assert pin not in rput.text
+
+        # Bad PIN → 401
+        bad = s.post(f"{API}/desk/session", json={"pin": "0000"}, headers=_xff(), timeout=10)
+        assert bad.status_code == 401, bad.text
+
+        # Good PIN → desk token
+        ok = s.post(f"{API}/desk/session", json={"pin": pin}, headers=_xff(), timeout=10)
+        assert ok.status_code == 200, ok.text
+        token = ok.json().get("access_token")
+        assert token
+        assert ok.json().get("scope") == "desk"
+        desk_headers = {**_xff(), "Authorization": f"Bearer {token}"}
+
+        # Desk token must NOT access admin
+        adm = s.get(f"{API}/admin/dashboard", headers=desk_headers, timeout=10)
+        assert adm.status_code in (401, 403), adm.text
+
+        today = datetime.now(TZ).strftime("%Y-%m-%d")
+
+        # Create future confirmed → wrong day on desk check-in
+        rf = None
+        bid_future = None
+        for day_off in (41, 42, 43):
+            day = (datetime.now(TZ) + timedelta(days=day_off)).strftime("%Y-%m-%d")
+            for start in ("13:00", "14:00", "15:00"):
+                rf = admin_session.post(
+                    f"{API}/admin/calendar/bookings",
+                    json={
+                        "date": day,
+                        "start_time": start,
+                        "customer_name": "Desk Future",
+                        "whatsapp": "5511999007788",
+                        "status": "confirmed",
+                    },
+                    timeout=15,
+                )
+                if rf.status_code in (200, 201):
+                    bid_future = rf.json()["id"]
+                    break
+            if bid_future:
+                break
+        assert bid_future, getattr(rf, "text", "")
+
+        nf = s.post(
+            f"{API}/desk/bookings/{bid_future}/check-in",
+            headers=desk_headers,
+            timeout=10,
+        )
+        assert nf.status_code == 400, nf.text
+        assert "hoje" in (nf.json().get("detail") or "").lower()
+
+        # Confirmed today
+        bid_today = None
+        rc = None
+        for start in ("08:00", "09:00", "10:00", "11:00", "12:00", "22:00"):
+            rc = admin_session.post(
+                f"{API}/admin/calendar/bookings",
+                json={
+                    "date": today,
+                    "start_time": start,
+                    "customer_name": "Desk Today",
+                    "whatsapp": "5511999008899",
+                    "status": "confirmed",
+                },
+                timeout=15,
+            )
+            if rc.status_code in (200, 201):
+                bid_today = rc.json()["id"]
+                break
+        if not bid_today:
+            # backdate future
+            day = (datetime.now(TZ) + timedelta(days=44)).strftime("%Y-%m-%d")
+            rf2 = admin_session.post(
+                f"{API}/admin/calendar/bookings",
+                json={
+                    "date": day,
+                    "start_time": "16:00",
+                    "customer_name": "Desk Today",
+                    "whatsapp": "5511999008899",
+                    "status": "confirmed",
+                },
+                timeout=15,
+            )
+            assert rf2.status_code in (200, 201), rf2.text
+            bid_today = rf2.json()["id"]
+            client[db_name].bookings.update_one(
+                {"id": bid_today},
+                {"$set": {"date": today, "start_time": "07:00", "slot_key": f"court-1|{today}|07:00"}},
+            )
+
+        # Today list includes booking
+        lst = s.get(f"{API}/desk/today", headers=desk_headers, timeout=10)
+        assert lst.status_code == 200, lst.text
+        assert lst.json().get("date") == today
+        ids = [b["id"] for b in (lst.json().get("bookings") or [])]
+        assert bid_today in ids
+        assert bid_future not in ids
+
+        # Check-in works
+        cin = s.post(
+            f"{API}/desk/bookings/{bid_today}/check-in",
+            headers=desk_headers,
+            timeout=10,
+        )
+        assert cin.status_code == 200, cin.text
+        assert cin.json().get("checked_in") is True
+        assert cin.json().get("booking", {}).get("checked_in_by") == "desk"
+
+        # Undo
+        undo = s.post(
+            f"{API}/desk/bookings/{bid_today}/check-in/undo",
+            headers=desk_headers,
+            timeout=10,
+        )
+        assert undo.status_code == 200, undo.text
+        assert undo.json().get("checked_in") is False
+
+        # Unauthenticated desk blocked
+        anon = s.get(f"{API}/desk/today", headers=_xff(), timeout=10)
+        assert anon.status_code in (401, 403), anon.text
+
+        # Clear PIN
+        cleared = dict(original)
+        cleared["desk_pin"] = ""
+        assert admin_session.put(f"{API}/admin/site-settings", json=cleared, timeout=10).status_code == 200
+        assert admin_session.get(f"{API}/admin/site-settings", timeout=10).json().get("desk_pin_set") is False
+
+    finally:
+        # restore settings without desk_pin field
+        restore = dict(original)
+        restore.pop("desk_pin", None)
+        try:
+            admin_session.put(f"{API}/admin/site-settings", json=restore, timeout=10)
+        except Exception:
+            pass
+        try:
+            mongo_url = os.environ.get("MONGO_URL", "mongodb://127.0.0.1:27017")
+            db_name = os.environ.get("DB_NAME", "arena_futsal")
+            MongoClient(mongo_url, serverSelectionTimeoutMS=3000)[db_name].site_settings.update_one(
+                {"id": "singleton"},
+                {"$unset": {"desk_pin_hash": ""}},
+            )
+        except Exception:
+            pass
+        # cleanup bookings best-effort
+        try:
+            _admin_cancel_quiet(admin_session, bid_future)
+            _admin_cancel_quiet(admin_session, bid_today)
+        except Exception:
+            pass
