@@ -58,6 +58,10 @@ export const DEFAULT_SITE_SETTINGS = {
   policy_cancel:
     "Cancelamentos pelo cliente devem ser feitos com pelo menos {horas} horas de antecedência do horário reservado. Após esse prazo, entre em contato pelo WhatsApp.",
   policy_rain: "Em caso de chuva, entre em contato pelo WhatsApp.",
+  // Cycle 39: site announcement (empty + disabled by default)
+  announcement_enabled: false,
+  announcement_text: "",
+  announcement_style: "info",
 };
 
 /** Resolve {horas}/{cancel_min_hours} in policy_cancel from settings.cancel_min_hours */

@@ -3859,3 +3859,88 @@ def test_desk_pin_checkin_flow(admin_session, s):
             _admin_cancel_quiet(admin_session, bid_today)
         except Exception:
             pass
+
+
+def test_announcement_settings_roundtrip(admin_session, s):
+    """Cycle 39: announcement_enabled / text / style round-trip on admin + public."""
+    r = admin_session.get(f"{API}/admin/site-settings", timeout=10)
+    assert r.status_code == 200, r.text
+    original = r.json()
+    for key in ("announcement_enabled", "announcement_text", "announcement_style"):
+        assert key in original, key
+    # Default: disabled + empty (do not invent copy)
+    assert original.get("announcement_enabled") in (False, True)  # may already be set in dirty DB
+    assert isinstance(original.get("announcement_text"), str)
+    assert original.get("announcement_style") in ("info", "warning", "success")
+
+    # Public exposes fields, no secrets
+    pub0 = s.get(f"{API}/site-settings", timeout=10)
+    assert pub0.status_code == 200, pub0.text
+    p0 = pub0.json()
+    for key in ("announcement_enabled", "announcement_text", "announcement_style"):
+        assert key in p0, key
+    assert "desk_pin" not in p0
+    assert "desk_pin_hash" not in p0
+    assert "admin_whatsapp_e164" not in p0
+
+    patched = {
+        **{k: v for k, v in original.items() if k not in (
+            "desk_pin_set", "policy_cancel_resolved", "policy_rain_resolved",
+            "desk_pin", "desk_pin_hash",
+        )},
+        "announcement_enabled": True,
+        "announcement_text": "Manutenção amanhã 14h–16h — quadra fechada.",
+        "announcement_style": "warning",
+    }
+    try:
+        rput = admin_session.put(f"{API}/admin/site-settings", json=patched, timeout=10)
+        assert rput.status_code == 200, rput.text
+        body = rput.json()
+        assert body.get("announcement_enabled") is True
+        assert body.get("announcement_text") == patched["announcement_text"]
+        assert body.get("announcement_style") == "warning"
+
+        pub = s.get(f"{API}/site-settings", timeout=10)
+        assert pub.status_code == 200, pub.text
+        pdata = pub.json()
+        assert pdata.get("announcement_enabled") is True
+        assert pdata.get("announcement_text") == patched["announcement_text"]
+        assert pdata.get("announcement_style") == "warning"
+
+        # Bad style rejected
+        bad = {**patched, "announcement_style": "danger"}
+        rb = admin_session.put(f"{API}/admin/site-settings", json=bad, timeout=10)
+        assert rb.status_code in (400, 422), rb.text
+
+        # Text too long rejected
+        long_txt = {**patched, "announcement_text": "x" * 201}
+        rl = admin_session.put(f"{API}/admin/site-settings", json=long_txt, timeout=10)
+        assert rl.status_code in (400, 422), rl.text
+
+        # Disable + clear
+        cleared = {**patched, "announcement_enabled": False, "announcement_text": "", "announcement_style": "info"}
+        r2 = admin_session.put(f"{API}/admin/site-settings", json=cleared, timeout=10)
+        assert r2.status_code == 200, r2.text
+        assert r2.json().get("announcement_enabled") is False
+        assert r2.json().get("announcement_text") == ""
+        pub2 = s.get(f"{API}/site-settings", timeout=10).json()
+        assert pub2.get("announcement_enabled") is False
+        assert pub2.get("announcement_text") == ""
+
+        import sys
+        from pathlib import Path as _P
+        root = _P(__file__).resolve().parents[1]
+        if str(root) not in sys.path:
+            sys.path.insert(0, str(root))
+        import site_settings as sset
+        assert sset.announcement_visible(patched) is True
+        assert sset.announcement_visible(cleared) is False
+        assert sset.announcement_visible({"announcement_enabled": True, "announcement_text": "  "}) is False
+        assert sset._normalize_announcement_style("SUCCESS") == "success"
+        assert sset._normalize_announcement_style("nope") == "info"
+    finally:
+        restore = {k: v for k, v in original.items() if k not in (
+            "desk_pin_set", "policy_cancel_resolved", "policy_rain_resolved",
+            "desk_pin", "desk_pin_hash",
+        )}
+        admin_session.put(f"{API}/admin/site-settings", json=restore, timeout=10)

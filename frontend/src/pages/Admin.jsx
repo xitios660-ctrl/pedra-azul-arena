@@ -1936,6 +1936,11 @@ function SiteSettingsAdmin() {
           policy_cancel: data.policy_cancel || "",
           policy_rain: data.policy_rain || "",
           credits_enabled: data.credits_enabled !== false,
+          announcement_enabled: data.announcement_enabled === true,
+          announcement_text: data.announcement_text || "",
+          announcement_style: ["info", "warning", "success"].includes(data.announcement_style)
+            ? data.announcement_style
+            : "info",
           desk_pin_set: data.desk_pin_set === true,
           desk_pin_input: "",
           desk_pin_clear: false,
@@ -1989,6 +1994,11 @@ function SiteSettingsAdmin() {
         policy_cancel: String(form.policy_cancel || "").trim().slice(0, 800),
         policy_rain: String(form.policy_rain || "").trim().slice(0, 800),
         credits_enabled: form.credits_enabled !== false,
+        announcement_enabled: form.announcement_enabled === true,
+        announcement_text: String(form.announcement_text || "").trim().slice(0, 200),
+        announcement_style: ["info", "warning", "success"].includes(form.announcement_style)
+          ? form.announcement_style
+          : "info",
       };
       delete payload.amenities_text;
       delete payload.use_weekend_hours;
@@ -2291,6 +2301,47 @@ function SiteSettingsAdmin() {
             data-testid="admin-policy-rain"
             placeholder="Em caso de chuva, entre em contato pelo WhatsApp."
           />
+        </label>
+      </div>
+      <div className="border border-white/10 rounded-lg p-4 space-y-3 bg-black/20" data-testid="admin-announcement">
+        <div className="text-[10px] uppercase tracking-[0.25em] text-[var(--brand)]">Aviso do site · Banner</div>
+        <p className="text-white/55 text-xs">
+          Faixa dismissível sob o menu na landing e na página de reserva (sessionStorage — volta na próxima sessão se ainda ativo).
+          Deixe desligado e o texto vazio por padrão — sem inventar mensagem.
+        </p>
+        <label className="flex items-center gap-3 min-h-[44px] cursor-pointer" data-testid="admin-announcement-enabled">
+          <input
+            type="checkbox"
+            className="w-5 h-5 accent-[var(--brand)]"
+            checked={form.announcement_enabled === true}
+            onChange={(e) => set("announcement_enabled", e.target.checked)}
+          />
+          <span className="text-sm text-white/80">Exibir banner de aviso</span>
+        </label>
+        <label className="block">
+          <div className="text-[10px] uppercase tracking-[0.25em] text-white/55 mb-1">Texto do aviso (máx. 200)</div>
+          <textarea
+            className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm min-h-[72px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--brand)]"
+            value={form.announcement_text ?? ""}
+            onChange={(e) => set("announcement_text", e.target.value.slice(0, 200))}
+            maxLength={200}
+            data-testid="admin-announcement-text"
+            placeholder="Ex.: Manutenção amanhã 14h–16h · Quadra fechada"
+          />
+          <p className="text-white/40 text-xs mt-1">{String(form.announcement_text || "").length}/200</p>
+        </label>
+        <label className="block max-w-xs">
+          <div className="text-[10px] uppercase tracking-[0.25em] text-white/55 mb-1">Estilo</div>
+          <select
+            className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm min-h-[44px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--brand)]"
+            value={form.announcement_style || "info"}
+            onChange={(e) => set("announcement_style", e.target.value)}
+            data-testid="admin-announcement-style"
+          >
+            <option value="info">Info</option>
+            <option value="warning">Aviso</option>
+            <option value="success">Sucesso</option>
+          </select>
         </label>
       </div>
       <div className="border-t border-white/10 pt-4 space-y-3" data-testid="admin-desk-pin-section">

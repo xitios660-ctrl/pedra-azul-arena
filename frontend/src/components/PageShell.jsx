@@ -2,6 +2,7 @@ import React from "react";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import WhatsAppFab from "@/components/WhatsAppFab";
+import AnnouncementBanner from "@/components/AnnouncementBanner";
 import { useSiteSettings } from "@/lib/SiteSettings";
 
 export default function PageShell({ children, hideFooter = false, hideWhatsApp = false }) {
@@ -11,8 +12,11 @@ export default function PageShell({ children, hideFooter = false, hideWhatsApp =
   return (
     <div className="min-h-screen flex flex-col">
       <Navbar />
-      <main className={`flex-1 pt-[72px] ${showFab ? "pb-[calc(5.5rem+env(safe-area-inset-bottom,0px))]" : ""}`}>{children}</main>
-      {!hideFooter && <Footer />}
+      <div className={`pt-[72px] flex-1 flex flex-col ${showFab ? "pb-[calc(5.5rem+env(safe-area-inset-bottom,0px))]" : ""}`}>
+        <AnnouncementBanner />
+        <main className="flex-1">{children}</main>
+        {!hideFooter && <Footer />}
+      </div>
       {showFab && <WhatsAppFab />}
     </div>
   );

@@ -17,13 +17,14 @@ accepts_pix, structure_blurb, amenities — used on landing + WA FAQ.
 Policies (Cycle 30): policy_cancel, policy_rain (editable pt-BR, max ~800),
 policies_enabled — landing / booking / WA FAQ. {horas} in policy_cancel → cancel_min_hours.
 Credits (Cycle 32): credits_enabled (default true) — prepaid hour packs by phone.
+Announcement (Cycle 39): announcement_enabled / announcement_text (~200) / announcement_style info|warning|success — empty+disabled by default.
 Do not invent street numbers or covered-court claims; keep address_label / maps_url as-is.
 """
 from __future__ import annotations
 
 import re
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -87,6 +88,10 @@ DEFAULTS: dict[str, Any] = {
     "policy_rain": "Em caso de chuva, entre em contato pelo WhatsApp.",
     # Cycle 32: prepaid hour credits (pacotes)
     "credits_enabled": True,
+    # Cycle 39: site announcement banner (empty + disabled by default — do not invent copy)
+    "announcement_enabled": False,
+    "announcement_text": "",
+    "announcement_style": "info",  # info | warning | success
 }
 
 # Legacy Arena Premium placeholders → migrate once if still at old seed values.
@@ -134,6 +139,10 @@ class SiteSettingsUpdate(BaseModel):
     policy_cancel: str = Field(default="", max_length=800)
     policy_rain: str = Field(default="", max_length=800)
     credits_enabled: bool = Field(default=True)
+    # Cycle 39: site announcement banner
+    announcement_enabled: bool = Field(default=False)
+    announcement_text: str = Field(default="", max_length=200)
+    announcement_style: Literal["info", "warning", "success"] = Field(default="info")
     # Cycle 38: write-only desk PIN (4–8 digits). None=unchanged; ""=clear; never stored plaintext.
     desk_pin: Optional[str] = Field(default=None, max_length=16)
 
@@ -230,10 +239,18 @@ class SiteSettingsUpdate(BaseModel):
                 break
         return out
 
-    @field_validator("game_duration_note", "structure_blurb", "parking_note", "policy_cancel", "policy_rain")
+    @field_validator("game_duration_note", "structure_blurb", "parking_note", "policy_cancel", "policy_rain", "announcement_text")
     @classmethod
     def strip_text(cls, v: str) -> str:
         return (v or "").strip()
+
+    @field_validator("announcement_style", mode="before")
+    @classmethod
+    def normalize_announcement_style(cls, v):
+        s = str(v or "info").strip().lower()
+        if s not in ("info", "warning", "success"):
+            raise ValueError("announcement_style deve ser info, warning ou success")
+        return s
 
     @field_validator("desk_pin")
     @classmethod
@@ -402,7 +419,29 @@ def resolve_policy_rain(settings: dict[str, Any] | None = None) -> str:
     return _clamp_policy_text(d.get("policy_rain"), DEFAULTS.get("policy_rain") or "")
 
 
+def _clamp_announcement_text(raw: Any) -> str:
+    s = ("" if raw is None else str(raw)).strip()
+    if len(s) > 200:
+        s = s[:200]
+    return s
+
+
+def _normalize_announcement_style(raw: Any) -> str:
+    s = str(raw or "info").strip().lower()
+    if s not in ("info", "warning", "success"):
+        return "info"
+    return s
+
+
+def announcement_visible(settings: dict[str, Any] | None = None) -> bool:
+    """True when banner should show: enabled + non-empty text."""
+    d = settings or {}
+    enabled = bool(d.get("announcement_enabled")) if d.get("announcement_enabled") is not None else False
+    return enabled and bool(_clamp_announcement_text(d.get("announcement_text")))
+
+
 def public_view(doc: dict[str, Any]) -> dict[str, Any]:
+
     """Fields safe for public booking + WA bot."""
     d = {**DEFAULTS, **(doc or {})}
     return {
@@ -466,6 +505,13 @@ def public_view(doc: dict[str, Any]) -> dict[str, Any]:
         "credits_enabled": bool(
             d.get("credits_enabled") if d.get("credits_enabled") is not None else DEFAULTS["credits_enabled"]
         ),
+        "announcement_enabled": bool(
+            d.get("announcement_enabled") if d.get("announcement_enabled") is not None else DEFAULTS["announcement_enabled"]
+        ),
+        "announcement_text": _clamp_announcement_text(
+            d.get("announcement_text") if d.get("announcement_text") is not None else DEFAULTS["announcement_text"]
+        ),
+        "announcement_style": _normalize_announcement_style(d.get("announcement_style")),
     }
 
 
@@ -590,7 +636,7 @@ async def ensure_seeded(db) -> dict[str, Any]:
     if existing:
         # fill any missing keys from defaults without overwriting admin edits
         # policy_* may be intentionally empty (hide section) — only seed if key missing
-        _no_empty_reseed = {"policy_cancel", "policy_rain"}
+        _no_empty_reseed = {"policy_cancel", "policy_rain", "announcement_text"}
         patch = {
             k: v
             for k, v in DEFAULTS.items()

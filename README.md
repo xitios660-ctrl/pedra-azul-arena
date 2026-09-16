@@ -73,7 +73,7 @@ SSE: `GET /api/admin/whatsapp/events` (JWT/cookie admin).
 
 ## Admin — Configurações
 
-Aba **Configurações** edita o singleton `site_settings` (WhatsApp E.164, PIX, endereço/Maps, preço/hora, abertura/fechamento, **dias abertos** `open_days`, duração do slot, **multi-hora** `allow_multi_hour` / `max_hours_per_booking`, **lista de espera** `waitlist_enabled`, **recorrente** `recurring_enabled` / `recurring_max_weeks`, estacionamento, nome da quadra).
+Aba **Configurações** edita o singleton `site_settings` (WhatsApp E.164, PIX, endereço/Maps, preço/hora, abertura/fechamento, **dias abertos** `open_days`, duração do slot, **multi-hora** `allow_multi_hour` / `max_hours_per_booking`, **lista de espera** `waitlist_enabled`, **recorrente** `recurring_enabled` / `recurring_max_weeks`, estacionamento, nome da quadra, **aviso do site** `announcement_*`).
 
 - Público: `GET /api/site-settings`
 - Admin JWT: `GET|PUT /api/admin/site-settings`
@@ -298,3 +298,10 @@ Prod smoke: `GET /api/health`, `/api/courts`, `/api/site-settings`, WhatsApp `AG
 - Settings: `desk_pin` write-only (4–8 dígitos); armazena só `desk_pin_hash` (bcrypt). Vazio = desativado. Admin vê apenas `desk_pin_set`. Fallback opcional `DESK_PIN_HASH` (env).
 - API: `POST /api/desk/session` → JWT `scope=desk` 12h; `GET /api/desk/today`; `POST /api/desk/bookings/{id}/check-in` (+ undo). Rate-limit de PIN; audit actor `desk`.
 - robots: Disallow `/balcao` e `/checkin`.
+
+## Cycle 39 notes
+
+- Banner de aviso do site: `announcement_enabled`, `announcement_text` (máx. ~200), `announcement_style` (`info`|`warning`|`success`, default `info`).
+- Vazio e desligado por padrão — não inventar texto de anúncio.
+- Admin → Configurações; público em `GET /api/site-settings`; faixa dismissível (sessionStorage) sob o navbar na Landing e Booking.
+
