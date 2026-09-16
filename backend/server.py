@@ -28,7 +28,8 @@ from zoneinfo import ZoneInfo
 
 import whatsapp_bridge
 import booking_service as bsvc
-from booking_service import COURT, COURT_ID, TIME_SLOTS, DEPOSIT_RATE
+from booking_service import COURT, COURT_ID, TIME_SLOTS, DEPOSIT_RATE, ACTIVE_STATUSES
+import upload_store
 
 from auth_utils import (
     hash_password,
@@ -244,10 +245,8 @@ async def admin_put_site_settings(payload: SiteSettingsUpdate, admin: dict = Dep
 
 
 # =============================================================================
-# UPLOADS (public — accept image uploads for crests, anyone can upload)
+# UPLOADS (public — crest + comprovante; GridFS primary, disk optional cache)
 # =============================================================================
-_UPLOAD_MAX_BYTES = int(os.environ.get("UPLOAD_MAX_BYTES", str(5 * 1024 * 1024)))
-_UPLOAD_ALLOWED_EXT = frozenset({"png", "jpg", "jpeg", "webp", "gif"})
 _UPLOAD_ALLOWED_CT = frozenset({
     "image/png",
     "image/jpeg",
@@ -258,91 +257,136 @@ _UPLOAD_ALLOWED_CT = frozenset({
 })
 
 
-def _sniff_image_ext(content: bytes):
-    """Return normalized extension from magic bytes, or None if not a safe raster image."""
-    if len(content) < 12:
-        return None
-    if content[:8] == b"\x89PNG\r\n\x1a\n":
-        return "png"
-    if content[:3] == b"\xff\xd8\xff":
-        return "jpg"
-    if content[:6] in (b"GIF87a", b"GIF89a"):
-        return "gif"
-    if content[:4] == b"RIFF" and content[8:12] == b"WEBP":
-        return "webp"
-    return None
-
-
-def _save_upload(file: UploadFile, subdir: str) -> str:
-    """Save uploaded image, return public URL path. UUID filename; raster images only (no SVG)."""
-    if subdir not in {"crests", "comprovantes"}:
+async def _save_upload(file: UploadFile, subdir: str) -> tuple[str, str]:
+    """Validate + save to GridFS (and disk if writable). Returns (url, gridfs_id)."""
+    if subdir not in upload_store.ALLOWED_SUBDIRS:
         raise HTTPException(status_code=400, detail="Destino de upload inválido")
     ct = (file.content_type or "").split(";")[0].strip().lower()
     if ct and ct not in _UPLOAD_ALLOWED_CT:
         raise HTTPException(status_code=400, detail="Tipo de arquivo não permitido (use PNG, JPG, WEBP ou GIF)")
-    content = file.file.read(_UPLOAD_MAX_BYTES + 1)
-    if not content:
-        raise HTTPException(status_code=400, detail="Imagem vazia")
-    if len(content) > _UPLOAD_MAX_BYTES:
-        raise HTTPException(status_code=400, detail="Imagem muito grande (máx 5MB)")
-    sniffed = _sniff_image_ext(content)
-    if not sniffed:
-        raise HTTPException(status_code=400, detail="Arquivo não é uma imagem válida (PNG/JPG/WEBP/GIF)")
-    ext = sniffed
-    fname = f"{uuid.uuid4().hex}.{ext}"
-    out_path = UPLOAD_DIR / subdir / fname
-    out_path.write_bytes(content)
-    logger.info("event=upload_saved subdir=%s bytes=%s ext=%s", subdir, len(content), ext)
-    return f"/api/uploads/{subdir}/{fname}"
+    content = file.file.read(upload_store.MAX_BYTES + 1)
+    try:
+        url, grid_id, _fname = await upload_store.save_bytes(
+            db, content, subdir, upload_dir=UPLOAD_DIR, require_magic=True,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return url, grid_id
 
 
-def _save_upload_bytes(content: bytes, subdir: str, filename: str | None = None) -> str:
-    """Save raw image bytes (WhatsApp comprovante path). Reuses same public URL layout."""
-    if subdir not in {"crests", "comprovantes"}:
-        raise HTTPException(status_code=400, detail="Destino de upload inválido")
-    if not content:
-        raise HTTPException(status_code=400, detail="Imagem vazia")
-    if len(content) > _UPLOAD_MAX_BYTES:
-        raise HTTPException(status_code=400, detail="Imagem muito grande (máx 5MB)")
-    sniffed = _sniff_image_ext(content)
-    if sniffed:
-        ext = sniffed
-    else:
-        name = filename or "comprovante.jpg"
-        ext = name.rsplit(".", 1)[-1].lower() if "." in name else "jpg"
-        if ext not in _UPLOAD_ALLOWED_EXT:
-            ext = "jpg"
-        # Without recognizable magic, still accept opaque bytes as jpg (WA media edge cases)
-        ext = "jpg"
-    fname = f"{uuid.uuid4().hex}.{ext}"
-    out_path = UPLOAD_DIR / subdir / fname
-    out_path.write_bytes(content)
-    logger.info("event=upload_saved subdir=%s bytes=%s ext=%s source=bytes", subdir, len(content), ext)
-    return f"/api/uploads/{subdir}/{fname}"
+async def _save_upload_bytes(content: bytes, subdir: str, filename: str | None = None) -> tuple[str, str]:
+    """Save raw image bytes (WhatsApp comprovante path). GridFS first."""
+    try:
+        url, grid_id, _fname = await upload_store.save_bytes(
+            db,
+            content,
+            subdir,
+            upload_dir=UPLOAD_DIR,
+            filename=filename,
+            require_magic=False,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return url, grid_id
 
 
-async def _attach_comprovante(booking_id: str, url: str) -> dict:
+async def _attach_comprovante(booking_id: str, url: str, gridfs_id: str | None = None) -> dict:
     """Mark booking as awaiting_admin (informado). NEVER confirms payment."""
-    await db.bookings.update_one(
-        {"id": booking_id},
-        {"$set": {
-            "status": "awaiting_admin",
-            "payment.status": "awaiting_confirmation",
-            "payment.comprovante_url": url,
-            "payment.comprovante_uploaded_at": _now_iso(),
-        }},
-    )
+    fields = {
+        "status": "awaiting_admin",
+        "payment.status": "awaiting_confirmation",
+        "payment.comprovante_url": url,
+        "payment.comprovante_uploaded_at": _now_iso(),
+    }
+    if gridfs_id:
+        fields["payment.comprovante_gridfs_id"] = gridfs_id
+    await db.bookings.update_one({"id": booking_id}, {"$set": fields})
     updated = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
     logger.info(
-        "event=comprovante_attached booking_id=%s status=awaiting_admin auto_confirm=false",
+        "event=comprovante_attached booking_id=%s status=awaiting_admin auto_confirm=false gridfs=%s",
         booking_id[:8],
+        bool(gridfs_id),
     )
     return updated
 
 
+def _slot_start_local(booking: dict) -> datetime:
+    """Booking date+start_time as America/Sao_Paulo aware datetime."""
+    tz = ZoneInfo("America/Sao_Paulo")
+    raw = f"{booking.get('date')} {booking.get('start_time') or '00:00'}"
+    try:
+        naive = datetime.strptime(raw.strip(), "%Y-%m-%d %H:%M")
+    except ValueError:
+        naive = datetime.strptime(f"{booking.get('date')} 00:00", "%Y-%m-%d %H:%M")
+    return naive.replace(tzinfo=tz)
+
+
+def _customer_cancel_allowed(booking: dict, settings: dict) -> tuple[bool, str]:
+    """Simple cancel window: must be >= cancel_min_hours before slot start."""
+    min_h = int(settings.get("cancel_min_hours") if settings.get("cancel_min_hours") is not None else 2)
+    if min_h <= 0:
+        return True, ""
+    slot = _slot_start_local(booking)
+    now = datetime.now(ZoneInfo("America/Sao_Paulo"))
+    hours_left = (slot - now).total_seconds() / 3600.0
+    if hours_left < min_h:
+        return False, (
+            f"Cancelamento só é permitido até {min_h}h antes do horário. "
+            f"Fale com a arena pelo WhatsApp se precisar."
+        )
+    return True, ""
+
+
+async def _notify_cancel_wa(booking: dict, *, source: str) -> bool:
+    """Best-effort short natural cancel message to customer if WA connected."""
+    phone = (booking.get("whatsapp") or "").strip()
+    if not phone:
+        return False
+    date = booking.get("date") or ""
+    time = booking.get("start_time") or ""
+    if source == "admin":
+        msg = (
+            f"Pedra Azul: sua reserva de {date} às {time} foi cancelada pela arena. "
+            f"O horário foi liberado."
+        )
+    else:
+        msg = (
+            f"Pedra Azul: reserva de {date} às {time} cancelada. "
+            f"Horário liberado — quando quiser, é só reservar de novo."
+        )
+    sent = await whatsapp_bridge.send_text(phone, msg)
+    return bool(sent)
+
+
+@api.get("/uploads/{subdir}/{filename}")
+async def serve_upload(subdir: str, filename: str):
+    """Serve crest/comprovante from disk cache or Mongo GridFS (Free-tier durable)."""
+    try:
+        grid_out, ct, disk = await upload_store.open_stream(
+            db, subdir, filename, upload_dir=UPLOAD_DIR,
+        )
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Arquivo não encontrado")
+    if disk is not None:
+        return FileResponse(path=str(disk), media_type=ct)
+    data = await grid_out.read()
+    return Response(content=data, media_type=ct, headers={"Cache-Control": "public, max-age=86400"})
+
+
+@api.get("/comprovantes/{file_id}")
+async def serve_comprovante_by_id(file_id: str):
+    """Alternate GridFS stream by id (same public access as /uploads today)."""
+    try:
+        grid_out, ct = await upload_store.open_stream_by_id(db, file_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Comprovante não encontrado")
+    data = await grid_out.read()
+    return Response(content=data, media_type=ct, headers={"Cache-Control": "public, max-age=86400"})
+
+
 @api.post("/uploads/crest")
 async def upload_crest(file: UploadFile = File(...)):
-    url = _save_upload(file, "crests")
+    url, _gid = await _save_upload(file, "crests")
     return {"url": url}
 
 
@@ -411,8 +455,8 @@ async def upload_comprovante(booking_id: str, file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="Reserva cancelada ou expirada")
     if b["status"] not in ("pending", "awaiting_admin"):
         raise HTTPException(status_code=400, detail="Reserva não aceita comprovante neste estado")
-    url = _save_upload(file, "comprovantes")
-    return await _attach_comprovante(booking_id, url)
+    url, grid_id = await _save_upload(file, "comprovantes")
+    return await _attach_comprovante(booking_id, url, grid_id)
 
 
 @api.get("/bookings/{booking_id}")
@@ -438,23 +482,38 @@ async def lookup_by_cpf(payload: LookupIn):
 
 @api.post("/bookings/{booking_id}/cancel")
 async def cancel_booking(booking_id: str, cpf: str):
-    """Customer cancels own booking. Verifies CPF ownership."""
+    """Customer cancels own booking. Verifies CPF; respects cancel_min_hours; frees slot atomically."""
     b = await db.bookings.find_one({"id": booking_id})
     if not b:
         raise HTTPException(status_code=404, detail="Reserva não encontrada")
     if b["cpf"] != only_digits(cpf):
         raise HTTPException(status_code=403, detail="CPF não confere com esta reserva")
-    await db.bookings.update_one(
-        {"id": booking_id},
-        {"$set": {"status": "cancelled", "payment.status": "cancelled"}},
+    if b.get("status") not in ACTIVE_STATUSES:
+        raise HTTPException(status_code=400, detail="Reserva já cancelada ou expirada")
+    settings = await sset.get_settings(db)
+    ok_cancel, reason = _customer_cancel_allowed(b, settings)
+    if not ok_cancel:
+        raise HTTPException(status_code=400, detail=reason)
+    res = await db.bookings.update_one(
+        {"id": booking_id, "cpf": only_digits(cpf), "status": {"$in": ACTIVE_STATUSES}},
+        {"$set": {
+            "status": "cancelled",
+            "payment.status": "cancelled",
+            "cancelled_at": _now_iso(),
+            "cancelled_by": "customer",
+        }},
     )
+    if res.modified_count != 1:
+        raise HTTPException(status_code=409, detail="Não foi possível cancelar (já alterada)")
     ops_metrics.note_booking_cancel("customer")
     await daily_metrics.note_cancelled(db)
+    wa_ok = await _notify_cancel_wa(b, source="customer")
     logger.info(
-        "event=booking_cancel source=customer booking_id=%s",
+        "event=booking_cancel source=customer booking_id=%s wa=%s",
         booking_id[:8],
+        wa_ok,
     )
-    return {"ok": True}
+    return {"ok": True, "whatsapp_notified": wa_ok}
 
 
 # =============================================================================
@@ -729,14 +788,29 @@ async def admin_mark_whatsapp_sent(booking_id: str, admin: dict = Depends(requir
 
 @api.post("/admin/bookings/{booking_id}/cancel")
 async def admin_cancel_booking(booking_id: str, admin: dict = Depends(require_admin)):
-    await db.bookings.update_one(
-        {"id": booking_id},
-        {"$set": {"status": "cancelled", "payment.status": "cancelled"}},
+    """Admin can always cancel (no cancel_min_hours). Frees slot atomically; best-effort WA."""
+    b = await db.bookings.find_one({"id": booking_id})
+    if not b:
+        raise HTTPException(status_code=404, detail="Reserva não encontrada")
+    res = await db.bookings.update_one(
+        {"id": booking_id, "status": {"$in": ACTIVE_STATUSES}},
+        {"$set": {
+            "status": "cancelled",
+            "payment.status": "cancelled",
+            "cancelled_at": _now_iso(),
+            "cancelled_by": "admin",
+        }},
     )
+    if res.modified_count != 1:
+        # already cancelled/expired — still ok for idempotent admin UX
+        if b.get("status") in ("cancelled", "expired"):
+            return {"ok": True, "status": b["status"], "whatsapp_notified": False}
+        raise HTTPException(status_code=409, detail="Não foi possível cancelar")
     ops_metrics.note_booking_cancel("admin")
     await daily_metrics.note_cancelled(db)
-    logger.info("event=booking_cancel source=admin booking_id=%s", booking_id[:8])
-    return {"ok": True}
+    wa_ok = await _notify_cancel_wa(b, source="admin")
+    logger.info("event=booking_cancel source=admin booking_id=%s wa=%s", booking_id[:8], wa_ok)
+    return {"ok": True, "whatsapp_notified": wa_ok}
 
 
 
@@ -905,14 +979,23 @@ async def internal_wa_cancel(request: Request, payload: WaCancelIn):
     b = await db.bookings.find_one(q, sort=[("date", 1), ("start_time", 1)])
     if not b or not phones_match(payload.phone, b.get("whatsapp") or ""):
         return {"cancelled": False, "message": "Nenhuma reserva ativa neste número"}
+    settings = await sset.get_settings(db)
+    ok_cancel, reason = _customer_cancel_allowed(b, settings)
+    if not ok_cancel:
+        return {"cancelled": False, "message": reason}
     # Atomic: only cancel if phone still matches (prevents id-only cancel without phone)
     res = await db.bookings.update_one(
         {
             "id": b["id"],
             "whatsapp": {"$in": variants},
-            "status": {"$in": ["pending", "awaiting_admin", "confirmed"]},
+            "status": {"$in": list(ACTIVE_STATUSES)},
         },
-        {"$set": {"status": "cancelled", "payment.status": "cancelled"}},
+        {"$set": {
+            "status": "cancelled",
+            "payment.status": "cancelled",
+            "cancelled_at": _now_iso(),
+            "cancelled_by": "whatsapp",
+        }},
     )
     if res.modified_count != 1:
         return {"cancelled": False, "message": "Nenhuma reserva ativa neste número"}
@@ -929,6 +1012,7 @@ async def internal_wa_cancel(request: Request, payload: WaCancelIn):
         "id": b["id"],
         "date": b["date"],
         "start_time": b["start_time"],
+        "message": f"Reserva cancelada: {b['date']} às {b['start_time']}. Horário liberado.",
     }
 
 
@@ -968,9 +1052,9 @@ async def internal_wa_comprovante(
             )
         demote_to_informado = False
     content = await file.read()
-    url = _save_upload_bytes(content, "comprovantes", file.filename or "wa-comprovante.jpg")
+    url, grid_id = await _save_upload_bytes(content, "comprovantes", file.filename or "wa-comprovante.jpg")
     if demote_to_informado:
-        updated = await _attach_comprovante(b["id"], url)
+        updated = await _attach_comprovante(b["id"], url, grid_id)
         status_out = "awaiting_admin"
     else:
         await db.bookings.update_one(
@@ -979,6 +1063,7 @@ async def internal_wa_comprovante(
                 "payment.status": "awaiting_confirmation",
                 "payment.comprovante_url": url,
                 "payment.comprovante_uploaded_at": _now_iso(),
+                "payment.comprovante_gridfs_id": grid_id,
             }},
         )
         updated = await db.bookings.find_one({"id": b["id"]}, {"_id": 0})
@@ -1319,7 +1404,7 @@ async def shutdown():
 
 
 app.include_router(api)
-app.mount("/api/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
+# Uploads served by GET /api/uploads/{subdir}/{filename} (disk cache + GridFS) — no StaticFiles mount
 
 
 # =============================================================================

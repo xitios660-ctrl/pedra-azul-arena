@@ -28,7 +28,7 @@ Reserva de **uma** quadra (Pedra Azul — Núncio), fluxo CPF + PIX + confirmaç
 | `PORT` | não | Porta HTTP pública (Render define) |
 | `BOOKING_RATE_LIMIT` | não | Max POSTs `/api/bookings` por IP/janela (default 8) |
 | `BOOKING_RATE_WINDOW_SEC` | não | Janela do rate limit em segundos (default 60) |
-| `UPLOAD_DIR` | não | Pasta de uploads (crests/comprovantes). Local: `backend/uploads`. Render: `/var/data/uploads` com disk `pedra-uploads` (Starter+; Free perde arquivos no restart) |
+| `UPLOAD_DIR` | não | Pasta cache de uploads (crests/comprovantes). Local: `backend/uploads`. Render: `/var/data/uploads` (Starter+). **Comprovantes PIX: GridFS no Mongo (Free-safe)**; disk opcional. |
 
 **Nunca** commitir credenciais Baileys / `.env` / QR. Sessão fica na collection `whatsapp_auth`.
 
@@ -44,7 +44,7 @@ docker run --rm -p 8000:8000 \
 Health: `GET /api/health` → `{ ok, db, whatsapp }`.
 
 Blueprint: `render.yaml` (Docker). Configure `MONGO_URL` no dashboard.
-Uploads: disk `pedra-uploads` → `/var/data/uploads` (`UPLOAD_DIR`); Free tier is ephemeral until Starter+ disk is attached.
+Uploads: **Free uses MongoDB GridFS for PIX comprovantes** (survive restarts); disk (`UPLOAD_DIR` / `pedra-uploads`) is optional cache on paid Starter+.
 
 ## Admin — login (seed)
 

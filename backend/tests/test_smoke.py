@@ -404,3 +404,129 @@ def test_concurrent_double_book_one_201_one_409(s):
             if bid:
                 s.post(f"{API}/bookings/{bid}/cancel", params={"cpf": SMOKE_CPF}, timeout=10)
 
+
+
+def test_comprovante_mongo_survives_disk_clear(s):
+    """Cycle 11: proof stored in GridFS; still fetchable after local file deleted."""
+    from pathlib import Path
+
+    day = (datetime.now(TZ) + timedelta(days=25)).strftime("%Y-%m-%d")
+    payload = {
+        "court_id": "court-1",
+        "date": day,
+        "start_time": "14:00",
+        "duration_minutes": 60,
+        "cpf": SMOKE_CPF,
+        "customer_name": "Smoke GridFS",
+        "whatsapp": "11944443333",
+        "your_team_name": "A",
+        "opponent_team_name": "B",
+    }
+    r1 = s.post(f"{API}/bookings", json=payload, headers=_xff(), timeout=15)
+    if r1.status_code == 409:
+        payload["start_time"] = "13:00"
+        r1 = s.post(f"{API}/bookings", json=payload, headers=_xff(), timeout=15)
+    assert r1.status_code in (200, 201), r1.text
+    bid = r1.json()["id"]
+    png = (
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+        b"\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\xf8\x0f\x00"
+        b"\x00\x01\x01\x00\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB`\x82"
+    )
+    files = {"file": ("gridfs.png", io.BytesIO(png), "image/png")}
+    r2 = s.post(f"{API}/bookings/{bid}/comprovante", files=files, timeout=15)
+    assert r2.status_code == 200, r2.text
+    data = r2.json()
+    assert data["status"] == "awaiting_admin"
+    url = data["payment"]["comprovante_url"]
+    assert url and url.startswith("/api/uploads/comprovantes/")
+    gid = data["payment"].get("comprovante_gridfs_id")
+    assert gid, "expected payment.comprovante_gridfs_id from GridFS"
+
+    # warm fetch (may be served from disk cache)
+    warm = s.get(f"{BASE_URL}{url}", timeout=10)
+    assert warm.status_code == 200, warm.text[:200]
+    assert warm.content[:4] == b"\x89PNG"
+
+    # simulate Free-tier restart: wipe local file only
+    fname = url.rsplit("/", 1)[-1]
+    roots = [
+        Path(__file__).resolve().parents[1] / "uploads",
+        Path("/workspace/user-zip/Leandro-2-main/backend/uploads"),
+        Path(os.environ.get("UPLOAD_DIR") or "") if os.environ.get("UPLOAD_DIR") else None,
+    ]
+    deleted = False
+    for root in roots:
+        if not root:
+            continue
+        fpath = root / "comprovantes" / fname
+        if fpath.is_file():
+            fpath.unlink()
+            deleted = True
+            assert not fpath.exists()
+            break
+    # even if disk write was skipped, GridFS path must work
+    cold = s.get(f"{BASE_URL}{url}", timeout=10)
+    assert cold.status_code == 200, f"GridFS serve failed deleted={deleted}: {cold.text[:200]}"
+    assert cold.content[:4] == b"\x89PNG"
+    assert cold.content == warm.content
+
+    # alternate id route
+    by_id = s.get(f"{API}/comprovantes/{gid}", timeout=10)
+    assert by_id.status_code == 200, by_id.text[:200]
+    assert by_id.content[:4] == b"\x89PNG"
+
+    s.post(f"{API}/bookings/{bid}/cancel", params={"cpf": SMOKE_CPF}, timeout=10)
+
+
+def test_cancel_min_hours_customer_vs_admin(admin_session, s):
+    """Customer cancel blocked inside cancel_min_hours; admin always can."""
+    cur = admin_session.get(f"{API}/admin/site-settings", timeout=10)
+    assert cur.status_code == 200, cur.text
+    original = cur.json()
+    assert "cancel_min_hours" in original
+    patched = {**original, "cancel_min_hours": 72}
+    rput = admin_session.put(f"{API}/admin/site-settings", json=patched, timeout=10)
+    assert rput.status_code == 200, rput.text
+    try:
+        day = (datetime.now(TZ) + timedelta(days=1)).strftime("%Y-%m-%d")
+        payload = {
+            "court_id": "court-1",
+            "date": day,
+            "start_time": "22:00",
+            "duration_minutes": 60,
+            "cpf": SMOKE_CPF,
+            "customer_name": "Smoke Cancel Policy",
+            "whatsapp": "11933332222",
+            "your_team_name": "A",
+            "opponent_team_name": "B",
+        }
+        r1 = s.post(f"{API}/bookings", json=payload, headers=_xff(), timeout=15)
+        if r1.status_code == 409:
+            payload["start_time"] = "21:00"
+            r1 = s.post(f"{API}/bookings", json=payload, headers=_xff(), timeout=15)
+        assert r1.status_code in (200, 201), r1.text
+        bid = r1.json()["id"]
+
+        rc = s.post(f"{API}/bookings/{bid}/cancel", params={"cpf": SMOKE_CPF}, timeout=10)
+        assert rc.status_code == 400, rc.text
+        assert "antes" in (rc.json().get("detail") or "").lower() or "hora" in (rc.json().get("detail") or "").lower()
+
+        # still active
+        got = s.get(f"{API}/bookings/{bid}", timeout=10)
+        assert got.json()["status"] in ("pending", "awaiting_admin", "confirmed")
+
+        ra = admin_session.post(f"{API}/admin/bookings/{bid}/cancel", timeout=10)
+        assert ra.status_code == 200, ra.text
+        got2 = s.get(f"{API}/bookings/{bid}", timeout=10)
+        assert got2.json()["status"] == "cancelled"
+    finally:
+        admin_session.put(f"{API}/admin/site-settings", json=original, timeout=10)
+
+
+def test_public_site_settings_has_cancel_min_hours(s):
+    r = s.get(f"{API}/site-settings", timeout=10)
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert "cancel_min_hours" in data
+    assert int(data["cancel_min_hours"]) >= 0

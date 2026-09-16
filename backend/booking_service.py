@@ -242,6 +242,7 @@ async def create_booking_atomic(
             "confirmed_at": now_iso() if status == "confirmed" else None,
             "comprovante_url": None,
             "comprovante_uploaded_at": None,
+            "comprovante_gridfs_id": None,
         },
         "whatsapp_sent": False,
         "whatsapp_sent_at": None,

@@ -31,6 +31,7 @@ DEFAULTS: dict[str, Any] = {
     "slot_duration_minutes": 60,
     "parking_note": "Estacionamento no entorno da quadra — chegue ~10 min antes.",
     "court_name": "Quadra Pedra Azul — Núncio",
+    "cancel_min_hours": 2,  # customer cancel cutoff before slot start; admin always can
 }
 
 # Legacy Arena Premium placeholders → migrate once if still at old seed values.
@@ -56,6 +57,7 @@ class SiteSettingsUpdate(BaseModel):
     slot_duration_minutes: int = Field(ge=30, le=180)
     parking_note: str = Field(min_length=0, max_length=240)
     court_name: Optional[str] = Field(default=None, max_length=120)
+    cancel_min_hours: int = Field(default=2, ge=0, le=168)
 
     @field_validator("whatsapp_e164")
     @classmethod
@@ -104,6 +106,7 @@ def public_view(doc: dict[str, Any]) -> dict[str, Any]:
         "slot_duration_minutes": int(d["slot_duration_minutes"]),
         "parking_note": d.get("parking_note") or DEFAULTS["parking_note"],
         "court_name": d.get("court_name") or DEFAULTS["court_name"],
+        "cancel_min_hours": int(d.get("cancel_min_hours") if d.get("cancel_min_hours") is not None else DEFAULTS["cancel_min_hours"]),
     }
 
 

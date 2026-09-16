@@ -901,6 +901,7 @@ function SiteSettingsAdmin() {
         open_hour: Number(form.open_hour),
         close_hour: Number(form.close_hour),
         slot_duration_minutes: Number(form.slot_duration_minutes),
+        cancel_min_hours: Number(form.cancel_min_hours ?? 2),
       };
       const { data } = await api.put("/admin/site-settings", payload);
       setForm(data);
@@ -948,6 +949,7 @@ function SiteSettingsAdmin() {
       <h2 className="font-heading text-4xl uppercase italic mb-2">Configurações</h2>
       <p className="text-white/50 text-sm mb-4">
         WhatsApp, PIX, endereço, preço e horários — usados no booking público e nas respostas do bot.
+        Cancelamento pelo cliente respeita as horas mínimas; admin cancela sempre.
       </p>
       <div className="grid sm:grid-cols-2 gap-4">
         {field("WhatsApp (E.164 dígitos)", "whatsapp_e164")}
@@ -957,6 +959,7 @@ function SiteSettingsAdmin() {
         {field("Abre (hora 0–23)", "open_hour", { type: "number", min: 0, max: 23 })}
         {field("Fecha — último slot (0–23)", "close_hour", { type: "number", min: 0, max: 23 })}
         {field("Duração do slot (min)", "slot_duration_minutes", { type: "number", min: 30, max: 180, step: 30 })}
+        {field("Cancelamento cliente (horas antes)", "cancel_min_hours", { type: "number", min: 0, max: 168, step: 1 })}
         {field("Nome da quadra", "court_name")}
       </div>
       {field("Endereço / local (label)", "address_label")}
