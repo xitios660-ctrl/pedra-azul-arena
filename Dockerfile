@@ -7,7 +7,10 @@ FROM node:20-bookworm-slim AS frontend-build
 WORKDIR /app/frontend
 
 COPY frontend/package.json frontend/package-lock.json ./
-RUN npm ci --legacy-peer-deps || npm install --legacy-peer-deps
+# --legacy-peer-deps: React 19 + CRA/craco peer ranges.
+# Direct ajv@8.17.1 + overrides in package.json prevent ajv-keywords@5
+# resolving against hoisted ajv@6 (MODULE_NOT_FOUND for dist/compile/codegen).
+RUN npm ci --legacy-peer-deps
 
 COPY frontend/ ./
 

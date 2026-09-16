@@ -41,7 +41,11 @@ export default function AdminDashboard() {
     if (!selectedTour && t.data.length) setSelectedTour(t.data[0]);
   };
 
-  useEffect(() => { refresh(); }, []);
+  useEffect(() => {
+    refresh();
+    // Mount-only load; refresh closes over selectedTour intentionally.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const confirmAndPrepareWhatsapp = async (id) => {
     const { data } = await api.post(`/admin/bookings/${id}/confirm`);
