@@ -60,6 +60,9 @@ export const TOURN = {
   match: (id) => `match-${id}`,
   leaderboard: "tournament-leaderboard",
   topScorers: "tournament-top-scorers",
+  empty: "tournaments-empty",
+  skeleton: "tournaments-skeleton",
+  interestCta: (id) => `tournament-interest-${id}`,
 };
 
 export const MYB = {

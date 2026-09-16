@@ -282,3 +282,12 @@ export function normalizeTimeHm(raw) {
   if (!Number.isFinite(h) || !Number.isFinite(min) || h < 0 || h > 23 || min < 0 || min > 59) return null;
   return `${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
 }
+
+/** Prefill WhatsApp message when asking about a tournament (no signup backend). */
+export function tournamentInterestPrefill(tournamentName) {
+  const name = String(tournamentName || "").trim() || "torneio";
+  return (
+    `Olá! Tenho interesse no torneio "${name}" na Quadra Pedra Azul (Núncio).\n` +
+    `Podem me passar mais informações?`
+  );
+}

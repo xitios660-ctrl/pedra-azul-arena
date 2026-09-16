@@ -305,3 +305,9 @@ Prod smoke: `GET /api/health`, `/api/courts`, `/api/site-settings`, WhatsApp `AG
 - Vazio e desligado por padrão — não inventar texto de anúncio.
 - Admin → Configurações; público em `GET /api/site-settings`; faixa dismissível (sessionStorage) sob o navbar na Landing e Booking.
 
+## Cycle 40 notes
+- Página **Campeonatos** (`/tournaments`): polish mobile-first neon — skeletons, empty state, badges de status, meta (datas das partidas, preço só se a API enviar, times/partidas).
+- CTA **Interessado** abre WhatsApp com mensagem pré-preenchida (`tournamentInterestPrefill`) quando `waReady` — sem backend de inscrição inventado.
+- Detalhe: hero com meta + CTA; abas responsivas; estados vazios nas chaves/classificação/artilharia/histórico.
+- Landing já linkava `/tournaments` (hero + menu + navbar); Presentation intocada.
+
