@@ -41,3 +41,6 @@ backend/uploads/**
 .DS_Store
 **/*.zip
 **/*.tar.gz
+
+# Accidental nested frontend copy under whatsapp (not part of Baileys sidecar)
+whatsapp/frontend
