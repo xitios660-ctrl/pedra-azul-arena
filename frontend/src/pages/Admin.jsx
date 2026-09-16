@@ -9,7 +9,7 @@ import {
   Eye, MessageCircle, FileCheck, Wifi, WifiOff, QrCode, RefreshCw, LogOut, Loader2,
   Calendar, Clock, Ticket, X, Settings, AlertCircle, Download, Search
 } from "lucide-react";
-import { isWhatsAppPlaceholder, isPixKeyPlaceholder } from "@/lib/siteConfig";
+import { isWhatsAppPlaceholder, isPixKeyPlaceholder, OPEN_DAY_LABELS } from "@/lib/siteConfig";
 import AdminCalendar from "@/components/AdminCalendar";
 
 function fmtBRL(n) { return (n || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }); }
@@ -1021,7 +1021,12 @@ function SiteSettingsAdmin() {
     (async () => {
       try {
         const { data } = await api.get("/admin/site-settings");
-        setForm(data);
+        setForm({
+          ...data,
+          open_days: Array.isArray(data.open_days) && data.open_days.length
+            ? data.open_days.map(Number)
+            : [0, 1, 2, 3, 4, 5, 6],
+        });
       } catch (e) {
         setErr(e.response?.data?.detail || e.message);
       }
@@ -1040,6 +1045,7 @@ function SiteSettingsAdmin() {
         price_per_hour: Number(form.price_per_hour),
         open_hour: Number(form.open_hour),
         close_hour: Number(form.close_hour),
+        open_days: Array.isArray(form.open_days) ? form.open_days.map(Number).sort((a, b) => a - b) : [0, 1, 2, 3, 4, 5, 6],
         slot_duration_minutes: Number(form.slot_duration_minutes),
         cancel_min_hours: Number(form.cancel_min_hours ?? 2),
         admin_whatsapp_e164: String(form.admin_whatsapp_e164 || "").replace(/\D/g, ""),
@@ -1090,7 +1096,7 @@ function SiteSettingsAdmin() {
       <div className="text-[11px] uppercase tracking-[0.35em] text-[var(--brand)]">// Site · Quadra única</div>
       <h2 className="font-heading text-4xl uppercase italic mb-2">Configurações</h2>
       <p className="text-white/55 text-sm mb-4">
-        WhatsApp, PIX, endereço, preço e horários — usados no booking público e nas respostas do bot.
+        WhatsApp, PIX, endereço, preço, horários e dias abertos — usados no booking público e nas respostas do bot.
         Cancelamento pelo cliente respeita as horas mínimas; admin cancela sempre.
       </p>
       <div className="grid sm:grid-cols-2 gap-4">
@@ -1103,6 +1109,40 @@ function SiteSettingsAdmin() {
         {field("Duração do slot (min)", "slot_duration_minutes", { type: "number", min: 30, max: 180, step: 30 })}
         {field("Cancelamento cliente (horas antes)", "cancel_min_hours", { type: "number", min: 0, max: 168, step: 1 })}
         {field("Nome da quadra", "court_name")}
+      </div>
+      <div className="border border-white/10 rounded-lg p-4 space-y-3 bg-black/20" data-testid="admin-open-days">
+        <div className="text-[10px] uppercase tracking-[0.25em] text-[var(--brand)]">Dias abertos</div>
+        <p className="text-white/55 text-xs">
+          Marque os dias em que a quadra aceita reservas (0=Seg … 6=Dom, padrão Python/ISO).
+          Dias desmarcados ficam indisponíveis no booking e no WhatsApp.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {OPEN_DAY_LABELS.map((d) => {
+            const checked = (form.open_days || []).map(Number).includes(d.value);
+            return (
+              <label
+                key={d.value}
+                className={`inline-flex items-center gap-2 min-h-[44px] px-3 rounded-lg border cursor-pointer select-none ${
+                  checked ? "border-[var(--brand)]/60 bg-[var(--brand)]/10 text-white" : "border-white/10 text-white/50"
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  className="w-4 h-4 accent-[var(--brand)]"
+                  checked={checked}
+                  data-testid={`admin-open-day-${d.value}`}
+                  onChange={(e) => {
+                    const cur = new Set((form.open_days || []).map(Number));
+                    if (e.target.checked) cur.add(d.value);
+                    else cur.delete(d.value);
+                    set("open_days", Array.from(cur).sort((a, b) => a - b));
+                  }}
+                />
+                <span className="text-sm font-display tracking-wide">{d.short}</span>
+              </label>
+            );
+          })}
+        </div>
       </div>
       <div className="border border-white/10 rounded-lg p-4 space-y-3 bg-black/20">
         <div className="text-[10px] uppercase tracking-[0.25em] text-[var(--brand)]">Alertas admin (WhatsApp)</div>

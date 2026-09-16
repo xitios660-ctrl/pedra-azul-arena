@@ -34,6 +34,8 @@ export const DEFAULT_SITE_SETTINGS = {
   price_per_hour: 130,
   open_hour: 8,
   close_hour: 23,
+  // Python weekday: 0=Mon .. 6=Sun (same as backend open_days)
+  open_days: [0, 1, 2, 3, 4, 5, 6],
   slot_duration_minutes: 60,
   parking_note: PARKING_NOTE,
   court_name: "Quadra Pedra Azul — Núncio",
@@ -97,3 +99,33 @@ export function priceLabel(price) {
   if (!Number.isFinite(n)) return COURT_PRICE_LABEL;
   return `R$ ${n % 1 === 0 ? n : n.toFixed(2)}/h`;
 }
+
+/** Convert YYYY-MM-DD → Python weekday (0=Mon .. 6=Sun). */
+export function pythonWeekdayFromYmd(ymd) {
+  if (!ymd || typeof ymd !== "string") return null;
+  const d = new Date(`${ymd}T12:00:00`);
+  if (Number.isNaN(d.getTime())) return null;
+  const js = d.getDay(); // 0=Sun .. 6=Sat
+  return js === 0 ? 6 : js - 1;
+}
+
+/** True if date is an open weekday per settings.open_days (default all). Explicit [] = closed. */
+export function isOpenDay(ymd, settings) {
+  const days = Array.isArray(settings?.open_days)
+    ? settings.open_days.map(Number)
+    : [0, 1, 2, 3, 4, 5, 6];
+  const wd = pythonWeekdayFromYmd(ymd);
+  if (wd == null) return true;
+  return days.includes(wd);
+}
+
+export const OPEN_DAY_LABELS = [
+  { value: 0, short: "Seg", full: "Segunda" },
+  { value: 1, short: "Ter", full: "Terça" },
+  { value: 2, short: "Qua", full: "Quarta" },
+  { value: 3, short: "Qui", full: "Quinta" },
+  { value: 4, short: "Sex", full: "Sexta" },
+  { value: 5, short: "Sáb", full: "Sábado" },
+  { value: 6, short: "Dom", full: "Domingo" },
+];
+

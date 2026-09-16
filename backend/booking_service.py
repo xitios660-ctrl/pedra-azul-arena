@@ -88,6 +88,7 @@ async def build_availability(
     court = runtime["court"]
     time_slots = runtime["time_slots"]
     price = court["price_per_hour"]
+    day_open = sset.is_open_weekday(date, runtime["settings"])
     bookings = await db.bookings.find(
         {
             "court_id": court_id,
@@ -105,7 +106,15 @@ async def build_availability(
         if after_hour is not None and hour < after_hour:
             continue
         b = taken.get(t)
-        if b:
+        if not day_open:
+            # Closed weekday — still surface reserved/blocked for admin calendar honesty
+            if b:
+                status = "reserved"
+            elif t in blocked:
+                status = "blocked"
+            else:
+                status = "unavailable"
+        elif b:
             status = "reserved"
         elif t in blocked:
             status = "blocked"
@@ -129,9 +138,10 @@ async def build_availability(
                 "price": price,
             }
         )
-    return {"court": court, "date": date, "slots": slots, "settings": {
+    return {"court": court, "date": date, "slots": slots, "day_open": day_open, "settings": {
         "open_hour": runtime["settings"]["open_hour"],
         "close_hour": runtime["settings"]["close_hour"],
+        "open_days": runtime["settings"].get("open_days", [0, 1, 2, 3, 4, 5, 6]),
         "slot_duration_minutes": runtime["settings"]["slot_duration_minutes"],
         "price_per_hour": price,
     }}
@@ -194,6 +204,9 @@ async def create_booking_atomic(
         raise ValueError("Data inválida") from e
     if is_past_slot(date, start_time):
         raise ValueError("Horário indisponível")
+
+    if not sset.is_open_weekday(date, settings):
+        raise ValueError("Quadra fechada neste dia da semana")
 
     blocked = await get_blocked_times(db, court_id, date)
     if start_time in blocked:

@@ -1,4 +1,8 @@
-"""Mongo singleton `site_settings` — ops-editable court/contact config."""
+"""Mongo singleton `site_settings` — ops-editable court/contact config.
+
+open_days: list of Python datetime.weekday() ints — 0=Monday .. 6=Sunday
+(ISO Monday-first, zero-based). Default [0,1,2,3,4,5,6] = all week.
+"""
 from __future__ import annotations
 
 import re
@@ -28,6 +32,8 @@ DEFAULTS: dict[str, Any] = {
     "price_per_hour": 130,
     "open_hour": 8,
     "close_hour": 23,  # inclusive last slot start hour
+    # Weekdays court is open: Python datetime.weekday() — 0=Mon .. 6=Sun (ISO Mon-first, zero-based).
+    "open_days": [0, 1, 2, 3, 4, 5, 6],
     "slot_duration_minutes": 60,
     "parking_note": "Estacionamento no entorno da quadra — chegue ~10 min antes.",
     "court_name": "Quadra Pedra Azul — Núncio",
@@ -57,6 +63,7 @@ class SiteSettingsUpdate(BaseModel):
     price_per_hour: float = Field(gt=0, le=10000)
     open_hour: int = Field(ge=0, le=23)
     close_hour: int = Field(ge=0, le=23)
+    open_days: list[int] = Field(default_factory=lambda: [0, 1, 2, 3, 4, 5, 6])
     slot_duration_minutes: int = Field(ge=30, le=180)
     parking_note: str = Field(min_length=0, max_length=240)
     court_name: Optional[str] = Field(default=None, max_length=120)
@@ -99,11 +106,66 @@ class SiteSettingsUpdate(BaseModel):
             raise ValueError("slot_duration_minutes deve ser múltiplo de 30")
         return v
 
+    @field_validator("open_days")
+    @classmethod
+    def normalize_open_days(cls, v: list[int]) -> list[int]:
+        if v is None:
+            return [0, 1, 2, 3, 4, 5, 6]
+        if not isinstance(v, list):
+            raise ValueError("open_days deve ser lista de inteiros 0–6")
+        out: list[int] = []
+        for x in v:
+            try:
+                n = int(x)
+            except (TypeError, ValueError) as e:
+                raise ValueError("open_days: cada item deve ser int 0–6") from e
+            if n < 0 or n > 6:
+                raise ValueError("open_days: use 0=Seg … 6=Dom (Python weekday)")
+            if n not in out:
+                out.append(n)
+        out.sort()
+        return out
+
     @model_validator(mode="after")
     def hours_order(self):
         if self.close_hour < self.open_hour:
             raise ValueError("close_hour deve ser >= open_hour")
         return self
+
+
+
+def _normalize_open_days(raw: Any) -> list[int]:
+    """Python weekday ints 0=Mon..6=Sun.
+
+    Missing/invalid → default all seven. Explicit [] stays empty (closed all week).
+    """
+    if raw is None:
+        return list(DEFAULTS["open_days"])
+    if not isinstance(raw, (list, tuple)):
+        return list(DEFAULTS["open_days"])
+    if len(raw) == 0:
+        return []
+    out: list[int] = []
+    for x in raw:
+        try:
+            n = int(x)
+        except (TypeError, ValueError):
+            continue
+        if 0 <= n <= 6 and n not in out:
+            out.append(n)
+    out.sort()
+    return out if out else list(DEFAULTS["open_days"])
+
+
+def is_open_weekday(date_ymd: str, settings: dict[str, Any] | None = None) -> bool:
+    """True if YYYY-MM-DD falls on an open_days weekday (Python weekday)."""
+    from datetime import datetime as _dt
+    try:
+        wd = _dt.strptime(date_ymd, "%Y-%m-%d").weekday()  # 0=Mon..6=Sun
+    except ValueError:
+        return False
+    days = _normalize_open_days((settings or {}).get("open_days") if settings else None)
+    return wd in days
 
 
 def public_view(doc: dict[str, Any]) -> dict[str, Any]:
@@ -119,6 +181,7 @@ def public_view(doc: dict[str, Any]) -> dict[str, Any]:
         "price_per_hour": float(d["price_per_hour"]),
         "open_hour": int(d["open_hour"]),
         "close_hour": int(d["close_hour"]),
+        "open_days": _normalize_open_days(d.get("open_days")),
         "slot_duration_minutes": int(d["slot_duration_minutes"]),
         "parking_note": d.get("parking_note") or DEFAULTS["parking_note"],
         "court_name": d.get("court_name") or DEFAULTS["court_name"],

@@ -10,6 +10,8 @@ import {
   defaultWhatsAppPrefill,
   COURT_LOCATION,
   priceLabel,
+  isOpenDay,
+  OPEN_DAY_LABELS,
 } from "@/lib/siteConfig";
 import { useSiteSettings } from "@/lib/SiteSettings";
 import { pixPipelineLabel } from "@/lib/paymentStatus";
@@ -232,7 +234,10 @@ export default function Booking() {
   };
 
   const activeFlow = flowIndex(step, !!selectedCourt, !!date, !!pickedSlot);
-  const freeSlots = availability?.slots?.filter((s) => isSlotAvailable(s))?.length ?? null;
+  const dayOpen = isOpenDay(date, settings);
+  const freeSlots = dayOpen
+    ? (availability?.slots?.filter((s) => isSlotAvailable(s))?.length ?? null)
+    : 0;
   const waHref = waReady
     ? (ctxWa || whatsappUrl(defaultWhatsAppPrefill(), settings?.whatsapp_e164))
     : null;
@@ -376,9 +381,29 @@ export default function Booking() {
             <input
               data-testid={BOOKING.datePicker}
               type="date" min={todayISO()} value={date}
-              onChange={(e) => { setDate(e.target.value); setPickedSlot(null); }}
-              className="w-full bg-black/40 border border-white/15 px-3 py-3 text-white focus:border-[var(--brand)] focus:outline-none font-display text-base"
+              onChange={(e) => {
+                const next = e.target.value;
+                setDate(next);
+                setPickedSlot(null);
+                setStep("idle");
+              }}
+              className={`w-full bg-black/40 border px-3 py-3 text-white focus:outline-none font-display text-base ${
+                dayOpen ? "border-white/15 focus:border-[var(--brand)]" : "border-[var(--warning)]/50 opacity-80"
+              }`}
             />
+            {!dayOpen && (
+              <div
+                className="mt-3 px-3 py-2 text-xs border-l-2 border-[var(--warning)] bg-[var(--warning)]/10 text-white/80"
+                data-testid="booking-day-closed"
+                role="status"
+              >
+                Quadra fechada neste dia da semana. Escolha{" "}
+                {(settings?.open_days || [0,1,2,3,4,5,6])
+                  .map((n) => OPEN_DAY_LABELS.find((d) => d.value === Number(n))?.short)
+                  .filter(Boolean)
+                  .join(", ") || "outro dia"}.
+              </div>
+            )}
             <div className="mt-6 text-xs text-white/50 leading-relaxed space-y-1.5">
               <div className="flex items-center gap-2"><span className="w-3 h-3 inline-block border-l-4 border-[var(--success)]" /> Disponível</div>
               <div className="flex items-center gap-2"><span className="w-3 h-3 inline-block border-l-4 border-[var(--warning)]" /> Reservado</div>
@@ -425,7 +450,17 @@ export default function Booking() {
               </div>
             )}
 
-            {!loading && availability?.slots?.length === 0 && (
+            {!loading && !dayOpen && (
+              <div className="state-panel" data-testid="booking-closed-weekday">
+                <CalendarIcon className="w-8 h-8 text-white/30 mb-3" />
+                <div className="font-heading text-2xl uppercase text-white/70">Dia fechado</div>
+                <p className="text-sm mt-2 max-w-sm">
+                  A quadra não abre neste dia da semana. Selecione um dia marcado como aberto nas configurações.
+                </p>
+              </div>
+            )}
+
+            {!loading && dayOpen && availability?.slots?.length === 0 && (
               <div className="state-panel">
                 <Clock className="w-8 h-8 text-white/30 mb-3" />
                 <div className="font-heading text-2xl uppercase text-white/70">Nenhum horário neste dia</div>
@@ -442,13 +477,14 @@ export default function Booking() {
               </div>
             )}
 
-            {!loading && availability?.slots?.length > 0 && freeSlots === 0 && (
+            {!loading && dayOpen && availability?.slots?.length > 0 && freeSlots === 0 && (
               <div className="state-panel mb-4 !min-h-0 py-6">
                 <div className="font-heading text-xl uppercase text-[var(--warning)]">Lotado neste dia</div>
                 <p className="text-sm mt-1">Todos os horários estão ocupados. Escolha outra data.</p>
               </div>
             )}
 
+            {dayOpen && (
             <div className="grid grid-cols-1 xs:grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 sm:gap-3">
               <AnimatePresence mode="popLayout">
                 {availability?.slots?.map((s, idx) => {
@@ -500,6 +536,7 @@ export default function Booking() {
                 })}
               </AnimatePresence>
             </div>
+            )}
           </div>
         </div>
       </div>

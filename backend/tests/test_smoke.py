@@ -776,3 +776,87 @@ def test_admin_block_day_and_unblock(admin_session, s):
         day2 = (datetime.now(TZ) + timedelta(days=61)).strftime("%Y-%m-%d")
         admin_session.post(f"{API}/admin/calendar/unblock-day", json={"date": day2}, timeout=15)
         admin_session.post(f"{API}/admin/bookings/{booking_id}/cancel", timeout=10)
+
+
+def test_open_days_closes_weekday_availability_and_booking(admin_session, s):
+    """Cycle 16: open_days excludes a weekday → slots unavailable + booking fails."""
+    r = admin_session.get(f"{API}/admin/site-settings", timeout=10)
+    assert r.status_code == 200, r.text
+    original = r.json()
+    # Pick a weekday far enough ahead so slots are not all past
+    # Find next date matching a weekday we will close (e.g. Wednesday=2)
+    closed_wd = 2  # Wednesday
+    base = datetime.now(TZ) + timedelta(days=20)
+    day = None
+    for i in range(14):
+        cand = base + timedelta(days=i)
+        if cand.weekday() == closed_wd:
+            day = cand.strftime("%Y-%m-%d")
+            break
+    assert day, "could not find Wednesday test day"
+
+    open_days = [d for d in range(7) if d != closed_wd]
+    patched = {**original, "open_days": open_days}
+    try:
+        rput = admin_session.put(f"{API}/admin/site-settings", json=patched, timeout=10)
+        assert rput.status_code == 200, rput.text
+        assert closed_wd not in (rput.json().get("open_days") or [])
+
+        # Public settings expose open_days
+        pub = s.get(f"{API}/site-settings", timeout=10)
+        assert pub.status_code == 200
+        assert closed_wd not in (pub.json().get("open_days") or [])
+
+        avail = s.get(
+            f"{API}/courts/availability",
+            params={"court_id": "court-1", "date": day},
+            timeout=15,
+        )
+        assert avail.status_code == 200, avail.text
+        body = avail.json()
+        assert body.get("day_open") is False
+        slots = body.get("slots") or []
+        assert len(slots) >= 1
+        # No bookable free slots on closed weekday
+        assert all(x.get("status") != "available" for x in slots), slots[:3]
+        assert all(
+            x.get("status") in ("unavailable", "reserved", "blocked") for x in slots
+        )
+
+        # WA availability shares build_availability
+        tok = (os.environ.get("INTERNAL_API_TOKEN") or os.environ.get("WHATSAPP_INTERNAL_TOKEN") or "").strip()
+        headers = {"X-Internal-Token": tok} if tok else {}
+        wa = s.get(
+            f"{API}/internal/whatsapp/availability",
+            params={"date": day},
+            headers=headers,
+            timeout=15,
+        )
+        assert wa.status_code == 200, wa.text
+        wa_slots = wa.json().get("slots") or []
+        assert all(x.get("status") != "available" for x in wa_slots)
+
+        # Booking must fail
+        target = next((x["time"] for x in slots if x.get("status") == "unavailable"), None)
+        assert target
+        bad = s.post(
+            f"{API}/bookings",
+            json={
+                "court_id": "court-1",
+                "date": day,
+                "start_time": target,
+                "duration_minutes": 60,
+                "cpf": SMOKE_CPF,
+                "customer_name": "Closed Weekday Fail",
+                "whatsapp": "11966665555",
+                "your_team_name": "A",
+                "opponent_team_name": "B",
+            },
+            headers=_xff(),
+            timeout=15,
+        )
+        assert bad.status_code in (400, 409), bad.text
+        detail = str((bad.json() or {}).get("detail") or bad.text).lower()
+        assert "fechada" in detail or "semana" in detail or bad.status_code == 409, detail
+    finally:
+        admin_session.put(f"{API}/admin/site-settings", json=original, timeout=10)

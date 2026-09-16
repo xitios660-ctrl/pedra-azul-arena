@@ -69,7 +69,7 @@ SSE: `GET /api/admin/whatsapp/events` (JWT/cookie admin).
 
 ## Admin — Configurações
 
-Aba **Configurações** edita o singleton `site_settings` (WhatsApp E.164, PIX, endereço/Maps, preço/hora, abertura/fechamento, duração do slot, estacionamento, nome da quadra).
+Aba **Configurações** edita o singleton `site_settings` (WhatsApp E.164, PIX, endereço/Maps, preço/hora, abertura/fechamento, **dias abertos** `open_days`, duração do slot, estacionamento, nome da quadra).
 
 - Público: `GET /api/site-settings`
 - Admin JWT: `GET|PUT /api/admin/site-settings`
@@ -185,3 +185,9 @@ Prod smoke: `GET /api/health`, `/api/courts`, `/api/site-settings`, WhatsApp `AG
 - Campo opcional `reason` (manutenção / feriado) nos docs de bloqueio.
 - UI calendário (pt-BR, neon): Bloquear/Desbloquear dia + formulário de período na toolbar.
 - Disponibilidade pública e bot WA já respeitam `get_blocked_times` / status `blocked`.
+
+## Cycle 16 notes
+- `site_settings.open_days`: lista de weekdays **Python** `datetime.weekday()` — **0=Seg … 6=Dom** (ISO Monday-first, zero-based). Default `[0,1,2,3,4,5,6]`.
+- Seed/`ensure_seeded`: se faltar a chave, preenche com os 7 dias.
+- `build_availability` / create booking / WA availability: weekday fora de `open_days` → slots `unavailable` (sem free); booking → 400 "Quadra fechada neste dia da semana".
+- Admin Configurações: checkboxes Seg–Dom; booking mostra aviso se o dia escolhido estiver fechado.
