@@ -902,6 +902,8 @@ function SiteSettingsAdmin() {
         close_hour: Number(form.close_hour),
         slot_duration_minutes: Number(form.slot_duration_minutes),
         cancel_min_hours: Number(form.cancel_min_hours ?? 2),
+        admin_whatsapp_e164: String(form.admin_whatsapp_e164 || "").replace(/\D/g, ""),
+        admin_alerts_enabled: form.admin_alerts_enabled !== false,
       };
       const { data } = await api.put("/admin/site-settings", payload);
       setForm(data);
@@ -921,10 +923,10 @@ function SiteSettingsAdmin() {
 
   const field = (label, key, opts = {}) => (
     <label className="block">
-      <div className="text-[10px] uppercase tracking-[0.25em] text-white/40 mb-1">{label}</div>
+      <div className="text-[10px] uppercase tracking-[0.25em] text-white/55 mb-1">{label}</div>
       {opts.textarea ? (
         <textarea
-          className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm min-h-[80px]"
+          className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm min-h-[80px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--brand)]"
           value={form[key] ?? ""}
           onChange={(e) => set(key, e.target.value)}
           maxLength={opts.maxLength}
@@ -932,7 +934,7 @@ function SiteSettingsAdmin() {
       ) : (
         <input
           type={opts.type || "text"}
-          className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm"
+          className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm min-h-[44px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--brand)]"
           value={form[key] ?? ""}
           onChange={(e) => set(key, opts.type === "number" ? e.target.value : e.target.value)}
           min={opts.min}
@@ -947,7 +949,7 @@ function SiteSettingsAdmin() {
     <form onSubmit={save} data-testid="admin-site-settings" className="glass p-6 max-w-3xl space-y-4">
       <div className="text-[11px] uppercase tracking-[0.35em] text-[var(--brand)]">// Site · Quadra única</div>
       <h2 className="font-heading text-4xl uppercase italic mb-2">Configurações</h2>
-      <p className="text-white/50 text-sm mb-4">
+      <p className="text-white/55 text-sm mb-4">
         WhatsApp, PIX, endereço, preço e horários — usados no booking público e nas respostas do bot.
         Cancelamento pelo cliente respeita as horas mínimas; admin cancela sempre.
       </p>
@@ -962,6 +964,24 @@ function SiteSettingsAdmin() {
         {field("Cancelamento cliente (horas antes)", "cancel_min_hours", { type: "number", min: 0, max: 168, step: 1 })}
         {field("Nome da quadra", "court_name")}
       </div>
+      <div className="border border-white/10 rounded-lg p-4 space-y-3 bg-black/20">
+        <div className="text-[10px] uppercase tracking-[0.25em] text-[var(--brand)]">Alertas admin (WhatsApp)</div>
+        <p className="text-white/55 text-xs">
+          Aviso curto quando nasce uma reserva (site ou bot). Só envia se o WhatsApp estiver CONECTADO.
+          Deixe o número vazio até configurar o celular do dono — sem placeholders.
+        </p>
+        {field("WhatsApp admin (E.164, opcional)", "admin_whatsapp_e164")}
+        <label className="flex items-center gap-3 min-h-[44px] cursor-pointer">
+          <input
+            type="checkbox"
+            className="w-5 h-5 accent-[var(--brand)]"
+            checked={form.admin_alerts_enabled !== false}
+            onChange={(e) => set("admin_alerts_enabled", e.target.checked)}
+            data-testid="admin-alerts-enabled"
+          />
+          <span className="text-sm text-white/80">Enviar alerta de nova reserva</span>
+        </label>
+      </div>
       {field("Endereço / local (label)", "address_label")}
       {field("URL Maps", "maps_url")}
       {field("PIX copia-e-cola (texto)", "pix_copy_text", { textarea: true, maxLength: 600 })}
@@ -972,7 +992,7 @@ function SiteSettingsAdmin() {
         type="submit"
         disabled={busy}
         data-testid="admin-site-settings-save"
-        className="btn-primary inline-flex items-center gap-2"
+        className="btn-neon inline-flex items-center gap-2 min-h-[44px]"
       >
         {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
         Salvar

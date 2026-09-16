@@ -79,7 +79,9 @@ export default function IntroVideoModal() {
         <div className="absolute inset-0 bg-gradient-to-b from-[#050810]/40 via-transparent to-[#050810]" />
         <div className="absolute inset-0 scanlines" />
 
-        {/* Animated colored glows */}
+        {/* Animated colored glows — skipped under prefers-reduced-motion */}
+        {!reduce && (
+          <>
         <motion.div
           animate={{ scale: [1, 1.3, 1], opacity: [0.4, 0.7, 0.4] }}
           transition={{ duration: 6, repeat: Infinity }}
@@ -92,8 +94,11 @@ export default function IntroVideoModal() {
           className="absolute -bottom-32 -left-32 w-[44rem] h-[44rem] rounded-full blur-3xl pointer-events-none"
           style={{ background: "var(--accent-glow)" }}
         />
+          </>
+        )}
 
         {/* Floating particles */}
+        {!reduce && (
         <div className="absolute inset-0 overflow-hidden pointer-events-none">
           {Array.from({ length: 28 }).map((_, i) => {
             const r = (k) => {
@@ -124,6 +129,7 @@ export default function IntroVideoModal() {
             );
           })}
         </div>
+        )}
 
         {/* TOP HUD */}
         <div className="absolute top-0 left-0 right-0 z-10 flex items-center justify-between px-6 md:px-10 py-4">
@@ -133,8 +139,8 @@ export default function IntroVideoModal() {
             className="flex items-center gap-3"
           >
             <motion.div
-              animate={{ opacity: [0.4, 1, 0.4] }}
-              transition={{ duration: 1.5, repeat: Infinity }}
+              animate={reduce ? undefined : { opacity: [0.4, 1, 0.4] }}
+              transition={reduce ? undefined : { duration: 1.5, repeat: Infinity }}
               className="w-2 h-2 rounded-full bg-[var(--accent)]"
             />
             <span className="font-mono text-[10px] uppercase tracking-[0.4em] text-white/60">
@@ -145,8 +151,9 @@ export default function IntroVideoModal() {
           <button
             onClick={close}
             data-testid="intro-close"
-            className="w-10 h-10 grid place-items-center border border-white/15 hover:border-[var(--accent)] hover:text-[var(--accent)] transition"
+            className="w-11 h-11 min-w-[44px] min-h-[44px] grid place-items-center border border-white/15 hover:border-[var(--accent)] hover:text-[var(--accent)] transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
             title="Fechar intro"
+            aria-label="Fechar introdução"
           >
             <X className="w-4 h-4" />
           </button>
@@ -161,6 +168,7 @@ export default function IntroVideoModal() {
             transition={{ delay: 0.3, duration: 1.2, type: "spring", stiffness: 60 }}
             className="relative mb-8"
           >
+            {!reduce && (
             <motion.div
               animate={{ rotate: 360 }}
               transition={{ duration: 20, repeat: Infinity, ease: "linear" }}
@@ -171,6 +179,7 @@ export default function IntroVideoModal() {
                 opacity: 0.85,
               }}
             />
+            )}
             <img
               src="/assets/copa-alto-tiete.png"
               alt="Copa Alto Tietê"

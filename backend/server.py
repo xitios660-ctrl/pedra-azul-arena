@@ -27,6 +27,7 @@ import httpx
 from zoneinfo import ZoneInfo
 
 import whatsapp_bridge
+import admin_alerts
 import booking_service as bsvc
 from booking_service import COURT, COURT_ID, TIME_SLOTS, DEPOSIT_RATE, ACTIVE_STATUSES
 import upload_store
@@ -233,7 +234,7 @@ async def public_site_settings():
 
 @api.get("/admin/site-settings")
 async def admin_get_site_settings(admin: dict = Depends(require_admin)):
-    return await sset.get_settings(db)
+    return await sset.get_admin_settings(db)
 
 
 @api.put("/admin/site-settings")
@@ -440,6 +441,8 @@ async def create_booking(payload: BookingCreate, request: Request):
         booking["date"],
         booking["start_time"],
     )
+    # Best-effort admin WA alert — never fail the booking
+    await admin_alerts.notify_admin_new_booking(db, booking)
     return booking
 
 
@@ -949,6 +952,7 @@ async def internal_wa_create_booking(request: Request, payload: WaBookingIn):
         booking["date"],
         booking["start_time"],
     )
+    await admin_alerts.notify_admin_new_booking(db, booking)
     return booking
 
 
@@ -1118,7 +1122,12 @@ async def internal_reminders_due(request: Request):
 
 @api.post("/internal/whatsapp/reminders/{booking_id}/sent")
 async def internal_reminder_mark(booking_id: str, request: Request):
-    """Atomic claim — only one caller wins (prevents duplicate after restart)."""
+    """Atomic claim — only one caller wins (prevents duplicate after restart).
+
+    Race: two pollers may both see the booking as due; the filter
+    `reminder_sent != True` makes update_one succeed for exactly one of them
+    (modified_count==1). Loser gets ok=false and must skip send.
+    """
     _require_internal(request)
     res = await db.bookings.update_one(
         {"id": booking_id, "reminder_sent": {"$ne": True}},

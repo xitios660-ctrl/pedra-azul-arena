@@ -18,8 +18,9 @@ export function startReminderLoop({ sendText, logger, isConnected }) {
       const due = await api.dueReminders();
       for (const b of due.bookings || []) {
         try {
+          // Atomic claim first: conditional reminder_sent update — only one tick wins a race
           const marked = await api.markReminderSent(b.id);
-          if (!marked?.ok) continue; // already sent by another tick
+          if (!marked?.ok) continue; // already claimed/sent by another tick
           const msg =
             `⏰ Lembrete Pedra Azul\n` +
             `Sua reserva é hoje às *${b.start_time}* (${formatDateBr(b.date)}).\n` +

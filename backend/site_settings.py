@@ -32,6 +32,9 @@ DEFAULTS: dict[str, Any] = {
     "parking_note": "Estacionamento no entorno da quadra — chegue ~10 min antes.",
     "court_name": "Quadra Pedra Azul — Núncio",
     "cancel_min_hours": 2,  # customer cancel cutoff before slot start; admin always can
+    # Admin WA alerts — empty until owner sets a real number (never invent phones)
+    "admin_whatsapp_e164": "",
+    "admin_alerts_enabled": True,
 }
 
 # Legacy Arena Premium placeholders → migrate once if still at old seed values.
@@ -58,6 +61,8 @@ class SiteSettingsUpdate(BaseModel):
     parking_note: str = Field(min_length=0, max_length=240)
     court_name: Optional[str] = Field(default=None, max_length=120)
     cancel_min_hours: int = Field(default=2, ge=0, le=168)
+    admin_whatsapp_e164: Optional[str] = Field(default="", max_length=20)
+    admin_alerts_enabled: bool = Field(default=True)
 
     @field_validator("whatsapp_e164")
     @classmethod
@@ -65,6 +70,17 @@ class SiteSettingsUpdate(BaseModel):
         d = re.sub(r"\D", "", v or "")
         if len(d) < 10 or len(d) > 15:
             raise ValueError("WhatsApp E.164 inválido (use só dígitos com DDI)")
+        return d
+
+    @field_validator("admin_whatsapp_e164")
+    @classmethod
+    def digits_admin_wa(cls, v: Optional[str]) -> str:
+        raw = (v or "").strip()
+        if not raw:
+            return ""
+        d = re.sub(r"\D", "", raw)
+        if len(d) < 10 or len(d) > 15:
+            raise ValueError("WhatsApp admin E.164 inválido (vazio ou só dígitos com DDI)")
         return d
 
     @field_validator("maps_url")
@@ -107,6 +123,10 @@ def public_view(doc: dict[str, Any]) -> dict[str, Any]:
         "parking_note": d.get("parking_note") or DEFAULTS["parking_note"],
         "court_name": d.get("court_name") or DEFAULTS["court_name"],
         "cancel_min_hours": int(d.get("cancel_min_hours") if d.get("cancel_min_hours") is not None else DEFAULTS["cancel_min_hours"]),
+        # admin_whatsapp_e164 stays admin-only (not in public_view)
+        "admin_alerts_enabled": bool(
+            d.get("admin_alerts_enabled") if d.get("admin_alerts_enabled") is not None else DEFAULTS["admin_alerts_enabled"]
+        ),
     }
 
 
@@ -171,6 +191,25 @@ async def get_settings(db) -> dict[str, Any]:
     return public_view(doc)
 
 
+def admin_view(doc: dict[str, Any]) -> dict[str, Any]:
+    """Public fields + admin alert config (for Configurações UI)."""
+    d = {**DEFAULTS, **(doc or {})}
+    out = public_view(d)
+    out["admin_whatsapp_e164"] = str(d.get("admin_whatsapp_e164") or "").strip()
+    out["admin_alerts_enabled"] = bool(
+        d.get("admin_alerts_enabled") if d.get("admin_alerts_enabled") is not None else True
+    )
+    return out
+
+
+async def get_admin_settings(db) -> dict[str, Any]:
+    doc = await db.site_settings.find_one({"id": SINGLETON_ID}, {"_id": 0})
+    if not doc:
+        await ensure_seeded(db)
+        doc = await db.site_settings.find_one({"id": SINGLETON_ID}, {"_id": 0}) or {}
+    return admin_view(doc)
+
+
 async def update_settings(db, payload: SiteSettingsUpdate) -> dict[str, Any]:
     data = payload.model_dump()
     if not data.get("court_name"):
@@ -181,4 +220,4 @@ async def update_settings(db, payload: SiteSettingsUpdate) -> dict[str, Any]:
         {"$set": data, "$setOnInsert": {"id": SINGLETON_ID, "created_at": data["updated_at"]}},
         upsert=True,
     )
-    return await get_settings(db)
+    return await get_admin_settings(db)

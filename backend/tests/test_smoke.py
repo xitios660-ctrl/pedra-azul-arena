@@ -530,3 +530,93 @@ def test_public_site_settings_has_cancel_min_hours(s):
     data = r.json()
     assert "cancel_min_hours" in data
     assert int(data["cancel_min_hours"]) >= 0
+
+
+def test_admin_alert_settings_roundtrip_and_public_hides_number(admin_session, s):
+    """Cycle 12: admin_whatsapp_e164 optional; public must not leak admin number."""
+    r = admin_session.get(f"{API}/admin/site-settings", timeout=10)
+    assert r.status_code == 200, r.text
+    cur = r.json()
+    assert "admin_whatsapp_e164" in cur
+    assert "admin_alerts_enabled" in cur
+    assert cur.get("admin_whatsapp_e164") in ("", None) or isinstance(cur.get("admin_whatsapp_e164"), str)
+    original = dict(cur)
+    try:
+        patched = {
+            **cur,
+            "admin_whatsapp_e164": "",
+            "admin_alerts_enabled": False,
+        }
+        r2 = admin_session.put(f"{API}/admin/site-settings", json=patched, timeout=10)
+        assert r2.status_code == 200, r2.text
+        assert r2.json().get("admin_alerts_enabled") is False
+        assert r2.json().get("admin_whatsapp_e164") == ""
+        pub = s.get(f"{API}/site-settings", timeout=10)
+        assert pub.status_code == 200
+        pdata = pub.json()
+        assert "admin_whatsapp_e164" not in pdata
+        assert "admin_alerts_enabled" in pdata
+    finally:
+        admin_session.put(f"{API}/admin/site-settings", json=original, timeout=10)
+
+
+def test_admin_alert_helper_skips_empty_and_formats():
+    """Unit: no invented phones; message shape in Portuguese."""
+    import admin_alerts as aa
+
+    assert aa.is_admin_alert_number_usable("") is False
+    assert aa.is_admin_alert_number_usable("551140028922") is False  # placeholder
+    assert aa.is_admin_alert_number_usable("5511999887766") is True
+    msg = aa.format_admin_new_booking_msg(
+        {
+            "id": "abcdef12-xxxx",
+            "customer_name": "João",
+            "date": "2026-09-20",
+            "start_time": "20:00",
+            "total": 130,
+        }
+    )
+    assert "Nova reserva" in msg
+    assert "João" in msg
+    assert "20:00" in msg
+    assert "R$ 130" in msg
+
+
+def test_reminder_mark_atomic(admin_session, s):
+    """Cycle 12: second mark-sent loses the race (modified_count==0 → ok false)."""
+    tok = (os.environ.get("INTERNAL_API_TOKEN") or os.environ.get("WHATSAPP_INTERNAL_TOKEN") or "").strip()
+    headers = {"X-Internal-Token": tok} if tok else {}
+    # Create a confirmed booking via admin calendar
+    day = (datetime.now(TZ) + timedelta(days=14)).strftime("%Y-%m-%d")
+    r = admin_session.post(
+        f"{API}/admin/calendar/bookings",
+        json={
+            "date": day,
+            "start_time": "21:00",
+            "customer_name": "Reminder Race",
+            "whatsapp": "5511987654321",
+            "status": "confirmed",
+        },
+        timeout=15,
+    )
+    if r.status_code == 409:
+        # slot taken — pick another hour
+        r = admin_session.post(
+            f"{API}/admin/calendar/bookings",
+            json={
+                "date": day,
+                "start_time": "22:00",
+                "customer_name": "Reminder Race",
+                "whatsapp": "5511987654321",
+                "status": "confirmed",
+            },
+            timeout=15,
+        )
+    assert r.status_code in (200, 201), r.text
+    bid = r.json()["id"]
+    m1 = s.post(f"{API}/internal/whatsapp/reminders/{bid}/sent", headers=headers, timeout=10)
+    assert m1.status_code == 200, m1.text
+    assert m1.json().get("ok") is True
+    m2 = s.post(f"{API}/internal/whatsapp/reminders/{bid}/sent", headers=headers, timeout=10)
+    assert m2.status_code == 200, m2.text
+    assert m2.json().get("ok") is False

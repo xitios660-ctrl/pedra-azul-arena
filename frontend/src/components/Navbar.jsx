@@ -46,7 +46,7 @@ export default function Navbar() {
               <div className="font-heading text-2xl tracking-[0.1em] uppercase">
                 <span className="italic">Até a</span> <span className="text-[var(--brand)]">Pedra Azul</span>
               </div>
-              <div className="text-[10px] tracking-[0.4em] text-white/40 uppercase mt-0.5">Quadra Núncio · Copa Alto Tietê</div>
+              <div className="text-[10px] tracking-[0.4em] text-white/55 uppercase mt-0.5">Quadra Núncio · Copa Alto Tietê</div>
             </div>
           </Link>
 
@@ -66,9 +66,9 @@ export default function Navbar() {
                 aria-label={`WhatsApp ${waDisplay}`}
                 title={`WhatsApp ${waDisplay}`}
                 data-testid="nav-whatsapp"
-                className="hidden sm:inline-flex text-[#25D366] hover:text-[#3dff82] transition-colors p-2"
+                className="hidden sm:inline-flex text-[#25D366] hover:text-[#3dff82] transition-colors p-2 min-w-[44px] min-h-[44px] items-center justify-center focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#25D366]"
               >
-                <MessageCircle className="w-4 h-4" />
+                <MessageCircle className="w-5 h-5" />
               </a>
             )}
             {isAdmin ? (
@@ -88,8 +88,9 @@ export default function Navbar() {
               <Link
                 to="/login"
                 data-testid={HOME.navLogin}
-                className="text-white/40 hover:text-[var(--brand)] transition-colors p-2"
+                className="text-white/55 hover:text-[var(--brand)] transition-colors p-2 min-w-[44px] min-h-[44px] inline-flex items-center justify-center focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--brand)]"
                 title="Acesso restrito"
+                aria-label="Acesso restrito do administrador"
               >
                 <Lock className="w-4 h-4" />
               </Link>

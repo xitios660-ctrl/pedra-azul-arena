@@ -471,7 +471,7 @@ h1, h2, h3, h4 { font-family: 'Teko', 'Rajdhani', sans-serif; letter-spacing: -0
   font-size: 10px;
   letter-spacing: 0.35em;
   text-transform: uppercase;
-  color: rgba(255,255,255,0.4);
+  color: rgba(255,255,255,0.55);
   white-space: nowrap;
   animation: hud-ticker-scroll 28s linear infinite;
 }
@@ -495,11 +495,6 @@ h1, h2, h3, h4 { font-family: 'Teko', 'Rajdhani', sans-serif; letter-spacing: -0
     animation: none !important;
   }
   .hero-baleys-video {
-  /* Mobile-safe cinematic hero: GPU layer, no interaction, contain paint */
-  pointer-events: none;
-  transform: translateZ(0);
-  will-change: opacity;
-
     display: none !important;
   }
   .scanlines {
@@ -509,7 +504,8 @@ h1, h2, h3, h4 { font-family: 'Teko', 'Rajdhani', sans-serif; letter-spacing: -0
   .slot-match,
   .btn-neon,
   .btn-blue,
-  .btn-ghost {
+  .btn-ghost,
+  .btn-primary {
     transition: none !important;
   }
 }
@@ -563,7 +559,8 @@ a:focus:not(:focus-visible) {
 
 .btn-neon,
 .btn-ghost,
-.btn-blue {
+.btn-blue,
+.btn-primary {
   min-height: 44px;
 }
 .booking-step-chip,
