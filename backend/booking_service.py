@@ -140,10 +140,11 @@ async def build_availability(
 def _pix_payload(settings: dict[str, Any], deposit: float) -> dict[str, Any]:
     copy_text = (settings.get("pix_copy_text") or "").strip()
     if not copy_text:
-        key = settings.get("pix_key") or "arena@premium"
+        key = settings.get("pix_key") or "contato@pedraazulfs.com.br"
+        # EMV merchant name max 13 chars
         copy_text = (
             f"00020126360014BR.GOV.BCB.PIX0114{key[:14]:<14}"
-            f"5204000053039865802BR5913ARENA PREMIUM6009SAO PAULO62070503***6304"
+            f"5204000053039865802BR5913PEDRA AZUL FS6009SAO PAULO62070503***6304"
             f"{uuid.uuid4().hex[:8].upper()}"
         )
     # Keep unique suffix so mocks don't collide visually across bookings

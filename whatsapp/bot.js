@@ -24,7 +24,7 @@ const FALLBACK_SETTINGS = {
     "https://www.google.com/maps/search/?api=1&query=Pedra%20Azul%20Nuncio%20Alto%20Tiete%20SP",
   court_name: "Quadra Pedra Azul — Núncio",
   slot_duration_minutes: Number(process.env.COURT_DURATION_MINUTES || 60),
-  pix_key: process.env.PIX_KEY || "arena@premium",
+  pix_key: process.env.PIX_KEY || "contato@pedraazulfs.com.br",
   pix_copy_text: process.env.PIX_COPY_TEXT || "",
   parking_note: "Estacionamento no entorno da quadra — chegue ~10 min antes.",
   open_hour: 8,

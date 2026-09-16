@@ -27,7 +27,7 @@ export const BALEYS_POSTER_FALLBACK = "/assets/pedra-azul-logo.png";
 export const DEFAULT_SITE_SETTINGS = {
   whatsapp_e164: WHATSAPP_E164,
   whatsapp_display: WHATSAPP_DISPLAY,
-  pix_key: "arena@premium",
+  pix_key: "contato@pedraazulfs.com.br",
   pix_copy_text: "",
   address_label: COURT_LOCATION,
   maps_url: COURT_MAPS_URL,

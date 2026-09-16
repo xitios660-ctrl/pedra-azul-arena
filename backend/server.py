@@ -494,7 +494,7 @@ async def get_tournament(tid: str):
 def _build_whatsapp_message(b: dict) -> str:
     date_br = "/".join(reversed(b["date"].split("-")))
     return (
-        f"⚡ Arena Premium ⚡\n\n"
+        f"⚡ Pedra Azul Arena ⚡\n\n"
         f"Olá, {b['customer_name'].split(' ')[0]}! Sua reserva foi CONFIRMADA ✅\n\n"
         f"🏟 Quadra: {b['court_name']}\n"
         f"📅 Data: {date_br}\n"

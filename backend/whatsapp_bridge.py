@@ -10,18 +10,22 @@ import httpx
 logger = logging.getLogger("arena.whatsapp")
 
 WHATSAPP_SERVICE_URL = os.environ.get("WHATSAPP_SERVICE_URL", "http://127.0.0.1:3001").rstrip("/")
-# Prefer INTERNAL_API_TOKEN (same as FastAPI /api/internal + Node sidecar); legacy alias second.
-INTERNAL_TOKEN = (
-    os.environ.get("INTERNAL_API_TOKEN")
-    or os.environ.get("WHATSAPP_INTERNAL_TOKEN")
-    or ""
-).strip()
+
+
+def _internal_token() -> str:
+    """Prefer INTERNAL_API_TOKEN; legacy WHATSAPP_INTERNAL_TOKEN second. Read live (not import-time)."""
+    return (
+        os.environ.get("INTERNAL_API_TOKEN")
+        or os.environ.get("WHATSAPP_INTERNAL_TOKEN")
+        or ""
+    ).strip()
 
 
 def _headers() -> dict:
     h = {"Accept": "application/json"}
-    if INTERNAL_TOKEN:
-        h["X-Internal-Token"] = INTERNAL_TOKEN
+    tok = _internal_token()
+    if tok:
+        h["X-Internal-Token"] = tok
     return h
 
 

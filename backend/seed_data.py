@@ -49,7 +49,7 @@ async def seed_tournaments(db):
     if await db.tournaments.count_documents({}) > 0:
         return
 
-    # Tournament 1: Copa Arena Premium (with matches in progress)
+    # Tournament 1: Copa Alto Tietê (with matches in progress)
     t1_id = str(uuid.uuid4())
     teams_1 = [
         {"id": str(uuid.uuid4()), "name": "Tigres FC", "crest": "🐯"},
@@ -90,7 +90,7 @@ async def seed_tournaments(db):
     ]
     await db.tournaments.insert_one({
         "id": t1_id,
-        "name": "Copa Arena Premium 2026",
+        "name": "Copa Alto Tietê 2026",
         "format": "knockout",
         "status": "live",
         "season": "Temporada 1",

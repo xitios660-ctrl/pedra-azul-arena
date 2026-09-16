@@ -4,12 +4,15 @@ import { motion } from "framer-motion";
 import { useAuth } from "@/lib/auth";
 import { HOME } from "@/constants/testIds";
 import { Trophy, CalendarDays, ShieldCheck, LogOut, Ticket, Lock, MessageCircle } from "lucide-react";
-import { whatsappUrl, defaultWhatsAppPrefill, WHATSAPP_DISPLAY } from "@/lib/siteConfig";
+import { whatsappUrl, defaultWhatsAppPrefill } from "@/lib/siteConfig";
+import { useSiteSettings } from "@/lib/SiteSettings";
 
 export default function Navbar() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const { pathname } = useLocation();
+  const { settings, waHref } = useSiteSettings();
+  const waDisplay = settings.whatsapp_display;
 
   const isAdmin = user && user.role === "admin";
 
@@ -57,11 +60,11 @@ export default function Navbar() {
 
           <div className="flex items-center gap-2">
             <a
-              href={whatsappUrl(defaultWhatsAppPrefill())}
+              href={waHref || whatsappUrl(defaultWhatsAppPrefill(), settings.whatsapp_e164)}
               target="_blank"
               rel="noopener noreferrer"
-              aria-label={`WhatsApp ${WHATSAPP_DISPLAY}`}
-              title={`WhatsApp ${WHATSAPP_DISPLAY}`}
+              aria-label={`WhatsApp ${waDisplay}`}
+              title={`WhatsApp ${waDisplay}`}
               data-testid="nav-whatsapp"
               className="hidden sm:inline-flex text-[#25D366] hover:text-[#3dff82] transition-colors p-2"
             >

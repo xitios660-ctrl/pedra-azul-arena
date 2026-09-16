@@ -11,14 +11,15 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 SINGLETON_ID = "singleton"
 
 # Seeded from former hardcoded frontend/backend values (one court).
+# Placeholder PIX — admin must set the real key in Configurações (no fake street address).
 DEFAULTS: dict[str, Any] = {
     "id": SINGLETON_ID,
     "whatsapp_e164": "551140028922",
     "whatsapp_display": "+55 (11) 4002-8922",
-    "pix_key": "arena@premium",
+    "pix_key": "contato@pedraazulfs.com.br",
     "pix_copy_text": (
-        "00020126360014BR.GOV.BCB.PIX0114arena@premium5204000053039865802BR"
-        "5913ARENA PREMIUM6009SAO PAULO62070503***6304ABCD"
+        "00020126360014BR.GOV.BCB.PIX0125contato@pedraazulfs.com.br"
+        "5204000053039865802BR5913PEDRA AZUL FS6009SAO PAULO62070503***6304ABCD"
     ),
     "address_label": "Núncio · Alto Tietê · SP",
     "maps_url": (
@@ -30,6 +31,15 @@ DEFAULTS: dict[str, Any] = {
     "slot_duration_minutes": 60,
     "parking_note": "Estacionamento no entorno da quadra — chegue ~10 min antes.",
     "court_name": "Quadra Pedra Azul — Núncio",
+}
+
+# Legacy Arena Premium placeholders → migrate once if still at old seed values.
+_LEGACY_PIX = {
+    "pix_key": "arena@premium",
+    "pix_copy_text": (
+        "00020126360014BR.GOV.BCB.PIX0114arena@premium5204000053039865802BR"
+        "5913ARENA PREMIUM6009SAO PAULO62070503***6304ABCD"
+    ),
 }
 
 
@@ -127,6 +137,11 @@ async def ensure_seeded(db) -> dict[str, Any]:
     if existing:
         # fill any missing keys from defaults without overwriting admin edits
         patch = {k: v for k, v in DEFAULTS.items() if k not in existing or existing.get(k) in (None, "")}
+        # Replace leftover Arena Premium PIX seed if admin never customized it
+        if existing.get("pix_key") == _LEGACY_PIX["pix_key"]:
+            patch["pix_key"] = DEFAULTS["pix_key"]
+        if existing.get("pix_copy_text") == _LEGACY_PIX["pix_copy_text"]:
+            patch["pix_copy_text"] = DEFAULTS["pix_copy_text"]
         if patch:
             patch.pop("id", None)
             if patch:

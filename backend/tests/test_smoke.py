@@ -1,4 +1,4 @@
-"""Cycle 7 smoke / regression tests — hit local or BASE_URL API.
+"""Cycle 9 smoke / regression tests — hit local or BASE_URL API.
 
 Run:
   BASE_URL=http://127.0.0.1:8000 python -m pytest backend/tests/test_smoke.py -q
@@ -23,6 +23,14 @@ TZ = ZoneInfo("America/Sao_Paulo")
 SMOKE_CPF = "52998224725"
 ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "Gugu123@")
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "Gugu123@")
+
+_xff_n = 50
+
+def _xff() -> dict:
+    """Rotate TEST-NET X-Forwarded-For so suite does not trip in-memory IP rate limit."""
+    global _xff_n
+    _xff_n = (_xff_n % 250) + 1
+    return {"X-Forwarded-For": f"198.51.100.{_xff_n}"}
 
 
 @pytest.fixture(scope="module")
@@ -89,12 +97,12 @@ def test_booking_conflict_409(s):
         "your_team_name": "A",
         "opponent_team_name": "B",
     }
-    r1 = s.post(f"{API}/bookings", json=payload, timeout=15)
+    r1 = s.post(f"{API}/bookings", json=payload, headers=_xff(), timeout=15)
     assert r1.status_code in (200, 201, 409), r1.text
     if r1.status_code == 409:
         return
     booking = r1.json()
-    r2 = s.post(f"{API}/bookings", json=payload, timeout=15)
+    r2 = s.post(f"{API}/bookings", json=payload, headers=_xff(), timeout=15)
     assert r2.status_code == 409, r2.text
     bid = booking.get("id")
     if bid:
@@ -116,12 +124,12 @@ def test_comprovante_sets_informado_never_confirms(s):
         "your_team_name": "A",
         "opponent_team_name": "B",
     }
-    r1 = s.post(f"{API}/bookings", json=payload, timeout=15)
+    r1 = s.post(f"{API}/bookings", json=payload, headers=_xff(), timeout=15)
     assert r1.status_code in (200, 201, 409), r1.text
     if r1.status_code == 409:
         # reuse lookup by creating different slot
         payload["start_time"] = "19:00"
-        r1 = s.post(f"{API}/bookings", json=payload, timeout=15)
+        r1 = s.post(f"{API}/bookings", json=payload, headers=_xff(), timeout=15)
         assert r1.status_code in (200, 201), r1.text
     booking = r1.json()
     bid = booking["id"]
@@ -159,10 +167,10 @@ def test_internal_wa_comprovante_by_phone(s):
         "your_team_name": "A",
         "opponent_team_name": "B",
     }
-    r1 = s.post(f"{API}/bookings", json=payload, timeout=15)
+    r1 = s.post(f"{API}/bookings", json=payload, headers=_xff(), timeout=15)
     if r1.status_code == 409:
         payload["start_time"] = "17:00"
-        r1 = s.post(f"{API}/bookings", json=payload, timeout=15)
+        r1 = s.post(f"{API}/bookings", json=payload, headers=_xff(), timeout=15)
     assert r1.status_code in (200, 201), r1.text
     bid = r1.json()["id"]
     png = (
@@ -220,10 +228,10 @@ def test_admin_awaiting_queue_and_reject(admin_session):
         "your_team_name": "A",
         "opponent_team_name": "B",
     }
-    r1 = admin_session.post(f"{API}/bookings", json=payload, timeout=15)
+    r1 = admin_session.post(f"{API}/bookings", json=payload, headers=_xff(), timeout=15)
     if r1.status_code == 409:
         payload["start_time"] = "15:00"
-        r1 = admin_session.post(f"{API}/bookings", json=payload, timeout=15)
+        r1 = admin_session.post(f"{API}/bookings", json=payload, headers=_xff(), timeout=15)
     assert r1.status_code in (200, 201), r1.text
     bid = r1.json()["id"]
     png = (
@@ -335,3 +343,64 @@ def test_admin_calendar_month(admin_session):
     assert dens is not None
     for k in ("occupied", "blocked", "free", "unavailable", "total_bookable"):
         assert k in dens
+
+
+def test_concurrent_double_book_one_201_one_409(s):
+    """Cycle 9: two parallel POSTs for the same slot → exactly one success, one 409."""
+    import uuid
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    # Unique far-future day+slot so prior smoke leftovers cannot both-409
+    day = (datetime.now(TZ) + timedelta(days=45)).strftime("%Y-%m-%d")
+    # pick a slot from hour based on uuid nibble to reduce collisions across runs
+    hour = 10 + (uuid.uuid4().int % 10)  # 10..19
+    slot = f"{hour:02d}:00"
+    base = {
+        "court_id": "court-1",
+        "date": day,
+        "start_time": slot,
+        "duration_minutes": 60,
+        "cpf": SMOKE_CPF,
+        "your_team_name": "A",
+        "opponent_team_name": "B",
+    }
+
+    def create(i: int):
+        payload = {
+            **base,
+            "customer_name": f"Concurrent {i}",
+            "whatsapp": f"1198888{i:04d}",
+        }
+        # Distinct X-Forwarded-For so in-memory IP rate-limit does not mask DuplicateKey 409
+        sess = requests.Session()
+        return sess.post(
+            f"{API}/bookings",
+            json=payload,
+            headers={"X-Forwarded-For": f"203.0.113.{10 + i}"},
+            timeout=20,
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(create, i) for i in (1, 2)]
+        results = [f.result() for f in as_completed(futures)]
+
+    codes = sorted(r.status_code for r in results)
+    # Rare: both 409 if a leftover booking already owns the slot — retry once on fresh slot
+    if codes == [409, 409]:
+        hour2 = 10 + ((hour + 3) % 10)
+        base["start_time"] = f"{hour2:02d}:00"
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [pool.submit(create, i) for i in (3, 4)]
+            results = [f.result() for f in as_completed(futures)]
+        codes = sorted(r.status_code for r in results)
+
+    assert 409 in codes, f"expected a 409, got {codes} bodies={[r.text[:160] for r in results]}"
+    ok_codes = [c for c in codes if c in (200, 201)]
+    assert len(ok_codes) == 1, f"expected exactly one 201/200, got {codes} bodies={[r.text[:160] for r in results]}"
+
+    for r in results:
+        if r.status_code in (200, 201):
+            bid = (r.json() or {}).get("id")
+            if bid:
+                s.post(f"{API}/bookings/{bid}/cancel", params={"cpf": SMOKE_CPF}, timeout=10)
+

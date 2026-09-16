@@ -207,7 +207,7 @@ class TestTournaments:
         items = r.json()
         assert len(items) == 2
         names = {t["name"] for t in items}
-        assert "Copa Arena Premium 2026" in names
+        assert "Copa Alto Tietê 2026" in names
         assert "Liga Relâmpago" in names
 
     def test_knockout_detail(self, s):

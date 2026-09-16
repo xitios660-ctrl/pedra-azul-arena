@@ -1,13 +1,17 @@
 import React from "react";
 import { Instagram, Phone, MapPin, Mail, MessageCircle } from "lucide-react";
-import {
-  WHATSAPP_DISPLAY,
-  whatsappUrl,
-  defaultWhatsAppPrefill,
-} from "@/lib/siteConfig";
+import { useSiteSettings } from "@/lib/SiteSettings";
+import { defaultWhatsAppPrefill, whatsappUrl } from "@/lib/siteConfig";
 
 export default function Footer() {
-  const waHref = whatsappUrl(defaultWhatsAppPrefill());
+  const { settings, waHref: ctxWa } = useSiteSettings();
+  const display = settings.whatsapp_display;
+  const waHref = ctxWa || whatsappUrl(defaultWhatsAppPrefill(), settings.whatsapp_e164);
+  const address = settings.address_label || "Núncio · Alto Tietê · SP";
+  const priceNum = Number(settings.price_per_hour);
+  const priceShown = Number.isFinite(priceNum)
+    ? (priceNum % 1 === 0 ? String(priceNum) : priceNum.toFixed(2))
+    : "130";
 
   return (
     <footer className="border-t border-white/5 mt-24 py-10 bg-black/60">
@@ -23,7 +27,7 @@ export default function Footer() {
             </h3>
             <p className="text-white/55 text-sm mt-2 max-w-lg">
               Dúvidas, horários ou confirmação de reserva — fale com a gente no WhatsApp{" "}
-              <strong className="text-white">{WHATSAPP_DISPLAY}</strong>.
+              <strong className="text-white">{display}</strong>.
             </p>
           </div>
           <a
@@ -32,7 +36,7 @@ export default function Footer() {
             rel="noopener noreferrer"
             data-testid="footer-whatsapp-cta"
             className="btn-neon !bg-gradient-to-r from-[#25D366] to-[#128C7E] !shadow-[0_0_28px_rgba(37,211,102,0.45)] shrink-0"
-            aria-label={`Abrir WhatsApp ${WHATSAPP_DISPLAY}`}
+            aria-label={`Abrir WhatsApp ${display}`}
           >
             <MessageCircle className="w-5 h-5" /> Falar no WhatsApp
           </a>
@@ -62,11 +66,12 @@ export default function Footer() {
               target="_blank"
               rel="noopener noreferrer"
               className="flex items-center gap-2 hover:text-[var(--brand)] transition-colors"
+              data-testid="footer-whatsapp-phone"
             >
-              <Phone className="w-3.5 h-3.5 text-[var(--brand)]" /> {WHATSAPP_DISPLAY}
+              <Phone className="w-3.5 h-3.5 text-[var(--brand)]" /> {display}
             </a>
             <div className="flex items-center gap-2"><Instagram className="w-3.5 h-3.5 text-[var(--brand)]" /> @pedraazulfs</div>
-            <div className="flex items-center gap-2"><MapPin className="w-3.5 h-3.5 text-[var(--brand)]" /> Núncio · Alto Tietê · SP</div>
+            <div className="flex items-center gap-2"><MapPin className="w-3.5 h-3.5 text-[var(--brand)]" /> {address}</div>
           </div>
         </div>
         <div>
@@ -80,8 +85,8 @@ export default function Footer() {
         <div>
           <div className="text-[11px] tracking-[0.3em] uppercase text-[var(--accent)] mb-3">Valor</div>
           <div className="text-white/70 text-sm space-y-1">
-            <div className="font-heading text-3xl text-white">R$ 130<span className="text-white/50 text-sm">/h</span></div>
-            <div className="text-white/60">Quadra Pedra Azul · Núncio</div>
+            <div className="font-heading text-3xl text-white">R$ {priceShown}<span className="text-white/50 text-sm">/h</span></div>
+            <div className="text-white/60">{settings.court_name || "Quadra Pedra Azul · Núncio"}</div>
             <div className="text-[var(--accent)] text-xs mt-2">30% OFF de sinal no PIX</div>
           </div>
         </div>

@@ -480,7 +480,7 @@ export default function Landing() {
               <div className="font-heading text-3xl uppercase mt-1">
                 Tigres FC <span className="text-white/40">vs</span> Lobos United
               </div>
-              <div className="text-white/60 text-sm mt-1">Quartas — Copa Arena Premium</div>
+              <div className="text-white/60 text-sm mt-1">Quartas — Copa Alto Tietê</div>
             </div>
           </motion.div>
         </div>

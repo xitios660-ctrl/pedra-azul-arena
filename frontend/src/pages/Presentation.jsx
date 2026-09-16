@@ -8,7 +8,7 @@ import {
 import WhatsAppFab from "@/components/WhatsAppFab";
 
 /**
- * ARENA PREMIUM — CINEMATIC PRESENTATION
+ * PEDRA AZUL — CINEMATIC PRESENTATION
  * Premium EA-FC-style auto-playing presentation video, fully in-browser.
  * 8 cinematic scenes with synchronized motion, particles and sound.
  */
@@ -214,7 +214,7 @@ function SceneColdOpen() {
         transition={{ duration: 2.4, times: [0, 0.3, 0.7, 1] }}
         className="text-[var(--brand)] font-heading uppercase text-xs tracking-[0.9em]"
       >
-        Arena Premium · presents
+        Pedra Azul · presents
       </motion.div>
     </motion.div>
   );
@@ -568,7 +568,7 @@ function SceneTorneios() {
         >
           <Trophy className="w-5 h-5 text-[var(--warning)]" />
           <span className="font-heading uppercase tracking-[0.3em] text-lg">
-            COPA ARENA PREMIUM · TEMPORADA 1
+            COPA ALTO TIETÊ · TEMPORADA 1
           </span>
           <motion.span
             animate={{ opacity: [0.3, 1, 0.3] }} transition={{ duration: 1.4, repeat: Infinity }}
@@ -817,7 +817,7 @@ function SceneFinal({ onCta }) {
           transition={{ delay: 5, duration: 1 }}
           className="absolute bottom-12 text-white/40 text-[10px] uppercase tracking-[0.5em] font-mono"
         >
-          ARENA PREMIUM · EA FUTSAL CLUB · MMXXVI
+          PEDRA AZUL · EA FUTSAL CLUB · MMXXVI
         </motion.div>
       </div>
     </motion.div>

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pedra Azul — local/API smoke tests (Cycle 7)
+# Pedra Azul — local/API smoke tests (Cycle 9)
 # Usage:
 #   BASE_URL=http://127.0.0.1:8000 ./scripts/smoke_test.sh
 set -euo pipefail
@@ -85,7 +85,7 @@ DATE=$(python3 - <<'PY'
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 tz = ZoneInfo("America/Sao_Paulo")
-d = datetime.now(tz) + timedelta(days=14)
+d = datetime.now(tz) + timedelta(days=40)
 print(d.strftime("%Y-%m-%d"))
 PY
 )
@@ -106,9 +106,9 @@ JSON
 )
 
 R1=$(curl -s -o /tmp/pa_b1.json -w "%{http_code}" -X POST "$API/bookings" \
-  -H "Content-Type: application/json" -d "$PAYLOAD" || echo "000")
+  -H "Content-Type: application/json" -H "X-Forwarded-For: 203.0.113.41" -d "$PAYLOAD" || echo "000")
 R2=$(curl -s -o /tmp/pa_b2.json -w "%{http_code}" -X POST "$API/bookings" \
-  -H "Content-Type: application/json" -d "$PAYLOAD" || echo "000")
+  -H "Content-Type: application/json" -H "X-Forwarded-For: 203.0.113.42" -d "$PAYLOAD" || echo "000")
 
 if [ "$R1" = "200" ] || [ "$R1" = "201" ]; then
   ok "POST /api/bookings create ($R1) slot $DATE $SLOT"
@@ -135,6 +135,46 @@ elif [ "$R1" = "409" ]; then
 else
   bad "booking create" "got $R1 body=$(head -c 200 /tmp/pa_b1.json 2>/dev/null || true)"
 fi
+
+# 4b) Concurrent double-book stress (parallel curl → one 201/200, one 409)
+CDATE=$(python3 - <<'PY'
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+print((datetime.now(ZoneInfo("America/Sao_Paulo")) + timedelta(days=29)).strftime("%Y-%m-%d"))
+PY
+)
+CSLOT="18:00"
+CPAY1=$(cat <<JSON
+{"court_id":"court-1","date":"$CDATE","start_time":"$CSLOT","duration_minutes":60,"cpf":"52998224725","customer_name":"Concurrent A","whatsapp":"11970001111","your_team_name":"A","opponent_team_name":"B"}
+JSON
+)
+CPAY2=$(cat <<JSON
+{"court_id":"court-1","date":"$CDATE","start_time":"$CSLOT","duration_minutes":60,"cpf":"52998224725","customer_name":"Concurrent B","whatsapp":"11970002222","your_team_name":"A","opponent_team_name":"B"}
+JSON
+)
+rm -f /tmp/pa_c1.json /tmp/pa_c2.json /tmp/pa_c1.code /tmp/pa_c2.code
+curl -s -o /tmp/pa_c1.json -w "%{http_code}" -X POST "$API/bookings" -H "Content-Type: application/json" -H "X-Forwarded-For: 203.0.113.31" -d "$CPAY1" > /tmp/pa_c1.code &
+PID1=$!
+curl -s -o /tmp/pa_c2.json -w "%{http_code}" -X POST "$API/bookings" -H "Content-Type: application/json" -H "X-Forwarded-For: 203.0.113.32" -d "$CPAY2" > /tmp/pa_c2.code &
+PID2=$!
+wait $PID1 $PID2 || true
+C1=$(cat /tmp/pa_c1.code 2>/dev/null || echo 000)
+C2=$(cat /tmp/pa_c2.code 2>/dev/null || echo 000)
+if { [ "$C1" = "201" ] || [ "$C1" = "200" ]; } && [ "$C2" = "409" ]; then
+  ok "concurrent double-book → $C1 + 409"
+elif { [ "$C2" = "201" ] || [ "$C2" = "200" ]; } && [ "$C1" = "409" ]; then
+  ok "concurrent double-book → $C2 + 409"
+elif [ "$C1" = "409" ] && [ "$C2" = "409" ]; then
+  ok "concurrent double-book → both 409 (slot already held)"
+else
+  bad "concurrent double-book" "codes=$C1,$C2"
+fi
+for f in /tmp/pa_c1.json /tmp/pa_c2.json; do
+  BID=$(python3 -c "import json;print(json.load(open('$f')).get('id',''))" 2>/dev/null || true)
+  if [ -n "${BID:-}" ]; then
+    curl -fsS -X POST "$API/bookings/$BID/cancel?cpf=52998224725" >/dev/null 2>&1 || true
+  fi
+done
 
 echo
 echo "Result: $PASS passed, $FAIL failed"
