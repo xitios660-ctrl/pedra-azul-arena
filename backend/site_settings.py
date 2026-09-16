@@ -14,7 +14,9 @@ maps_url may be empty — Landing/Footer hide "Como chegar" when unset.
 
 Amenities / FAQ (Cycle 17): has_parking, parking_note, game_duration_note,
 accepts_pix, structure_blurb, amenities — used on landing + WA FAQ.
-Do not invent street numbers; keep address_label / maps_url as-is.
+Policies (Cycle 30): policy_cancel, policy_rain (editable pt-BR, max ~800),
+policies_enabled — landing / booking / WA FAQ. {horas} in policy_cancel → cancel_min_hours.
+Do not invent street numbers or covered-court claims; keep address_label / maps_url as-is.
 """
 from __future__ import annotations
 
@@ -75,6 +77,13 @@ DEFAULTS: dict[str, Any] = {
     # Cycle 27: recurring weekly bookings
     "recurring_enabled": True,
     "recurring_max_weeks": 8,  # capped 2–8
+    # Cycle 30: cancellation & rain policy texts (editable; no invented coverage claims)
+    "policies_enabled": True,
+    "policy_cancel": (
+        "Cancelamentos pelo cliente devem ser feitos com pelo menos {horas} horas "
+        "de antecedência do horário reservado. Após esse prazo, entre em contato pelo WhatsApp."
+    ),
+    "policy_rain": "Em caso de chuva, entre em contato pelo WhatsApp.",
 }
 
 # Legacy Arena Premium placeholders → migrate once if still at old seed values.
@@ -118,6 +127,9 @@ class SiteSettingsUpdate(BaseModel):
     waitlist_enabled: bool = Field(default=True)
     recurring_enabled: bool = Field(default=True)
     recurring_max_weeks: int = Field(default=8, ge=2, le=8)
+    policies_enabled: bool = Field(default=True)
+    policy_cancel: str = Field(default="", max_length=800)
+    policy_rain: str = Field(default="", max_length=800)
 
     @field_validator("whatsapp_e164")
     @classmethod
@@ -212,7 +224,7 @@ class SiteSettingsUpdate(BaseModel):
                 break
         return out
 
-    @field_validator("game_duration_note", "structure_blurb", "parking_note")
+    @field_validator("game_duration_note", "structure_blurb", "parking_note", "policy_cancel", "policy_rain")
     @classmethod
     def strip_text(cls, v: str) -> str:
         return (v or "").strip()
@@ -332,6 +344,45 @@ def _normalize_amenities(raw: Any) -> list[str]:
     return out
 
 
+
+def _clamp_policy_text(raw: Any, default: str = "") -> str:
+    s = ("" if raw is None else str(raw)).strip()
+    if len(s) > 800:
+        s = s[:800]
+    return s
+
+
+def resolve_policy_cancel(settings: dict[str, Any] | None = None) -> str:
+    """policy_cancel with {horas} / {cancel_min_hours} → cancel_min_hours.
+
+    Empty string stays empty (section hidden). Missing key uses DEFAULTS seed.
+    """
+    base = settings or {}
+    d = {**DEFAULTS, **base}
+    if "policy_cancel" in base and base.get("policy_cancel") is not None:
+        raw = _clamp_policy_text(base.get("policy_cancel"))
+    else:
+        raw = _clamp_policy_text(d.get("policy_cancel"), DEFAULTS["policy_cancel"])
+    if not raw:
+        return ""
+    try:
+        hours = int(d.get("cancel_min_hours") if d.get("cancel_min_hours") is not None else DEFAULTS["cancel_min_hours"])
+    except (TypeError, ValueError):
+        hours = int(DEFAULTS["cancel_min_hours"])
+    return (
+        raw.replace("{cancel_min_hours}", str(hours))
+        .replace("{horas}", str(hours))
+    )
+
+
+def resolve_policy_rain(settings: dict[str, Any] | None = None) -> str:
+    base = settings or {}
+    d = {**DEFAULTS, **base}
+    if "policy_rain" in base and base.get("policy_rain") is not None:
+        return _clamp_policy_text(base.get("policy_rain"))
+    return _clamp_policy_text(d.get("policy_rain"), DEFAULTS.get("policy_rain") or "")
+
+
 def public_view(doc: dict[str, Any]) -> dict[str, Any]:
     """Fields safe for public booking + WA bot."""
     d = {**DEFAULTS, **(doc or {})}
@@ -381,6 +432,18 @@ def public_view(doc: dict[str, Any]) -> dict[str, Any]:
         "recurring_max_weeks": max(2, min(8, int(
             d.get("recurring_max_weeks") if d.get("recurring_max_weeks") is not None else DEFAULTS["recurring_max_weeks"]
         ))),
+        "policies_enabled": bool(
+            d.get("policies_enabled") if d.get("policies_enabled") is not None else DEFAULTS["policies_enabled"]
+        ),
+        # Store raw templates; clients may also use resolved_* helpers below
+        "policy_cancel": _clamp_policy_text(
+            d.get("policy_cancel") if d.get("policy_cancel") is not None else DEFAULTS["policy_cancel"]
+        ),
+        "policy_rain": _clamp_policy_text(
+            d.get("policy_rain") if d.get("policy_rain") is not None else DEFAULTS["policy_rain"]
+        ),
+        "policy_cancel_resolved": resolve_policy_cancel(d),
+        "policy_rain_resolved": resolve_policy_rain(d),
     }
 
 
@@ -504,7 +567,14 @@ async def ensure_seeded(db) -> dict[str, Any]:
     existing = await db.site_settings.find_one({"id": SINGLETON_ID}, {"_id": 0})
     if existing:
         # fill any missing keys from defaults without overwriting admin edits
-        patch = {k: v for k, v in DEFAULTS.items() if k not in existing or existing.get(k) in (None, "")}
+        # policy_* may be intentionally empty (hide section) — only seed if key missing
+        _no_empty_reseed = {"policy_cancel", "policy_rain"}
+        patch = {
+            k: v
+            for k, v in DEFAULTS.items()
+            if k not in existing
+            or (k not in _no_empty_reseed and existing.get(k) in (None, ""))
+        }
         # Replace leftover Arena Premium PIX seed if admin never customized it
         if existing.get("pix_key") == _LEGACY_PIX["pix_key"]:
             patch["pix_key"] = DEFAULTS["pix_key"]

@@ -14,6 +14,8 @@ import {
   isOpenDay,
   OPEN_DAY_LABELS,
   mapsUrlReady,
+  policiesVisible,
+  resolvePolicyCancel,
 } from "@/lib/siteConfig";
 import { useSiteSettings } from "@/lib/SiteSettings";
 import { pixPipelineLabel } from "@/lib/paymentStatus";
@@ -105,6 +107,7 @@ export default function Booking() {
   const [oppCrest, setOppCrest] = useState("🔥");
   const [uploadingCrest, setUploadingCrest] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [showCancelPolicy, setShowCancelPolicy] = useState(false);
   const [promoInput, setPromoInput] = useState("");
   const [promoApplied, setPromoApplied] = useState(null); // { code, discount, total, original_total, ... }
   const [promoBusy, setPromoBusy] = useState(false);
@@ -1042,6 +1045,26 @@ export default function Booking() {
                   </div>
                 )}
               </div>
+
+              {policiesVisible(settings) && resolvePolicyCancel(settings) ? (
+                <div className="mt-4 text-sm" data-testid="booking-cancel-policy">
+                  <button
+                    type="button"
+                    className="text-[var(--brand)] hover:underline min-h-[44px] inline-flex items-center gap-1"
+                    data-testid="booking-cancel-policy-toggle"
+                    onClick={() => setShowCancelPolicy((v) => !v)}
+                    aria-expanded={showCancelPolicy}
+                  >
+                    Política de cancelamento
+                    <ChevronRight className={`w-4 h-4 transition-transform ${showCancelPolicy ? "rotate-90" : ""}`} aria-hidden />
+                  </button>
+                  {showCancelPolicy && (
+                    <p className="mt-1 text-white/60 text-xs sm:text-sm leading-relaxed whitespace-pre-wrap" data-testid="booking-cancel-policy-text">
+                      {resolvePolicyCancel(settings)}
+                    </p>
+                  )}
+                </div>
+              ) : null}
 
               <div className="mt-4 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4 glass p-4">
                 <div>

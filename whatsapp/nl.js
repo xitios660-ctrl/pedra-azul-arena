@@ -326,6 +326,18 @@ export function detectIntent(text, conversationState) {
     return { intent: "address" };
   }
 
+  // Policy FAQ (Cycle 30) — before cancel *action*
+  if (/\b(chuva|chovendo|chover|garoa|temporal|tempo ruim|molhad[oa])\b/.test(t)) {
+    return { intent: "policy_rain" };
+  }
+  if (/\b(politica|política)\b/.test(t)) {
+    return { intent: "policy_all" };
+  }
+  // "cancelamento" / "política de cancelamento" = FAQ; "cancelar/cancela" = action
+  if (/\bcancelamento\b/.test(t) && !/\b(cancelar|cancela|desmarcar|desmarca)\b/.test(t)) {
+    return { intent: "policy_cancel" };
+  }
+
   // Reschedule
   if (/\b(reagendar|remarcar|trocar horario|trocar horário|mudar horario|mudar horário|adiar)\b/.test(t)) {
     return { intent: "reschedule" };

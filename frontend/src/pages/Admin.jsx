@@ -1727,6 +1727,9 @@ function SiteSettingsAdmin() {
           waitlist_enabled: data.waitlist_enabled !== false,
           recurring_enabled: data.recurring_enabled !== false,
           recurring_max_weeks: data.recurring_max_weeks ?? 8,
+          policies_enabled: data.policies_enabled !== false,
+          policy_cancel: data.policy_cancel || "",
+          policy_rain: data.policy_rain || "",
         });
       } catch (e) {
         setErr(e.response?.data?.detail || e.message);
@@ -1773,6 +1776,9 @@ function SiteSettingsAdmin() {
         game_duration_note: String(form.game_duration_note || "").trim(),
         structure_blurb: String(form.structure_blurb || "").trim(),
         amenities,
+        policies_enabled: form.policies_enabled !== false,
+        policy_cancel: String(form.policy_cancel || "").trim().slice(0, 800),
+        policy_rain: String(form.policy_rain || "").trim().slice(0, 800),
       };
       delete payload.amenities_text;
       delete payload.use_weekend_hours;
@@ -2006,6 +2012,45 @@ function SiteSettingsAdmin() {
             onChange={(e) => set("amenities_text", e.target.value)}
             data-testid="admin-amenities-text"
             placeholder={"Iluminação noturna\nPelada & treino"}
+          />
+        </label>
+      </div>
+      <div className="border border-white/10 rounded-lg p-4 space-y-3 bg-black/20" data-testid="admin-policies">
+        <div className="text-[10px] uppercase tracking-[0.25em] text-[var(--brand)]">Políticas · Cancelamento & chuva</div>
+        <p className="text-white/55 text-xs">
+          Textos curtos (pt-BR) exibidos na landing, no booking e no FAQ do bot WhatsApp.
+          Use {"{horas}"} no texto de cancelamento para inserir o valor de “Cancelamento cliente (horas antes)”.
+          Não invente cobertura da quadra nem endereço — mantenha genérico e editável.
+        </p>
+        <label className="flex items-center gap-3 min-h-[44px] cursor-pointer">
+          <input
+            type="checkbox"
+            className="w-5 h-5 accent-[var(--brand)]"
+            checked={form.policies_enabled !== false}
+            onChange={(e) => set("policies_enabled", e.target.checked)}
+            data-testid="admin-policies-enabled"
+          />
+          <span className="text-sm text-white/80">Exibir políticas no site e no bot</span>
+        </label>
+        <label className="block">
+          <div className="text-[10px] uppercase tracking-[0.25em] text-white/55 mb-1">Política de cancelamento (máx. 800)</div>
+          <textarea
+            className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm min-h-[100px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--brand)]"
+            value={form.policy_cancel ?? ""}
+            onChange={(e) => set("policy_cancel", e.target.value)}
+            maxLength={800}
+            data-testid="admin-policy-cancel"
+          />
+        </label>
+        <label className="block">
+          <div className="text-[10px] uppercase tracking-[0.25em] text-white/55 mb-1">Política de chuva / tempo (máx. 800)</div>
+          <textarea
+            className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm min-h-[80px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--brand)]"
+            value={form.policy_rain ?? ""}
+            onChange={(e) => set("policy_rain", e.target.value)}
+            maxLength={800}
+            data-testid="admin-policy-rain"
+            placeholder="Em caso de chuva, entre em contato pelo WhatsApp."
           />
         </label>
       </div>

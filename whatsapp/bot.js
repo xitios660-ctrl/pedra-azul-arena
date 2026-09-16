@@ -38,6 +38,11 @@ const FALLBACK_SETTINGS = {
   close_hour: 23,
   weekend_open_hour: null,
   weekend_close_hour: null,
+  policies_enabled: true,
+  cancel_min_hours: 2,
+  policy_cancel:
+    "Cancelamentos pelo cliente devem ser feitos com pelo menos {horas} horas de antecedência do horário reservado. Após esse prazo, entre em contato pelo WhatsApp.",
+  policy_rain: "Em caso de chuva, entre em contato pelo WhatsApp.",
 };
 
 let _settingsCache = { at: 0, data: null };
@@ -53,6 +58,21 @@ async function getSiteSettings() {
   }
 }
 
+
+function resolvePolicyCancel(site) {
+  const hours = Number(site?.cancel_min_hours ?? 2);
+  const raw = String(site?.policy_cancel_resolved || site?.policy_cancel || "").trim();
+  if (!raw) return "";
+  return raw.replace(/\{cancel_min_hours\}/g, String(hours)).replace(/\{horas\}/g, String(hours));
+}
+
+function resolvePolicyRain(site) {
+  return String(site?.policy_rain_resolved || site?.policy_rain || "").trim();
+}
+
+function policiesOn(site) {
+  return site?.policies_enabled !== false;
+}
 
 /** Effective hourly price for a YYYY-MM-DD (Sat/Sun = price_weekend when set). */
 function priceForDate(site, dateYmd) {
@@ -111,6 +131,7 @@ function helpFallback() {
     `Posso te ajudar com:\n` +
     `• horários (hoje, amanhã, sábado à noite, depois das 20…)\n` +
     `• preço, duração, PIX e estacionamento\n` +
+    `• cancelamento, chuva / políticas\n` +
     `• endereço / maps\n` +
     `• reservar (ex.: "quero reservar amanhã às 20h")\n` +
     `• cancelar ou remarcar (só no seu WhatsApp)\n` +
@@ -294,6 +315,44 @@ export function createBot(deps) {
               : "No site: calção PIX 30% + comprovante. Pelo WhatsApp combinamos o pagamento na confirmação.";
           await reply(
             `A *${s.court_name}* custa ${priceLine} (${note}).\n` + pixBit
+          );
+          return;
+        }
+
+        case "policy_cancel":
+        case "policy_rain":
+        case "policy_all": {
+          const s = await getSiteSettings();
+          if (!policiesOn(s)) {
+            await reply(`Políticas temporariamente indisponíveis. Fale conosco pelo WhatsApp da arena.`);
+            return;
+          }
+          const cancelTxt = resolvePolicyCancel(s);
+          const rainTxt = resolvePolicyRain(s);
+          if (parsed.intent === "policy_rain") {
+            await reply(
+              rainTxt
+                ? `🌧️ *Chuva / tempo*\n${rainTxt}`
+                : `🌧️ Em caso de chuva, entre em contato pelo WhatsApp.`
+            );
+            return;
+          }
+          if (parsed.intent === "policy_cancel") {
+            await reply(
+              cancelTxt
+                ? `📋 *Cancelamento*\n${cancelTxt}`
+                : `📋 Para cancelar, use o site ou diga *cancelar* aqui (respeitando o prazo mínimo).`
+            );
+            return;
+          }
+          // policy_all
+          const parts = [];
+          if (cancelTxt) parts.push(`📋 *Cancelamento*\n${cancelTxt}`);
+          if (rainTxt) parts.push(`🌧️ *Chuva / tempo*\n${rainTxt}`);
+          await reply(
+            parts.length
+              ? parts.join("\n\n")
+              : `Sem textos de política cadastrados ainda. Fale conosco pelo WhatsApp.`
           );
           return;
         }

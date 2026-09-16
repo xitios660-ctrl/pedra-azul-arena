@@ -5,7 +5,7 @@ import PageShell from "@/components/PageShell";
 import { HOME } from "@/constants/testIds";
 import {
   ChevronRight, CalendarDays, Trophy, Ticket, Zap, Activity, Play,
-  MessageCircle, MapPin, ShieldCheck, Banknote, Car, Clock, Sparkles,
+  MessageCircle, MapPin, ShieldCheck, Banknote, Car, Clock, Sparkles, CloudRain, ScrollText,
 } from "lucide-react";
 import api from "@/lib/api";
 import {
@@ -18,6 +18,9 @@ import {
   structureChips,
   gameDurationLabel,
   mapsUrlReady,
+  policiesVisible,
+  resolvePolicyCancel,
+  resolvePolicyRain,
 } from "@/lib/siteConfig";
 import { useSiteSettings } from "@/lib/SiteSettings";
 import { useMotionSystem } from "@/lib/motion";
@@ -139,6 +142,9 @@ export default function Landing() {
   const chips = structureChips(settings);
   const structureBlurb = (settings.structure_blurb || "").trim();
   const durationLabel = gameDurationLabel(settings);
+  const showPolicies = policiesVisible(settings);
+  const policyCancelText = resolvePolicyCancel(settings);
+  const policyRainText = resolvePolicyRain(settings);
 
   return (
     <PageShell>
@@ -405,6 +411,45 @@ export default function Landing() {
           </div>
         </div>
       </section>
+
+      {/* ===== POLÍTICAS ===== */}
+      {showPolicies && (
+        <section
+          className="relative py-12 sm:py-16 border-b border-white/5"
+          data-testid="landing-policies"
+        >
+          <div className="max-w-3xl mx-auto px-6 md:px-10">
+            <div className="text-[10px] sm:text-[11px] tracking-[0.45em] uppercase text-[var(--brand)] mb-3 text-center">
+              // Políticas
+            </div>
+            <h2 className="font-heading text-[clamp(1.75rem,5vw,3rem)] uppercase italic font-black text-center leading-tight tracking-tighter mb-6">
+              Cancelamento & <span className="text-[var(--brand)]">chuva</span>
+            </h2>
+            <div className="space-y-3">
+              {policyCancelText ? (
+                <details className="glass border border-white/10 rounded-lg px-4 py-3 group" data-testid="landing-policy-cancel" open>
+                  <summary className="cursor-pointer list-none flex items-center gap-2 min-h-[44px] text-sm font-display tracking-wide text-white/90">
+                    <ScrollText className="w-4 h-4 text-[var(--brand)] shrink-0" aria-hidden />
+                    Política de cancelamento
+                    <ChevronRight className="w-4 h-4 ml-auto text-white/40 group-open:rotate-90 transition-transform" aria-hidden />
+                  </summary>
+                  <p className="mt-2 text-sm text-white/65 leading-relaxed whitespace-pre-wrap pb-1">{policyCancelText}</p>
+                </details>
+              ) : null}
+              {policyRainText ? (
+                <details className="glass border border-white/10 rounded-lg px-4 py-3 group" data-testid="landing-policy-rain">
+                  <summary className="cursor-pointer list-none flex items-center gap-2 min-h-[44px] text-sm font-display tracking-wide text-white/90">
+                    <CloudRain className="w-4 h-4 text-[var(--brand)] shrink-0" aria-hidden />
+                    Chuva / tempo
+                    <ChevronRight className="w-4 h-4 ml-auto text-white/40 group-open:rotate-90 transition-transform" aria-hidden />
+                  </summary>
+                  <p className="mt-2 text-sm text-white/65 leading-relaxed whitespace-pre-wrap pb-1">{policyRainText}</p>
+                </details>
+              ) : null}
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* ===== MAIN MENU CARDS ===== */}
       <section className="relative py-24">

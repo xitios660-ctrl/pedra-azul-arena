@@ -2815,3 +2815,64 @@ def test_promo_codes_validate_and_booking(admin_session, s):
     rd2 = admin_session.get(f"{API}/admin/audit", params={"limit": 10, "action": "promo_deactivate"}, timeout=10)
     assert rd2.status_code == 200
     assert any(it.get("action") == "promo_deactivate" for it in (rd2.json().get("items") or []))
+
+
+def test_policy_texts_settings_roundtrip(admin_session, s):
+    """Cycle 30: policy_cancel / policy_rain / policies_enabled round-trip + {horas} resolve."""
+    r = admin_session.get(f"{API}/admin/site-settings", timeout=10)
+    assert r.status_code == 200, r.text
+    original = r.json()
+    for key in ("policy_cancel", "policy_rain", "policies_enabled", "cancel_min_hours"):
+        assert key in original, key
+
+    patched = {
+        **original,
+        "cancel_min_hours": 4,
+        "policies_enabled": True,
+        "policy_cancel": (
+            "Cancele com pelo menos {horas} horas de antecedência. "
+            "Prazo configurado: {cancel_min_hours}h."
+        ),
+        "policy_rain": "Choveu? Fale no WhatsApp — sem inventar cobertura.",
+    }
+    try:
+        rput = admin_session.put(f"{API}/admin/site-settings", json=patched, timeout=10)
+        assert rput.status_code == 200, rput.text
+        body = rput.json()
+        assert body.get("policies_enabled") is True
+        assert "{horas}" in (body.get("policy_cancel") or "")
+        assert "4" in (body.get("policy_cancel_resolved") or "")
+        assert "cobertura" not in (body.get("policy_rain") or "").lower() or "sem inventar" in (body.get("policy_rain") or "").lower()
+        assert "WhatsApp" in (body.get("policy_rain_resolved") or body.get("policy_rain") or "")
+
+        pub = s.get(f"{API}/site-settings", timeout=10)
+        assert pub.status_code == 200, pub.text
+        pdata = pub.json()
+        assert pdata.get("policies_enabled") is True
+        assert "policy_cancel" in pdata
+        assert "policy_rain" in pdata
+        resolved = pdata.get("policy_cancel_resolved") or ""
+        assert "4" in resolved
+        assert "{horas}" not in resolved
+        assert "{cancel_min_hours}" not in resolved
+
+        # Disable policies
+        disabled = {**patched, "policies_enabled": False}
+        r2 = admin_session.put(f"{API}/admin/site-settings", json=disabled, timeout=10)
+        assert r2.status_code == 200, r2.text
+        assert r2.json().get("policies_enabled") is False
+        pub2 = s.get(f"{API}/site-settings", timeout=10).json()
+        assert pub2.get("policies_enabled") is False
+
+        # Unit: resolve helpers
+        import sys
+        from pathlib import Path as _P
+        root = _P(__file__).resolve().parents[1]
+        if str(root) not in sys.path:
+            sys.path.insert(0, str(root))
+        import site_settings as sset
+        assert "4" in sset.resolve_policy_cancel(patched)
+        assert sset.resolve_policy_rain(patched).startswith("Choveu?")
+        assert sset.resolve_policy_cancel({**patched, "policy_cancel": ""}) == ""
+    finally:
+        admin_session.put(f"{API}/admin/site-settings", json=original, timeout=10)

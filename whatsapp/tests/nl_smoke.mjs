@@ -56,6 +56,18 @@ check("isChangeOfMind", isChangeOfMind("mudei de ideia"));
 const resched = detectIntent("quero remarcar", { state: "idle" });
 check("reschedule", resched.intent === "reschedule");
 
+const rain = detectIntent("e se chover?", { state: "idle" });
+check("policy rain", rain.intent === "policy_rain");
+
+const cancelFaq = detectIntent("qual a política de cancelamento?", { state: "idle" });
+check("policy cancel FAQ", cancelFaq.intent === "policy_all" || cancelFaq.intent === "policy_cancel");
+
+const cancelAction = detectIntent("quero cancelar", { state: "idle" });
+check("cancel action still works", cancelAction.intent === "cancel");
+
+const politica = detectIntent("política", { state: "idle" });
+check("policy all", politica.intent === "policy_all");
+
 if (fail) {
   console.error(`\n${fail} failed`);
   process.exit(1);

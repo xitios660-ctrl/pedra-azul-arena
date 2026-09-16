@@ -249,3 +249,10 @@ Prod smoke: `GET /api/health`, `/api/courts`, `/api/site-settings`, WhatsApp `AG
 - Admin: listar / criar / desativar em **Configurações → Cupons**; audit `promo_create` / `promo_deactivate`.
 - Público: `POST /api/promo/validate` (preview, sem consumir uso). Reserva aceita `promo_code`; claim atômico; `discount` + `promo_code` na booking; total/PIX após desconto (nunca negativo).
 - UI Booking: campo Cupom + Aplicar; mostra preço antigo/novo.
+
+## Cycle 30 notes
+- Políticas editáveis: `policy_cancel`, `policy_rain` (máx. ~800), `policies_enabled` (default true).
+- `policy_cancel` aceita `{horas}` / `{cancel_min_hours}` → valor de `cancel_min_hours` (API também expõe `policy_*_resolved`).
+- Admin **Configurações**: textareas + toggle; landing accordion **Políticas**; booking link “Política de cancelamento” antes de confirmar.
+- Bot WA FAQ: intents `cancelamento` / `chuva` / `política` leem settings (sem inventar cobertura nem rua).
+

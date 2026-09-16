@@ -53,7 +53,33 @@ export const DEFAULT_SITE_SETTINGS = {
   allow_multi_hour: true,
   max_hours_per_booking: 2,
   waitlist_enabled: true,
+  cancel_min_hours: 2,
+  policies_enabled: true,
+  policy_cancel:
+    "Cancelamentos pelo cliente devem ser feitos com pelo menos {horas} horas de antecedência do horário reservado. Após esse prazo, entre em contato pelo WhatsApp.",
+  policy_rain: "Em caso de chuva, entre em contato pelo WhatsApp.",
 };
+
+/** Resolve {horas}/{cancel_min_hours} in policy_cancel from settings.cancel_min_hours */
+export function resolvePolicyCancel(settings) {
+  const s = settings || DEFAULT_SITE_SETTINGS;
+  const hours = Number(s.cancel_min_hours ?? 2);
+  const raw = String(s.policy_cancel_resolved || s.policy_cancel || DEFAULT_SITE_SETTINGS.policy_cancel || "").trim();
+  return raw
+    .replace(/\{cancel_min_hours\}/g, String(hours))
+    .replace(/\{horas\}/g, String(hours));
+}
+
+export function resolvePolicyRain(settings) {
+  const s = settings || DEFAULT_SITE_SETTINGS;
+  return String(s.policy_rain_resolved || s.policy_rain || "").trim();
+}
+
+export function policiesVisible(settings) {
+  const s = settings || DEFAULT_SITE_SETTINGS;
+  if (s.policies_enabled === false) return false;
+  return !!(resolvePolicyCancel(s) || resolvePolicyRain(s));
+}
 
 
 /** Seed placeholders — never open public wa.me to these until admin configures real values. */
