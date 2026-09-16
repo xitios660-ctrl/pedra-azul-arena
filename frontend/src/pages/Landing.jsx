@@ -30,6 +30,7 @@ import MagneticCTA from "@/components/motion/MagneticCTA";
 import TiltCard from "@/components/motion/TiltCard";
 import Spotlight from "@/components/motion/Spotlight";
 import TodayAvailabilityStrip from "@/components/TodayAvailabilityStrip";
+import FutsalArenaBackdrop from "@/components/FutsalArenaBackdrop";
 
 const STADIUM_IMG = "https://images.unsplash.com/photo-1779406283467-5124ba4631c3?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjY2NjV8MHwxfHNlYXJjaHwxfHxkYXJrJTIwZnV0c2FsJTIwc3RhZGl1bSUyMG5pZ2h0fGVufDB8fHx8MTc4MDk2OTUxMXww&ixlib=rb-4.1.0&q=85";
 const PLAYER_IMG = "https://images.unsplash.com/photo-1517927033932-b3d18e61fb3a?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2Nzh8MHwxfHNlYXJjaHwyfHxzb2NjZXIlMjBhY3Rpb24lMjBuaWdodCUyMGRhcmt8ZW58MHx8fHwxNzgwOTY5NTExfDA&ixlib=rb-4.1.0&q=85";
@@ -169,30 +170,13 @@ export default function Landing() {
 
       {/* ===== TITLE SCREEN / MAIN MENU HERO ===== */}
       <section className="relative min-h-[100vh] flex items-end overflow-hidden title-screen">
-        {/* Hero background: baleys arena video (paused/hidden under reduced-motion) */}
-        {m.reduce ? (
-          <img
-            src={STADIUM_IMG}
-            alt=""
-            className="absolute inset-0 w-full h-full object-cover"
-            loading="eager"
-            decoding="async"
-          />
-        ) : (
-          <video
-            className="absolute inset-0 w-full h-full object-cover hero-baleys-video"
-            src={BALEYS_VIDEO_SRC}
-            poster={BALEYS_POSTER_SRC || BALEYS_POSTER_FALLBACK || STADIUM_IMG}
-            autoPlay
-            muted
-            loop
-            playsInline
-            preload="metadata"
-            disablePictureInPicture
-            disableRemotePlayback
-            aria-hidden="true"
-          />
-        )}
+        {/* Live futsal arena: base film + real-time animated match layer */}
+        <FutsalArenaBackdrop
+          videoSrc={BALEYS_VIDEO_SRC}
+          posterSrc={BALEYS_POSTER_SRC || BALEYS_POSTER_FALLBACK}
+          fallbackSrc={STADIUM_IMG}
+          reduceMotion={m.reduce}
+        />
         <div className="absolute inset-0 bg-gradient-to-b from-black/55 via-black/70 to-[#030305]" />
         <div className="absolute inset-0 bg-gradient-to-r from-black/50 via-transparent to-black/35" />
         <div className="absolute inset-0 bg-grid opacity-40" />
