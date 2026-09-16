@@ -193,6 +193,22 @@ for f in /tmp/pa_c1.json /tmp/pa_c2.json; do
   fi
 done
 
+# 5) SEO: sitemap.xml + robots.txt
+SM=$(curl -s -o /tmp/pa_sitemap.xml -w "%{http_code}" "$BASE_URL/sitemap.xml" || echo "000")
+if [ "$SM" = "200" ] && grep -q 'urlset' /tmp/pa_sitemap.xml && grep -q '/booking' /tmp/pa_sitemap.xml && grep -q '/faq' /tmp/pa_sitemap.xml; then
+  ok "GET /sitemap.xml"
+else
+  bad "sitemap.xml" "code=$SM body=$(head -c 120 /tmp/pa_sitemap.xml 2>/dev/null || true)"
+fi
+
+RB=$(curl -s -o /tmp/pa_robots.txt -w "%{http_code}" "$BASE_URL/robots.txt" || echo "000")
+if [ "$RB" = "200" ] && grep -q 'Disallow: /admin' /tmp/pa_robots.txt && grep -q 'Disallow: /api/' /tmp/pa_robots.txt && grep -q 'Sitemap:' /tmp/pa_robots.txt; then
+  ok "GET /robots.txt"
+else
+  bad "robots.txt" "code=$RB body=$(head -c 120 /tmp/pa_robots.txt 2>/dev/null || true)"
+fi
+
+
 echo
 echo "Result: $PASS passed, $FAIL failed"
 if [ "$FAIL" -gt 0 ]; then

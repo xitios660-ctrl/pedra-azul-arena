@@ -282,3 +282,8 @@ Prod smoke: `GET /api/health`, `/api/courts`, `/api/site-settings`, WhatsApp `AG
 - JSON-LD `FAQPage` só com respostas não vazias; `document.title` + meta description; políticas vazias/`policies_enabled=false` ocultas.
 - Links no Navbar, Footer e teaser na Landing; CTAs Reservar + WhatsApp.
 
+## Cycle 36 notes
+- `GET /sitemap.xml` e `GET /robots.txt` servidos pelo FastAPI (Docker/produção), com cópias em `frontend/public` para o build CRA.
+- Rotas públicas reais do React Router: `/`, `/booking`, `/faq`, `/tournaments`, `/apresentacao`, `/minhas-reservas` (sem `/perguntas` redirect; sem aliases `/reservar`/`/torneios`).
+- Base canônica: env `PUBLIC_BASE_URL` (default `https://pedra-azul.onrender.com`). Robots: Allow públicos; Disallow `/admin`, `/login`, `/api/`.
+

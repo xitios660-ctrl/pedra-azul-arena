@@ -1,4 +1,12 @@
 User-agent: *
 Allow: /
+Allow: /booking
+Allow: /faq
+Allow: /tournaments
+Allow: /apresentacao
+Allow: /minhas-reservas
+Disallow: /admin
+Disallow: /login
+Disallow: /api/
 
-Sitemap: /sitemap.xml
+Sitemap: https://pedra-azul.onrender.com/sitemap.xml

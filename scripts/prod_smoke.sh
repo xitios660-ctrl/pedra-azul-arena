@@ -80,6 +80,21 @@ case "$WA" in
     ;;
 esac
 
+# 5) SEO sitemap + robots
+SM=$(curl -s --max-time 25 -o /tmp/pa_prod_sitemap.xml -w "%{http_code}" "$BASE_URL/sitemap.xml" || echo "000")
+if [ "$SM" = "200" ] && grep -q 'urlset' /tmp/pa_prod_sitemap.xml && grep -q '/faq' /tmp/pa_prod_sitemap.xml; then
+  ok "GET /sitemap.xml"
+else
+  bad "sitemap.xml" "code=$SM"
+fi
+RB=$(curl -s --max-time 25 -o /tmp/pa_prod_robots.txt -w "%{http_code}" "$BASE_URL/robots.txt" || echo "000")
+if [ "$RB" = "200" ] && grep -q 'Disallow: /admin' /tmp/pa_prod_robots.txt; then
+  ok "GET /robots.txt"
+else
+  bad "robots.txt" "code=$RB"
+fi
+
+
 echo
 echo "Result: $PASS passed, $FAIL failed"
 if [ "$FAIL" -gt 0 ]; then

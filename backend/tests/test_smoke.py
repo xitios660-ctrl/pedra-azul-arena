@@ -3632,3 +3632,39 @@ def test_gallery_upload_list_delete(admin_session, s):
         for it in (rd_audit.json().get("items") or [])
     )
 
+
+def test_sitemap_xml(s):
+    """GET /sitemap.xml — absolute locs from PUBLIC_BASE_URL, real public routes only."""
+    r = s.get(f"{BASE_URL}/sitemap.xml", timeout=10, headers=_xff())
+    assert r.status_code == 200, r.text[:200]
+    ctype = (r.headers.get("content-type") or "").lower()
+    assert "xml" in ctype, ctype
+    body = r.text
+    assert 'xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"' in body
+    # default canonical when env unset
+    assert "https://pedra-azul.onrender.com/" in body or "pedra-azul.onrender.com" in body
+    for path in ("/booking", "/faq", "/tournaments", "/apresentacao", "/minhas-reservas"):
+        assert path in body, path
+    # redirects / fake aliases must not appear
+    assert "/perguntas" not in body
+    assert "/reservar" not in body
+    assert "/torneios" not in body
+    assert "/admin" not in body
+    assert "/login" not in body
+
+
+def test_robots_txt(s):
+    """GET /robots.txt — allow public pages; disallow admin/login/api."""
+    r = s.get(f"{BASE_URL}/robots.txt", timeout=10, headers=_xff())
+    assert r.status_code == 200, r.text[:200]
+    ctype = (r.headers.get("content-type") or "").lower()
+    assert "text/plain" in ctype, ctype
+    body = r.text
+    assert "User-agent:" in body
+    assert "Disallow: /admin" in body
+    assert "Disallow: /login" in body
+    assert "Disallow: /api/" in body
+    assert "Allow: /" in body
+    assert "Sitemap:" in body
+    assert "sitemap.xml" in body
+

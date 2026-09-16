@@ -3242,6 +3242,74 @@ app.include_router(api)
 
 
 # =============================================================================
+# SEO: sitemap.xml + robots.txt (FastAPI — works in Docker even without CRA public/)
+# =============================================================================
+def _public_base_url() -> str:
+    """Canonical site origin for sitemap/robots (no trailing slash)."""
+    return (os.environ.get("PUBLIC_BASE_URL") or "https://pedra-azul.onrender.com").rstrip("/")
+
+
+# Real React Router public paths only (see frontend/src/App.js).
+# Skip /perguntas (redirect → /faq). No /reservar or /torneios aliases.
+_SITEMAP_PATHS = (
+    ("/", "weekly", "1.0"),
+    ("/booking", "daily", "0.9"),
+    ("/faq", "weekly", "0.8"),
+    ("/tournaments", "weekly", "0.7"),
+    ("/apresentacao", "monthly", "0.6"),
+    ("/minhas-reservas", "weekly", "0.5"),
+)
+
+
+@app.get("/sitemap.xml")
+async def sitemap_xml():
+    base = _public_base_url()
+    lines = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
+    ]
+    for path, changefreq, priority in _SITEMAP_PATHS:
+        loc = f"{base}/" if path == "/" else f"{base}{path}"
+        lines.append(
+            f"  <url><loc>{loc}</loc><changefreq>{changefreq}</changefreq>"
+            f"<priority>{priority}</priority></url>"
+        )
+    lines.append("</urlset>")
+    body = "\n".join(lines) + "\n"
+    return Response(
+        content=body,
+        media_type="application/xml; charset=utf-8",
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
+
+
+@app.get("/robots.txt")
+async def robots_txt():
+    base = _public_base_url()
+    body = (
+        "User-agent: *\n"
+        "Allow: /\n"
+        "Allow: /booking\n"
+        "Allow: /faq\n"
+        "Allow: /tournaments\n"
+        "Allow: /apresentacao\n"
+        "Allow: /minhas-reservas\n"
+        "Disallow: /admin\n"
+        "Disallow: /login\n"
+        "Disallow: /api/\n"
+        "\n"
+        f"Sitemap: {base}/sitemap.xml\n"
+    )
+    return Response(
+        content=body,
+        media_type="text/plain; charset=utf-8",
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
+
+
+
+
+# =============================================================================
 # Production: serve React build (SPA) when present
 # =============================================================================
 def _resolve_frontend_build() -> Optional[Path]:

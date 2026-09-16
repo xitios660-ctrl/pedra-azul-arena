@@ -38,4 +38,6 @@ services:
       # Uploads on persistent disk (local default remains backend/uploads when unset)
       - key: UPLOAD_DIR
         value: /var/data/uploads
+      - key: PUBLIC_BASE_URL
+        value: "https://pedra-azul.onrender.com"
       # PORT is set automatically by Render
