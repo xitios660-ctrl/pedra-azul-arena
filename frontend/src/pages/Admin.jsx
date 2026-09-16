@@ -7,6 +7,7 @@ import {
   TrendingUp, CheckCircle2, Hourglass, Activity, DollarSign, BarChart3, Save,
   Eye, MessageCircle, FileCheck, Wifi, WifiOff, QrCode, RefreshCw, LogOut, Loader2
 } from "lucide-react";
+import AdminCalendar from "@/components/AdminCalendar";
 
 function fmtBRL(n) { return (n || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }); }
 
@@ -57,7 +58,11 @@ export default function AdminDashboard() {
     setWaModal(null);
     refresh();
   };
-  const cancelBooking = async (id) => { await api.post(`/admin/bookings/${id}/cancel`); refresh(); };
+  const cancelBooking = async (id) => {
+    if (!window.confirm("Cancelar esta reserva?")) return;
+    await api.post(`/admin/bookings/${id}/cancel`);
+    refresh();
+  };
 
   return (
     <PageShell hideWhatsApp>
@@ -70,15 +75,16 @@ export default function AdminDashboard() {
           <p className="text-white/60 mt-2">Gestão completa da arena, reservas e campeonatos em tempo real.</p>
         </div>
 
-        <div className="flex gap-2 mb-8 border-b border-white/10">
+        <div className="flex gap-1 sm:gap-2 mb-8 border-b border-white/10 overflow-x-auto scrollbar-none -mx-2 px-2">
           {[
             { id: "dashboard", label: "Visão Geral" },
             { id: "bookings", label: "Reservas" },
+            { id: "calendar", label: "Calendário" },
             { id: "whatsapp", label: "WhatsApp" },
             { id: "tournaments", label: "Campeonatos" },
           ].map(t => (
             <button key={t.id} onClick={() => setActiveTab(t.id)}
-              className={`px-5 py-3 font-heading uppercase tracking-[0.2em] text-sm border-b-2 transition-colors ${
+              className={`px-3 sm:px-5 py-3 font-heading uppercase tracking-[0.15em] sm:tracking-[0.2em] text-xs sm:text-sm border-b-2 transition-colors whitespace-nowrap shrink-0 ${
                 activeTab === t.id ? "border-[var(--brand)] text-[var(--brand)]" : "border-transparent text-white/50 hover:text-white"
               }`}>{t.label}</button>
           ))}
@@ -90,6 +96,7 @@ export default function AdminDashboard() {
             onConfirm={confirmAndPrepareWhatsapp}
             onCancel={cancelBooking} />
         )}
+        {activeTab === "calendar" && <AdminCalendar />}
         {activeTab === "whatsapp" && <WhatsAppAdmin />}
         {activeTab === "tournaments" && (
           <TournamentsAdmin tournaments={tournaments} selected={selectedTour} setSelected={setSelectedTour} onUpdated={refresh} />
@@ -221,7 +228,7 @@ function WhatsAppAdmin() {
   const st = WA_STATUS_STYLE[state.status] || WA_STATUS_STYLE.DESCONECTADO;
 
   return (
-    <div data-testid="admin-whatsapp-panel" className="grid lg:grid-cols-[1.1fr_0.9fr] gap-6">
+    <div data-testid="admin-whatsapp-panel" className="grid lg:grid-cols-[1.1fr_0.9fr] gap-4 sm:gap-6">
       <div className="glass p-6">
         <div className="text-[11px] uppercase tracking-[0.35em] text-[var(--brand)] mb-2 flex items-center gap-2">
           <MessageCircle className="w-4 h-4" /> Baileys · Sessão WhatsApp
@@ -393,8 +400,8 @@ function BookingsAdmin({ bookings, onConfirm, onCancel }) {
           </button>
         ))}
       </div>
-      <div className="glass overflow-hidden">
-        <div className="grid grid-cols-[160px_220px_1fr_100px_140px_120px_220px] px-4 py-3 text-[10px] uppercase tracking-[0.3em] text-white/40 border-b border-white/10">
+      <div className="glass overflow-x-auto">
+        <div className="min-w-[1100px] grid grid-cols-[160px_220px_1fr_100px_140px_120px_220px] px-4 py-3 text-[10px] uppercase tracking-[0.3em] text-white/40 border-b border-white/10">
           <div>Data / Hora</div><div>Cliente</div><div>Partida</div><div>CPF</div><div>WhatsApp</div><div>Status</div><div>Ações</div>
         </div>
         {filtered.length === 0 ? <div className="p-8 text-center text-white/40">Nenhuma reserva neste filtro.</div> : filtered.map((b) => (
@@ -408,7 +415,7 @@ function BookingsAdmin({ bookings, onConfirm, onCancel }) {
 function BookingRow({ b, onConfirm, onCancel }) {
   return (
     <motion.div data-testid={ADMIN.bookingRow(b.id)} initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-      className="grid grid-cols-[160px_220px_1fr_100px_140px_120px_220px] px-4 py-3 items-center border-b border-white/5 hover:bg-white/[0.03] text-sm">
+      className="min-w-[1100px] grid grid-cols-[160px_220px_1fr_100px_140px_120px_220px] px-4 py-3 items-center border-b border-white/5 hover:bg-white/[0.03] text-sm">
       <div>
         <div>{new Date(b.date+"T00:00:00").toLocaleDateString("pt-BR")}</div>
         <div className="font-heading text-xl text-[var(--brand)]">{b.start_time}</div>

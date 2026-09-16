@@ -21,4 +21,6 @@ services:
         value: "true"
       - key: WHATSAPP_INTERNAL_TOKEN
         generateValue: true
+      - key: WHATSAPP_ADMIN_JID
+        sync: false
       # PORT is set automatically by Render

@@ -2,6 +2,7 @@
  * Pedra Azul — Baileys WhatsApp sidecar
  * Internal HTTP only (bound to 127.0.0.1). FastAPI proxies admin routes.
  * Auth state persisted in MongoDB (whatsapp_auth). Never expose creds to FE.
+ * Cycle 2: NL inbound bot + ~3h reminders.
  */
 import express from "express";
 import { MongoClient } from "mongodb";
@@ -13,6 +14,9 @@ import makeWASocket, {
 import QRCode from "qrcode";
 import pino from "pino";
 import { useMongoAuthState } from "./mongoAuthState.js";
+import { conversations } from "./conversations.js";
+import { createBot } from "./bot.js";
+import { startReminderLoop } from "./reminders.js";
 
 const PORT = Number(process.env.WHATSAPP_PORT || 3001);
 const HOST = process.env.WHATSAPP_HOST || "127.0.0.1";
@@ -37,8 +41,13 @@ let intentionalLogout = false;
 let mongoClient = null;
 let db = null;
 let authHelpers = null;
+let conv = null;
+let bot = null;
+let stopReminders = null;
 
 const sseClients = new Set();
+/** Dedup inbound message ids briefly */
+const seenMsgIds = new Set();
 
 function broadcast(event) {
   const payload = `data: ${JSON.stringify(event)}\n\n`;
@@ -59,6 +68,8 @@ function publicState() {
     last_error: lastError,
     last_disconnect_reason: lastDisconnectReason,
     reconnect_attempt: reconnectAttempt,
+    bot: true,
+    reminders: true,
   };
 }
 
@@ -80,8 +91,59 @@ function authOk(req) {
 function jidFromPhone(phone) {
   const digits = String(phone || "").replace(/\D/g, "");
   if (!digits) return null;
-  // Already E.164 without + (e.g. 5511999999999)
   return `${digits}@s.whatsapp.net`;
+}
+
+async function sendToJid(jid, text) {
+  if (status !== "CONECTADO" || !sock) {
+    const err = new Error("WhatsApp não conectado");
+    err.code = "NOT_CONNECTED";
+    throw err;
+  }
+  await sock.sendMessage(jid, { text: String(text) });
+  return { ok: true, to: String(jid).split("@")[0] };
+}
+
+async function sendText(phone, text) {
+  const jid = jidFromPhone(phone);
+  if (!jid) {
+    const err = new Error("Número inválido");
+    err.code = "BAD_PHONE";
+    throw err;
+  }
+  return sendToJid(jid, text);
+}
+
+function wireInbound(socket) {
+  socket.ev.on("messages.upsert", async ({ messages, type }) => {
+    if (type !== "notify" && type !== "append") return;
+    for (const msg of messages || []) {
+      try {
+        if (!msg?.message || msg.key?.fromMe) continue;
+        const jid = msg.key?.remoteJid;
+        if (!jid || jid === "status@broadcast" || jid.endsWith("@g.us")) continue;
+        const id = msg.key?.id;
+        if (id) {
+          if (seenMsgIds.has(id)) continue;
+          seenMsgIds.add(id);
+          if (seenMsgIds.size > 2000) {
+            const first = seenMsgIds.values().next().value;
+            seenMsgIds.delete(first);
+          }
+        }
+        const text =
+          msg.message.conversation ||
+          msg.message.extendedTextMessage?.text ||
+          msg.message.imageMessage?.caption ||
+          "";
+        if (!String(text).trim()) continue;
+        if (!bot) continue;
+        await bot.handle(jid, text);
+      } catch (e) {
+        logger.warn({ err: String(e) }, "inbound handler error");
+      }
+    }
+  });
 }
 
 async function startSocket() {
@@ -120,6 +182,7 @@ async function startSocket() {
     });
 
     sock.ev.on("creds.update", saveCreds);
+    wireInbound(sock);
 
     sock.ev.on("connection.update", async (update) => {
       const { connection, lastDisconnect, qr } = update;
@@ -238,22 +301,6 @@ async function logout() {
   return publicState();
 }
 
-async function sendText(phone, text) {
-  if (status !== "CONECTADO" || !sock) {
-    const err = new Error("WhatsApp não conectado");
-    err.code = "NOT_CONNECTED";
-    throw err;
-  }
-  const jid = jidFromPhone(phone);
-  if (!jid) {
-    const err = new Error("Número inválido");
-    err.code = "BAD_PHONE";
-    throw err;
-  }
-  await sock.sendMessage(jid, { text: String(text) });
-  return { ok: true, to: jid.split("@")[0] };
-}
-
 const app = express();
 app.use(express.json({ limit: "256kb" }));
 
@@ -265,7 +312,12 @@ app.use((req, res, next) => {
 });
 
 app.get("/health", (_req, res) => {
-  res.json({ ok: true, whatsapp: status });
+  res.json({
+    ok: true,
+    whatsapp: status,
+    bot: Boolean(bot),
+    reminders: Boolean(stopReminders),
+  });
 });
 
 app.get("/status", (_req, res) => {
@@ -334,9 +386,16 @@ async function main() {
   await mongoClient.connect();
   db = mongoClient.db(DB_NAME);
   authHelpers = await useMongoAuthState(db);
-  logger.info({ db: DB_NAME }, "Mongo auth state ready");
+  conv = conversations(db);
+  await conv.ensureIndexes();
+  bot = createBot({
+    sendText,
+    sendToJid,
+    conv,
+    logger,
+  });
+  logger.info({ db: DB_NAME }, "Mongo auth + bot ready");
 
-  // Soft instance lock (best-effort) — avoids two sockets fighting one session
   const lockCol = db.collection("whatsapp_locks");
   const lockId = process.env.WHATSAPP_SESSION_ID || "default";
   const existing = await lockCol.findOne({ _id: lockId });
@@ -366,7 +425,12 @@ async function main() {
       logger.warn({ err: String(e) }, "lock refresh failed");
     }
   }, 20_000);
-  logger.info({ pid: process.pid }, "instance lock refreshed");
+
+  stopReminders = startReminderLoop({
+    sendText,
+    logger,
+    isConnected: () => status === "CONECTADO" && !!sock,
+  });
 
   app.listen(PORT, HOST, () => {
     logger.info({ host: HOST, port: PORT }, "WhatsApp sidecar listening");
@@ -384,6 +448,9 @@ main().catch((e) => {
 
 process.on("SIGTERM", async () => {
   intentionalLogout = true;
+  try {
+    stopReminders?.();
+  } catch {}
   try {
     if (sock) sock.end(undefined);
   } catch {}

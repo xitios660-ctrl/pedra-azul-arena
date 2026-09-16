@@ -22,6 +22,8 @@ Reserva de **uma** quadra (Pedra Azul — Núncio), fluxo CPF + PIX + confirmaç
 | `WHATSAPP_INTERNAL_TOKEN` | não | Token compartilhado FastAPI ↔ sidecar |
 | `WHATSAPP_SESSION_ID` | não | Default `default` (chave Mongo auth) |
 | `WHATSAPP_AUTO_START` | não | Default `true` — tenta restaurar sessão no boot |
+| `WHATSAPP_ADMIN_JID` | não | JID admin p/ notificar reservas WA (ex.: `5511999999999@s.whatsapp.net`) |
+| `API_INTERNAL_URL` | não | Default `http://127.0.0.1:$PORT` — sidecar → FastAPI |
 | `PORT` | não | Porta HTTP pública (Render define) |
 
 **Nunca** commitir credenciais Baileys / `.env` / QR. Sessão fica na collection `whatsapp_auth`.
@@ -67,3 +69,19 @@ cd frontend && npm install --legacy-peer-deps && npm start
 Fluxo: **data → horário → dados → revisão → confirmar**.  
 Estados de slot: `available` | `reserved` | `unavailable`.  
 Double-booking bloqueado atomicamente (índice único parcial + 409).
+
+
+## Bot WhatsApp (Cycle 2)
+
+Mensagens inbound em pt-BR (sem menu numérico, salvo fallback):
+
+- cumprimentos, preço, endereço/local (Núncio)
+- disponibilidade (hoje / amanhã / sábado / depois das 20)
+- reservar: horário → nome → confirmação (*sim*/*não*)
+- cancelar se o telefone bater com a reserva
+
+Estado da conversa por JID em Mongo (`whatsapp_conversations`).
+Reservas usam o mesmo caminho atômico do site (`slot_key` + índice único).
+Lembrete ~3h antes (`reminder_sent` — sem duplicar após restart).
+
+Admin → aba **Calendário**: visão dia/semana, bloquear/desbloquear, criar/cancelar com confirmação.

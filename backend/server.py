@@ -25,6 +25,8 @@ import httpx
 from zoneinfo import ZoneInfo
 
 import whatsapp_bridge
+import booking_service as bsvc
+from booking_service import COURT, COURT_ID, TIME_SLOTS, DEPOSIT_RATE
 
 from auth_utils import (
     hash_password,
@@ -66,9 +68,16 @@ async def health():
         db_ok = True
     except Exception:
         db_ok = False
-    wa = await whatsapp_bridge.health_label()
+    wa_status = await whatsapp_bridge.get_status()
+    wa = wa_status.get("status") or "DESCONECTADO"
     ok = db_ok
-    return {"ok": ok, "db": "ok" if db_ok else "error", "whatsapp": wa}
+    return {
+        "ok": ok,
+        "db": "ok" if db_ok else "error",
+        "whatsapp": wa,
+        "whatsapp_bot": bool(wa_status.get("bot")),
+        "court": COURT_ID,
+    }
 
 
 
@@ -118,12 +127,9 @@ class MatchScoreUpdate(BaseModel):
 # -----------------------------------------------------------------------------
 # Static catalog
 # -----------------------------------------------------------------------------
-COURTS = [
-    {"id": "court-1", "name": "Quadra Pedra Azul — Núncio", "type": "Futsal · Society", "price_per_hour": 130, "color": "#2563EB"},
-]
+COURTS = [COURT]
 COURT_BY_ID = {c["id"]: c for c in COURTS}
-TIME_SLOTS = [f"{h:02d}:00" for h in range(8, 24)]
-DEPOSIT_RATE = 0.30
+# TIME_SLOTS / DEPOSIT_RATE imported from booking_service
 
 
 # =============================================================================
@@ -169,45 +175,10 @@ async def list_courts():
 async def court_availability(court_id: str, date: str):
     if court_id not in COURT_BY_ID:
         raise HTTPException(status_code=404, detail="Quadra não encontrada")
-    bookings = await db.bookings.find(
-        {"court_id": court_id, "date": date,
-         "status": {"$in": ["pending", "awaiting_admin", "confirmed"]}},
-        {"_id": 0},
-    ).to_list(500)
-    taken = {b["start_time"]: b for b in bookings}
-    slots = []
-    court = COURT_BY_ID[court_id]
-    tz = ZoneInfo("America/Sao_Paulo")
-    now_local = datetime.now(tz)
-    today_local = now_local.strftime("%Y-%m-%d")
-    for t in TIME_SLOTS:
-        b = taken.get(t)
-        if b:
-            status = "reserved"
-        elif date < today_local:
-            status = "unavailable"
-        elif date == today_local:
-            try:
-                hour = int(t.split(":")[0])
-                # Slot starts at :00; mark past kickoffs unavailable
-                if hour < now_local.hour or (hour == now_local.hour and now_local.minute > 0):
-                    status = "unavailable"
-                else:
-                    status = "available"
-            except Exception:
-                status = "available"
-        else:
-            status = "available"
-        # Backward-compatible aliases for older FE builds
-        legacy = "occupied" if status == "reserved" else ("free" if status == "available" else "unavailable")
-        slots.append({
-            "time": t,
-            "status": status,
-            "legacy_status": legacy,
-            "booking_status": b["status"] if b else None,
-            "price": court["price_per_hour"],
-        })
-    return {"court": court, "date": date, "slots": slots}
+    try:
+        return await bsvc.build_availability(db, court_id, date)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Quadra não encontrada")
 
 
 # =============================================================================
@@ -240,8 +211,6 @@ async def upload_crest(file: UploadFile = File(...)):
 async def create_booking(payload: BookingCreate):
     if payload.court_id not in COURT_BY_ID:
         raise HTTPException(status_code=404, detail="Quadra não encontrada")
-    if payload.start_time not in TIME_SLOTS:
-        raise HTTPException(status_code=400, detail="Horário inválido")
     if not validate_cpf(payload.cpf):
         raise HTTPException(status_code=400, detail="CPF inválido")
     if not only_digits(payload.whatsapp) or len(only_digits(payload.whatsapp)) < 10:
@@ -251,66 +220,30 @@ async def create_booking(payload: BookingCreate):
     cpf_masked = mask_cpf(payload.cpf)
     whatsapp_digits = normalize_whatsapp(payload.whatsapp)
 
-    # Reject past dates / past slots (America/Sao_Paulo)
     try:
-        datetime.strptime(payload.date, "%Y-%m-%d")
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Data inválida")
-    tz = ZoneInfo("America/Sao_Paulo")
-    now_local = datetime.now(tz)
-    today_local = now_local.strftime("%Y-%m-%d")
-    if payload.date < today_local:
-        raise HTTPException(status_code=400, detail="Data já passou")
-    if payload.date == today_local:
-        hour = int(payload.start_time.split(":")[0])
-        if hour < now_local.hour or (hour == now_local.hour and now_local.minute > 0):
-            raise HTTPException(status_code=400, detail="Horário indisponível")
-
-    court = COURT_BY_ID[payload.court_id]
-    total = court["price_per_hour"] * (payload.duration_minutes / 60)
-    deposit = round(total * DEPOSIT_RATE, 2)
-
-    booking = {
-        "id": str(uuid.uuid4()),
-        "cpf": cpf_digits,
-        "cpf_masked": cpf_masked,
-        "customer_name": payload.customer_name.strip(),
-        "whatsapp": whatsapp_digits,
-        "court_id": payload.court_id,
-        "court_name": court["name"],
-        "date": payload.date,
-        "start_time": payload.start_time,
-        "duration_minutes": payload.duration_minutes,
-        "your_team_name": payload.your_team_name,
-        "opponent_team_name": payload.opponent_team_name,
-        "your_team_crest": payload.your_team_crest,
-        "opponent_team_crest": payload.opponent_team_crest,
-        "total": total,
-        "deposit": deposit,
-        "status": "pending",   # pending (esperando comprovante) -> awaiting_admin -> confirmed | cancelled
-        "payment": {
-            "method": "pix",
-            "status": "pending",
-            "qr_code": f"PIX-MOCK-{uuid.uuid4().hex[:16].upper()}",
-            "pix_copy_paste": f"00020126360014BR.GOV.BCB.PIX0114arena@premium5204000053039865802BR5913ARENA PREMIUM6009SAO PAULO62070503***6304{uuid.uuid4().hex[:8].upper()}",
-            "amount": deposit,
-            "created_at": _now_iso(),
-            "confirmed_at": None,
-            "comprovante_url": None,
-            "comprovante_uploaded_at": None,
-        },
-        "whatsapp_sent": False,
-        "whatsapp_sent_at": None,
-        "created_at": _now_iso(),
-        # Compound uniqueness for active bookings (partial unique index)
-        "slot_key": f"{payload.court_id}|{payload.date}|{payload.start_time}",
-    }
-    # Atomic double-booking prevention: unique partial index on slot_key for active statuses
-    try:
-        await db.bookings.insert_one(booking)
+        booking = await bsvc.create_booking_atomic(
+            db,
+            court_id=payload.court_id,
+            date=payload.date,
+            start_time=payload.start_time,
+            customer_name=payload.customer_name,
+            whatsapp=whatsapp_digits,
+            cpf=cpf_digits,
+            cpf_masked=cpf_masked,
+            your_team_name=payload.your_team_name,
+            opponent_team_name=payload.opponent_team_name,
+            your_team_crest=payload.your_team_crest,
+            opponent_team_crest=payload.opponent_team_crest,
+            duration_minutes=payload.duration_minutes,
+            source="web",
+            status="pending",
+        )
     except DuplicateKeyError:
         raise HTTPException(status_code=409, detail="Horário já reservado")
-    booking.pop("_id", None)
+    except ValueError as e:
+        msg = str(e)
+        code = 404 if "não encontrada" in msg else 400
+        raise HTTPException(status_code=code, detail=msg)
     return booking
 
 
@@ -571,6 +504,252 @@ async def admin_cancel_booking(booking_id: str, admin: dict = Depends(require_ad
 
 
 
+
+# =============================================================================
+# INTERNAL — WhatsApp sidecar (X-Internal-Token)
+# =============================================================================
+def _require_internal(request: Request):
+    token = os.environ.get("WHATSAPP_INTERNAL_TOKEN", "")
+    if not token:
+        return  # open in local/dev when unset (same as sidecar)
+    got = request.headers.get("x-internal-token") or ""
+    if got != token:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+
+class WaBookingIn(BaseModel):
+    phone: str
+    customer_name: str = Field(min_length=2, max_length=80)
+    date: str
+    start_time: str
+    duration_minutes: int = 60
+
+
+class WaCancelIn(BaseModel):
+    phone: str
+    booking_id: Optional[str] = None
+
+
+class AdminBlockIn(BaseModel):
+    date: str
+    start_time: str
+
+
+class AdminBookingIn(BaseModel):
+    date: str
+    start_time: str
+    customer_name: str = Field(min_length=2, max_length=80)
+    whatsapp: str = Field(min_length=8, max_length=20)
+    status: Literal["confirmed", "pending"] = "confirmed"
+
+
+@api.get("/internal/whatsapp/availability")
+async def internal_wa_availability(request: Request, date: str, after_hour: Optional[int] = None):
+    _require_internal(request)
+    return await bsvc.build_availability(db, COURT_ID, date, after_hour=after_hour)
+
+
+@api.post("/internal/whatsapp/bookings")
+async def internal_wa_create_booking(request: Request, payload: WaBookingIn):
+    _require_internal(request)
+    phone = normalize_whatsapp(payload.phone)
+    if len(only_digits(phone)) < 10:
+        raise HTTPException(status_code=400, detail="WhatsApp inválido")
+    # CPF placeholder for WA channel (identity = phone)
+    cpf_digits = f"wa{only_digits(phone)[-9:]}".ljust(11, "0")[:11]
+    try:
+        booking = await bsvc.create_booking_atomic(
+            db,
+            court_id=COURT_ID,
+            date=payload.date,
+            start_time=payload.start_time,
+            customer_name=payload.customer_name,
+            whatsapp=phone,
+            cpf=cpf_digits,
+            cpf_masked="WhatsApp",
+            your_team_name="WhatsApp",
+            opponent_team_name="A definir",
+            duration_minutes=payload.duration_minutes,
+            source="whatsapp",
+            status="confirmed",
+            payment_status="pending",
+        )
+    except DuplicateKeyError:
+        raise HTTPException(status_code=409, detail="Horário já reservado")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return booking
+
+
+@api.get("/internal/whatsapp/bookings")
+async def internal_wa_list_bookings(request: Request, phone: str):
+    _require_internal(request)
+    digits = normalize_whatsapp(phone)
+    items = await db.bookings.find(
+        {"whatsapp": digits},
+        {"_id": 0},
+    ).sort("date", 1).to_list(50)
+    # also match without country code variants
+    if not items:
+        alt = only_digits(phone)
+        items = await db.bookings.find(
+            {"whatsapp": {"$in": [alt, normalize_whatsapp(alt)]}},
+            {"_id": 0},
+        ).sort("date", 1).to_list(50)
+    return {"bookings": items}
+
+
+@api.post("/internal/whatsapp/bookings/cancel")
+async def internal_wa_cancel(request: Request, payload: WaCancelIn):
+    _require_internal(request)
+    digits = normalize_whatsapp(payload.phone)
+    q = {
+        "whatsapp": digits,
+        "status": {"$in": ["pending", "awaiting_admin", "confirmed"]},
+    }
+    if payload.booking_id:
+        q["id"] = payload.booking_id
+    b = await db.bookings.find_one(q, sort=[("date", 1), ("start_time", 1)])
+    if not b:
+        return {"cancelled": False, "message": "Nenhuma reserva ativa neste número"}
+    await db.bookings.update_one(
+        {"id": b["id"]},
+        {"$set": {"status": "cancelled", "payment.status": "cancelled"}},
+    )
+    return {
+        "cancelled": True,
+        "id": b["id"],
+        "date": b["date"],
+        "start_time": b["start_time"],
+    }
+
+
+@api.get("/internal/whatsapp/reminders/due")
+async def internal_reminders_due(request: Request):
+    """Confirmed bookings starting in ~2.5h–3.5h window, reminder not sent."""
+    _require_internal(request)
+    tz = ZoneInfo("America/Sao_Paulo")
+    now = datetime.now(tz)
+    # Window: start between now+150min and now+210min
+    due = []
+    # Check today and tomorrow
+    for day_offset in (0, 1):
+        day = (now + timedelta(days=day_offset)).strftime("%Y-%m-%d")
+        cursor = db.bookings.find(
+            {
+                "date": day,
+                "status": "confirmed",
+                "reminder_sent": {"$ne": True},
+            },
+            {"_id": 0},
+        )
+        async for b in cursor:
+            try:
+                hour = int(b["start_time"].split(":")[0])
+                start_local = now.replace(
+                    year=int(day[0:4]), month=int(day[5:7]), day=int(day[8:10]),
+                    hour=hour, minute=0, second=0, microsecond=0,
+                )
+            except Exception:
+                continue
+            delta_min = (start_local - now).total_seconds() / 60.0
+            if 150 <= delta_min <= 210:
+                due.append(b)
+    return {"bookings": due}
+
+
+@api.post("/internal/whatsapp/reminders/{booking_id}/sent")
+async def internal_reminder_mark(booking_id: str, request: Request):
+    """Atomic claim — only one caller wins (prevents duplicate after restart)."""
+    _require_internal(request)
+    res = await db.bookings.update_one(
+        {"id": booking_id, "reminder_sent": {"$ne": True}},
+        {"$set": {"reminder_sent": True, "reminder_sent_at": _now_iso()}},
+    )
+    return {"ok": res.modified_count == 1}
+
+
+# =============================================================================
+# ADMIN — Calendar (single court)
+# =============================================================================
+@api.get("/admin/calendar")
+async def admin_calendar(
+    admin: dict = Depends(require_admin),
+    start: Optional[str] = None,
+    days: int = 1,
+):
+    tz = ZoneInfo("America/Sao_Paulo")
+    if not start:
+        start = datetime.now(tz).strftime("%Y-%m-%d")
+    days = 1 if days <= 1 else (7 if days <= 7 else min(days, 14))
+    return await bsvc.calendar_range(db, start, days=days)
+
+
+@api.post("/admin/calendar/block")
+async def admin_block_slot(payload: AdminBlockIn, admin: dict = Depends(require_admin)):
+    if payload.start_time not in TIME_SLOTS:
+        raise HTTPException(status_code=400, detail="Horário inválido")
+    sk = bsvc.slot_key(COURT_ID, payload.date, payload.start_time)
+    # refuse if active booking
+    existing = await db.bookings.find_one(
+        {"slot_key": sk, "status": {"$in": ["pending", "awaiting_admin", "confirmed"]}}
+    )
+    if existing:
+        raise HTTPException(status_code=409, detail="Já existe reserva neste horário")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "court_id": COURT_ID,
+        "date": payload.date,
+        "start_time": payload.start_time,
+        "slot_key": sk,
+        "created_at": _now_iso(),
+        "created_by": admin.get("email"),
+    }
+    try:
+        await db.blocked_slots.update_one(
+            {"slot_key": sk},
+            {"$set": doc},
+            upsert=True,
+        )
+    except DuplicateKeyError:
+        pass
+    return {"ok": True, "blocked": doc}
+
+
+@api.post("/admin/calendar/unblock")
+async def admin_unblock_slot(payload: AdminBlockIn, admin: dict = Depends(require_admin)):
+    sk = bsvc.slot_key(COURT_ID, payload.date, payload.start_time)
+    await db.blocked_slots.delete_one({"slot_key": sk})
+    return {"ok": True}
+
+
+@api.post("/admin/calendar/bookings")
+async def admin_calendar_create_booking(payload: AdminBookingIn, admin: dict = Depends(require_admin)):
+    phone = normalize_whatsapp(payload.whatsapp)
+    cpf_digits = f"ad{only_digits(phone)[-9:]}".ljust(11, "0")[:11]
+    try:
+        booking = await bsvc.create_booking_atomic(
+            db,
+            court_id=COURT_ID,
+            date=payload.date,
+            start_time=payload.start_time,
+            customer_name=payload.customer_name,
+            whatsapp=phone,
+            cpf=cpf_digits,
+            cpf_masked="Admin",
+            your_team_name="Admin",
+            opponent_team_name="A definir",
+            source="admin",
+            status=payload.status,
+            payment_status="paid" if payload.status == "confirmed" else "pending",
+        )
+    except DuplicateKeyError:
+        raise HTTPException(status_code=409, detail="Horário já reservado")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return booking
+
+
 # =============================================================================
 # ADMIN — WhatsApp (Baileys sidecar proxy + SSE)
 # =============================================================================
@@ -701,8 +880,20 @@ async def startup():
     except Exception as e:
         logger.warning("slot_key backfill: %s", e)
     await db.tournaments.create_index("id", unique=True)
+    try:
+        await db.blocked_slots.create_index([("slot_key", 1)], unique=True, name="uniq_blocked_slot")
+        await db.blocked_slots.create_index([("court_id", 1), ("date", 1)])
+    except Exception as e:
+        logger.warning("blocked_slots index: %s", e)
+    try:
+        await db.bookings.update_many(
+            {"reminder_sent": {"$exists": False}},
+            {"$set": {"reminder_sent": False, "reminder_sent_at": None}},
+        )
+    except Exception as e:
+        logger.warning("reminder_sent backfill: %s", e)
     await run_all_seeds(db)
-    logger.info("Arena Futsal Premium API initialized (CPF-mode + WhatsApp bridge)")
+    logger.info("Arena Futsal Premium API initialized (CPF + WA bot + calendar)")
 
 
 @app.on_event("shutdown")

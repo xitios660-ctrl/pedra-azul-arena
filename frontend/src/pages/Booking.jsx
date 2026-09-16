@@ -45,7 +45,7 @@ function isSlotReserved(slot) {
   return slot?.status === "reserved" || slot?.status === "occupied";
 }
 function isSlotUnavailable(slot) {
-  return slot?.status === "unavailable";
+  return slot?.status === "unavailable" || slot?.status === "blocked";
 }
 function slotLabel(slot, isPicked) {
   if (isPicked) return "Selecionado";
