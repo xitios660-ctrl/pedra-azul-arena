@@ -172,7 +172,7 @@ export default function AdminCalendar() {
     }
   };
 
-  const days = data?.days || [];
+  const days = useMemo(() => data?.days || [], [data?.days]);
 
   // Pad month grid to weeks starting Monday (pt-BR)
   const monthCells = useMemo(() => {
