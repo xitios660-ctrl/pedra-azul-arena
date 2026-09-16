@@ -1226,6 +1226,187 @@ async def admin_export_bookings_csv(
     )
 
 
+# --- Cycle 31: admin revenue report (real payment fields only; no PIX settlement invent) ---
+
+_REVENUE_PAYMENT_STATUSES = frozenset({"paid"})  # payment.status that means money received
+_REVENUE_BOOKING_STATUSES = frozenset({"confirmed"})  # booking confirmed == admin-validated money
+
+
+def _booking_money_amount(b: dict) -> float:
+    """Deposit / payment.amount already stored — never invent PIX settlement."""
+    pay = b.get("payment") or {}
+    amount = b.get("deposit")
+    if amount is None:
+        amount = pay.get("amount")
+    if amount is None:
+        amount = b.get("total")
+    try:
+        return float(amount or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _is_revenue_money(b: dict) -> bool:
+    """True when booking represents received money (paid payment or confirmed booking)."""
+    pay = (b.get("payment") or {}).get("status")
+    st = b.get("status")
+    if pay in _REVENUE_PAYMENT_STATUSES:
+        return True
+    if st in _REVENUE_BOOKING_STATUSES:
+        return True
+    return False
+
+
+def _parse_report_dates(date_from: Optional[str], date_to: Optional[str]) -> tuple[str, str]:
+    tz = ZoneInfo("America/Sao_Paulo")
+    today = datetime.now(tz).date()
+    if not date_from and not date_to:
+        end = today
+        start = end - timedelta(days=29)
+        return start.isoformat(), end.isoformat()
+    if not date_from:
+        date_from = date_to
+    if not date_to:
+        date_to = date_from
+    try:
+        d0 = datetime.strptime(date_from, "%Y-%m-%d").date()
+        d1 = datetime.strptime(date_to, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="date_from/date_to devem ser YYYY-MM-DD")
+    if d1 < d0:
+        raise HTTPException(status_code=400, detail="date_to deve ser >= date_from")
+    if (d1 - d0).days > 366:
+        raise HTTPException(status_code=400, detail="Intervalo máximo de 366 dias")
+    return d0.isoformat(), d1.isoformat()
+
+
+async def _build_revenue_report(date_from: str, date_to: str) -> dict:
+    """Aggregate bookings by court day: revenue (paid/confirmed), counts, discounts."""
+    query = {"date": {"$gte": date_from, "$lte": date_to}}
+    items = await db.bookings.find(query, {"_id": 0}).to_list(10000)
+
+    # Seed every day in range so UI table is continuous
+    d0 = datetime.strptime(date_from, "%Y-%m-%d").date()
+    d1 = datetime.strptime(date_to, "%Y-%m-%d").date()
+    by_day: dict = {}
+    cur = d0
+    while cur <= d1:
+        key = cur.isoformat()
+        by_day[key] = {
+            "date": key,
+            "revenue": 0.0,
+            "paid_count": 0,
+            "bookings": 0,
+            "cancellations": 0,
+            "no_shows": 0,
+            "discounts": 0.0,
+        }
+        cur += timedelta(days=1)
+
+    for b in items:
+        d = b.get("date") or ""
+        if d not in by_day:
+            continue
+        row = by_day[d]
+        row["bookings"] += 1
+        st = b.get("status") or ""
+        if st == "cancelled":
+            row["cancellations"] += 1
+        if st == "no_show":
+            row["no_shows"] += 1
+        try:
+            disc = float(b.get("discount") or 0)
+        except (TypeError, ValueError):
+            disc = 0.0
+        if disc > 0:
+            row["discounts"] = round(row["discounts"] + disc, 2)
+        if _is_revenue_money(b):
+            amt = _booking_money_amount(b)
+            row["revenue"] = round(row["revenue"] + amt, 2)
+            row["paid_count"] += 1
+
+    days = [by_day[k] for k in sorted(by_day.keys())]
+    totals = {
+        "revenue": round(sum(x["revenue"] for x in days), 2),
+        "paid_count": sum(x["paid_count"] for x in days),
+        "bookings": sum(x["bookings"] for x in days),
+        "cancellations": sum(x["cancellations"] for x in days),
+        "no_shows": sum(x["no_shows"] for x in days),
+        "discounts": round(sum(x["discounts"] for x in days), 2),
+    }
+    return {
+        "date_from": date_from,
+        "date_to": date_to,
+        "totals": totals,
+        "days": days,
+        "money_rule": "payment.status=paid OR booking.status=confirmed (deposit/payment.amount)",
+    }
+
+
+@api.get("/admin/reports/revenue")
+async def admin_revenue_report(
+    admin: dict = Depends(require_admin),
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+):
+    """Sum paid/confirmed amounts by day + booking/cancel/no_show/discount counts."""
+    d0, d1 = _parse_report_dates(date_from, date_to)
+    return await _build_revenue_report(d0, d1)
+
+
+@api.get("/admin/reports/revenue.csv")
+async def admin_revenue_report_csv(
+    admin: dict = Depends(require_admin),
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+):
+    """CSV export of daily revenue report — same filters as JSON."""
+    d0, d1 = _parse_report_dates(date_from, date_to)
+    report = await _build_revenue_report(d0, d1)
+    buf = io.StringIO()
+    buf.write("\ufeff")
+    writer = csv.writer(buf)
+    writer.writerow([
+        "date",
+        "revenue",
+        "paid_count",
+        "bookings",
+        "cancellations",
+        "no_shows",
+        "discounts",
+    ])
+    for row in report["days"]:
+        writer.writerow([
+            row["date"],
+            f"{row['revenue']:.2f}",
+            row["paid_count"],
+            row["bookings"],
+            row["cancellations"],
+            row["no_shows"],
+            f"{row['discounts']:.2f}",
+        ])
+    # Totals footer
+    t = report["totals"]
+    writer.writerow([
+        "TOTAL",
+        f"{t['revenue']:.2f}",
+        t["paid_count"],
+        t["bookings"],
+        t["cancellations"],
+        t["no_shows"],
+        f"{t['discounts']:.2f}",
+    ])
+    raw = buf.getvalue().encode("utf-8")
+    filename = f"pedra-azul-faturamento-{d0}_{d1}.csv"
+    return Response(
+        content=raw,
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+        },
+    )
+
 
 def _admin_mask_cpf_display(b: dict) -> str:
     """Admin CRM: show last 5 digits only (never invent customers)."""

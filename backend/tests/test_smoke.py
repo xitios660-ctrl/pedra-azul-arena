@@ -26,11 +26,47 @@ ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "Gugu123@")
 
 _xff_n = 50
 
+
 def _xff() -> dict:
     """Rotate TEST-NET X-Forwarded-For so suite does not trip in-memory IP rate limit."""
     global _xff_n
     _xff_n = (_xff_n % 250) + 1
     return {"X-Forwarded-For": f"198.51.100.{_xff_n}"}
+
+
+def _find_day_with_n_free(session, n: int = 3, start_off: int = 110, end_off: int = 220):
+    """Pick a weekday far ahead with >= n available slots (avoids suite slot_lock pollution)."""
+    for off in range(start_off, end_off):
+        cand = (datetime.now(TZ) + timedelta(days=off)).strftime("%Y-%m-%d")
+        if datetime.strptime(cand, "%Y-%m-%d").weekday() >= 5:
+            continue
+        avail = session.get(
+            f"{API}/courts/availability",
+            params={"court_id": "court-1", "date": cand},
+            timeout=15,
+            headers=_xff(),
+        )
+        if avail.status_code != 200:
+            continue
+        body = avail.json()
+        price = float(
+            body.get("settings", {}).get("effective_price_per_hour")
+            or body.get("court", {}).get("price_per_hour")
+            or 0
+        )
+        free = [x["time"] for x in body.get("slots") or [] if x.get("status") == "available"]
+        if len(free) >= n and price > 0:
+            return cand, free, price
+    return None, [], None
+
+
+def _admin_cancel_quiet(admin_session, booking_id: str) -> None:
+    if not booking_id:
+        return
+    try:
+        admin_session.post(f"{API}/admin/bookings/{booking_id}/cancel", timeout=10)
+    except Exception:
+        pass
 
 
 @pytest.fixture(scope="module")
@@ -2588,7 +2624,9 @@ def test_promo_discount_math_unit():
 
 
 def test_promo_codes_validate_and_booking(admin_session, s):
-    """Cycle 29: create/validate percent+fixed; reject expired/inactive; max_uses; booking discount."""
+    """Cycle 29/31: create/validate percent+fixed; reject expired/inactive; max_uses; booking discount.
+    Isolated on far weekday with >=3 free slots; cancels bookings to avoid slot_lock pollution.
+    """
     import uuid as _uuid
 
     suffix = _uuid.uuid4().hex[:6].upper()
@@ -2597,6 +2635,7 @@ def test_promo_codes_validate_and_booking(admin_session, s):
     code_max = f"MAX{suffix}"
     code_exp = f"EXP{suffix}"
     code_off = f"OFF{suffix}"
+    created_ids = []
 
     # Auth required for admin list
     bare = requests.Session()
@@ -2651,170 +2690,181 @@ def test_promo_codes_validate_and_booking(admin_session, s):
     codes = {x["code"] for x in rl.json().get("items") or []}
     assert code_pct in codes and code_fix in codes
 
-    # Need a free slot + know price
-    day = None
-    start = None
-    price = None
-    for off in range(45, 100):
-        cand = (datetime.now(TZ) + timedelta(days=off)).strftime("%Y-%m-%d")
-        if datetime.strptime(cand, "%Y-%m-%d").weekday() >= 5:
-            continue
-        avail = s.get(
-            f"{API}/courts/availability",
-            params={"court_id": "court-1", "date": cand},
-            timeout=15,
+    try:
+        # Need a free weekday with enough slots (3 bookings in this test)
+        day, free0, price = _find_day_with_n_free(s, n=3, start_off=120, end_off=240)
+        assert day and free0 and price, "no free weekday with 3+ slots for promo test"
+        start = free0[0]
+
+        # Validate percent preview
+        v1 = s.post(
+            f"{API}/promo/validate",
+            json={"code": code_pct, "date": day, "hours": 1},
             headers=_xff(),
+            timeout=10,
         )
-        if avail.status_code != 200:
-            continue
-        body = avail.json()
-        price = float(body.get("settings", {}).get("effective_price_per_hour") or body.get("court", {}).get("price_per_hour") or 0)
-        free = [x["time"] for x in body.get("slots") or [] if x.get("status") == "available"]
-        if free and price > 0:
-            day, start = cand, free[0]
+        assert v1.status_code == 200, v1.text
+        pv = v1.json()
+        assert pv["valid"] is True
+        assert abs(pv["discount"] - round(price * 0.10, 2)) < 0.02
+        assert abs(pv["total"] - round(price - pv["discount"], 2)) < 0.02
+        # used_count not claimed yet
+        listed = admin_session.get(f"{API}/admin/promo-codes", timeout=10).json()["items"]
+        pct_row = next(x for x in listed if x["code"] == code_pct)
+        assert int(pct_row["used_count"] or 0) == 0
+
+        # Fixed preview
+        v2 = s.post(
+            f"{API}/promo/validate",
+            json={"code": code_fix.lower(), "date": day, "hours": 1},
+            headers=_xff(),
+            timeout=10,
+        )
+        assert v2.status_code == 200, v2.text
+        assert abs(v2.json()["discount"] - min(25.0, price)) < 0.02
+
+        # Reject expired / inactive
+        ve = s.post(f"{API}/promo/validate", json={"code": code_exp, "date": day, "hours": 1}, headers=_xff(), timeout=10)
+        assert ve.status_code == 400, ve.text
+        assert "expir" in (ve.json().get("detail") or "").lower()
+
+        vi = s.post(f"{API}/promo/validate", json={"code": code_off, "date": day, "hours": 1}, headers=_xff(), timeout=10)
+        assert vi.status_code == 400, vi.text
+
+        # Booking with percent promo
+        free2 = None
+        for t in [
+            x["time"]
+            for x in s.get(
+                f"{API}/courts/availability",
+                params={"court_id": "court-1", "date": day},
+                timeout=15,
+                headers=_xff(),
+            ).json().get("slots") or []
+            if x.get("status") == "available"
+        ]:
+            free2 = t
             break
-    assert day and start and price, "no free weekday slot for promo test"
+        assert free2
+        cr = s.post(
+            f"{API}/bookings",
+            json={
+                "court_id": "court-1",
+                "date": day,
+                "start_time": free2,
+                "duration_hours": 1,
+                "cpf": SMOKE_CPF,
+                "customer_name": "Promo Cycle31",
+                "whatsapp": "11999887766",
+                "your_team_name": "A",
+                "opponent_team_name": "B",
+                "promo_code": code_pct,
+            },
+            headers=_xff(),
+            timeout=15,
+        )
+        assert cr.status_code in (200, 201), cr.text
+        b = cr.json()
+        created_ids.append(b.get("id"))
+        assert b.get("promo_code") == code_pct
+        assert float(b.get("discount") or 0) > 0
+        assert float(b["total"]) < float(b.get("original_total") or price)
+        assert float(b["total"]) >= 0
+        assert abs(float(b["deposit"]) - round(float(b["total"]) * 0.3, 2)) < 0.02
+        assert b.get("payment", {}).get("status") == "pending"  # PIX never auto-confirm
+        assert abs(float(b["payment"]["amount"]) - float(b["deposit"])) < 0.02
 
-    # Validate percent preview
-    v1 = s.post(
-        f"{API}/promo/validate",
-        json={"code": code_pct, "date": day, "hours": 1},
-        headers=_xff(),
-        timeout=10,
-    )
-    assert v1.status_code == 200, v1.text
-    pv = v1.json()
-    assert pv["valid"] is True
-    assert abs(pv["discount"] - round(price * 0.10, 2)) < 0.02
-    assert abs(pv["total"] - round(price - pv["discount"], 2)) < 0.02
-    # used_count not claimed yet
-    listed = admin_session.get(f"{API}/admin/promo-codes", timeout=10).json()["items"]
-    pct_row = next(x for x in listed if x["code"] == code_pct)
-    assert int(pct_row["used_count"] or 0) == 0
+        # used_count incremented
+        listed2 = admin_session.get(f"{API}/admin/promo-codes", timeout=10).json()["items"]
+        pct_row2 = next(x for x in listed2 if x["code"] == code_pct)
+        assert int(pct_row2["used_count"] or 0) >= 1
 
-    # Fixed preview
-    v2 = s.post(
-        f"{API}/promo/validate",
-        json={"code": code_fix.lower(), "date": day, "hours": 1},
-        headers=_xff(),
-        timeout=10,
-    )
-    assert v2.status_code == 200, v2.text
-    assert abs(v2.json()["discount"] - min(25.0, price)) < 0.02
+        # max_uses=1: first booking claims, second rejected — need 2 free after first booking
+        free3 = [
+            x["time"]
+            for x in s.get(
+                f"{API}/courts/availability",
+                params={"court_id": "court-1", "date": day},
+                timeout=15,
+                headers=_xff(),
+            ).json().get("slots") or []
+            if x.get("status") == "available"
+        ]
+        if len(free3) < 2:
+            # Fall back to another isolated day rather than fail on pollution
+            day2, free_alt, _ = _find_day_with_n_free(s, n=2, start_off=240, end_off=320)
+            assert day2 and len(free_alt) >= 2, "need 2 free slots for max_uses test"
+            day, free3 = day2, free_alt
+        assert len(free3) >= 2, "need 2 free slots for max_uses test"
+        b1 = s.post(
+            f"{API}/bookings",
+            json={
+                "court_id": "court-1",
+                "date": day,
+                "start_time": free3[0],
+                "duration_hours": 1,
+                "cpf": SMOKE_CPF,
+                "customer_name": "MaxUses One",
+                "whatsapp": "11999887766",
+                "your_team_name": "A",
+                "opponent_team_name": "B",
+                "promo_code": code_max,
+            },
+            headers=_xff(),
+            timeout=15,
+        )
+        assert b1.status_code in (200, 201), b1.text
+        created_ids.append(b1.json().get("id"))
+        b2 = s.post(
+            f"{API}/bookings",
+            json={
+                "court_id": "court-1",
+                "date": day,
+                "start_time": free3[1],
+                "duration_hours": 1,
+                "cpf": SMOKE_CPF,
+                "customer_name": "MaxUses Two",
+                "whatsapp": "11999887766",
+                "your_team_name": "A",
+                "opponent_team_name": "B",
+                "promo_code": code_max,
+            },
+            headers=_xff(),
+            timeout=15,
+        )
+        assert b2.status_code == 400, b2.text
+        # booking without promo should still work on that slot after failed promo
+        # (locks released on ValueError before insert)
+        b3 = s.post(
+            f"{API}/bookings",
+            json={
+                "court_id": "court-1",
+                "date": day,
+                "start_time": free3[1],
+                "duration_hours": 1,
+                "cpf": SMOKE_CPF,
+                "customer_name": "No Promo",
+                "whatsapp": "11999887766",
+                "your_team_name": "A",
+                "opponent_team_name": "B",
+            },
+            headers=_xff(),
+            timeout=15,
+        )
+        assert b3.status_code in (200, 201), b3.text
+        created_ids.append(b3.json().get("id"))
+        assert not b3.json().get("promo_code")
 
-    # Reject expired / inactive
-    ve = s.post(f"{API}/promo/validate", json={"code": code_exp, "date": day, "hours": 1}, headers=_xff(), timeout=10)
-    assert ve.status_code == 400, ve.text
-    assert "expir" in (ve.json().get("detail") or "").lower()
-
-    vi = s.post(f"{API}/promo/validate", json={"code": code_off, "date": day, "hours": 1}, headers=_xff(), timeout=10)
-    assert vi.status_code == 400, vi.text
-
-    # Booking with percent promo
-    free2 = None
-    for t in [x["time"] for x in s.get(f"{API}/courts/availability", params={"court_id": "court-1", "date": day}, timeout=15, headers=_xff()).json().get("slots") or [] if x.get("status") == "available"]:
-        free2 = t
-        break
-    assert free2
-    cr = s.post(
-        f"{API}/bookings",
-        json={
-            "court_id": "court-1",
-            "date": day,
-            "start_time": free2,
-            "duration_hours": 1,
-            "cpf": SMOKE_CPF,
-            "customer_name": "Promo Cycle29",
-            "whatsapp": "11999887766",
-            "your_team_name": "A",
-            "opponent_team_name": "B",
-            "promo_code": code_pct,
-        },
-        headers=_xff(),
-        timeout=15,
-    )
-    assert cr.status_code in (200, 201), cr.text
-    b = cr.json()
-    assert b.get("promo_code") == code_pct
-    assert float(b.get("discount") or 0) > 0
-    assert float(b["total"]) < float(b.get("original_total") or price)
-    assert float(b["total"]) >= 0
-    assert abs(float(b["deposit"]) - round(float(b["total"]) * 0.3, 2)) < 0.02
-    assert b.get("payment", {}).get("status") == "pending"  # PIX never auto-confirm
-    assert abs(float(b["payment"]["amount"]) - float(b["deposit"])) < 0.02
-
-    # used_count incremented
-    listed2 = admin_session.get(f"{API}/admin/promo-codes", timeout=10).json()["items"]
-    pct_row2 = next(x for x in listed2 if x["code"] == code_pct)
-    assert int(pct_row2["used_count"] or 0) >= 1
-
-    # max_uses=1: first booking claims, second rejected
-    free3 = [x["time"] for x in s.get(f"{API}/courts/availability", params={"court_id": "court-1", "date": day}, timeout=15, headers=_xff()).json().get("slots") or [] if x.get("status") == "available"]
-    assert len(free3) >= 2, "need 2 free slots for max_uses test"
-    b1 = s.post(
-        f"{API}/bookings",
-        json={
-            "court_id": "court-1",
-            "date": day,
-            "start_time": free3[0],
-            "duration_hours": 1,
-            "cpf": SMOKE_CPF,
-            "customer_name": "MaxUses One",
-            "whatsapp": "11999887766",
-            "your_team_name": "A",
-            "opponent_team_name": "B",
-            "promo_code": code_max,
-        },
-        headers=_xff(),
-        timeout=15,
-    )
-    assert b1.status_code in (200, 201), b1.text
-    b2 = s.post(
-        f"{API}/bookings",
-        json={
-            "court_id": "court-1",
-            "date": day,
-            "start_time": free3[1],
-            "duration_hours": 1,
-            "cpf": SMOKE_CPF,
-            "customer_name": "MaxUses Two",
-            "whatsapp": "11999887766",
-            "your_team_name": "A",
-            "opponent_team_name": "B",
-            "promo_code": code_max,
-        },
-        headers=_xff(),
-        timeout=15,
-    )
-    assert b2.status_code == 400, b2.text
-    # booking without promo should still work on that slot after failed promo? failed should not consume slot
-    # (locks released on ValueError before insert)
-    b3 = s.post(
-        f"{API}/bookings",
-        json={
-            "court_id": "court-1",
-            "date": day,
-            "start_time": free3[1],
-            "duration_hours": 1,
-            "cpf": SMOKE_CPF,
-            "customer_name": "No Promo",
-            "whatsapp": "11999887766",
-            "your_team_name": "A",
-            "opponent_team_name": "B",
-        },
-        headers=_xff(),
-        timeout=15,
-    )
-    assert b3.status_code in (200, 201), b3.text
-    assert not b3.json().get("promo_code")
-
-    # Audit rows for create/deactivate
-    ra = admin_session.get(f"{API}/admin/audit", params={"limit": 30, "action": "promo_create"}, timeout=10)
-    assert ra.status_code == 200
-    assert any(it.get("action") == "promo_create" for it in (ra.json().get("items") or []))
-    rd2 = admin_session.get(f"{API}/admin/audit", params={"limit": 10, "action": "promo_deactivate"}, timeout=10)
-    assert rd2.status_code == 200
-    assert any(it.get("action") == "promo_deactivate" for it in (rd2.json().get("items") or []))
+        # Audit rows for create/deactivate
+        ra = admin_session.get(f"{API}/admin/audit", params={"limit": 30, "action": "promo_create"}, timeout=10)
+        assert ra.status_code == 200
+        assert any(it.get("action") == "promo_create" for it in (ra.json().get("items") or []))
+        rd2 = admin_session.get(f"{API}/admin/audit", params={"limit": 10, "action": "promo_deactivate"}, timeout=10)
+        assert rd2.status_code == 200
+        assert any(it.get("action") == "promo_deactivate" for it in (rd2.json().get("items") or []))
+    finally:
+        for bid in created_ids:
+            _admin_cancel_quiet(admin_session, bid)
 
 
 def test_policy_texts_settings_roundtrip(admin_session, s):
@@ -2876,3 +2926,146 @@ def test_policy_texts_settings_roundtrip(admin_session, s):
         assert sset.resolve_policy_cancel({**patched, "policy_cancel": ""}) == ""
     finally:
         admin_session.put(f"{API}/admin/site-settings", json=original, timeout=10)
+
+def test_admin_revenue_report(admin_session, s):
+    """Cycle 31: revenue by day — paid/confirmed amounts; counts; CSV; auth."""
+    import uuid as _uuid
+    from pymongo import MongoClient
+
+    bare = requests.Session()
+    assert bare.get(f"{API}/admin/reports/revenue", timeout=10).status_code in (401, 403)
+
+    tag = _uuid.uuid4().hex[:6]
+    created = []
+    day_paid = None
+    day_cancel = None
+    day_pending = None
+
+    try:
+        # Find 3 isolated weekdays far ahead
+        days_found = []
+        for off in range(150, 280):
+            cand = (datetime.now(TZ) + timedelta(days=off)).strftime("%Y-%m-%d")
+            if datetime.strptime(cand, "%Y-%m-%d").weekday() >= 5:
+                continue
+            avail = s.get(
+                f"{API}/courts/availability",
+                params={"court_id": "court-1", "date": cand},
+                timeout=15,
+                headers=_xff(),
+            )
+            if avail.status_code != 200:
+                continue
+            free = [x["time"] for x in avail.json().get("slots") or [] if x.get("status") == "available"]
+            if free:
+                days_found.append((cand, free[0]))
+            if len(days_found) >= 3:
+                break
+        assert len(days_found) >= 3, "need 3 free weekdays for revenue report test"
+        day_paid, t_paid = days_found[0]
+        day_cancel, t_cancel = days_found[1]
+        day_pending, t_pending = days_found[2]
+
+        # Confirmed (counts as money)
+        r1 = admin_session.post(
+            f"{API}/admin/calendar/bookings",
+            json={
+                "date": day_paid,
+                "start_time": t_paid,
+                "customer_name": f"Rev Paid {tag}",
+                "whatsapp": "5511999007788",
+                "status": "confirmed",
+            },
+            timeout=15,
+        )
+        assert r1.status_code in (200, 201), r1.text
+        b1 = r1.json()
+        created.append(b1["id"])
+        deposit1 = float(b1.get("deposit") or 0)
+        assert deposit1 > 0
+        assert (b1.get("payment") or {}).get("status") == "paid"
+        assert b1.get("status") == "confirmed"
+
+        # Confirmed then cancelled (cancellation count; money rule excludes cancelled unless pay stays paid)
+        r2 = admin_session.post(
+            f"{API}/admin/calendar/bookings",
+            json={
+                "date": day_cancel,
+                "start_time": t_cancel,
+                "customer_name": f"Rev Cancel {tag}",
+                "whatsapp": "5511999007799",
+                "status": "confirmed",
+            },
+            timeout=15,
+        )
+        assert r2.status_code in (200, 201), r2.text
+        b2 = r2.json()
+        created.append(b2["id"])
+        rc = admin_session.post(f"{API}/admin/bookings/{b2['id']}/cancel", timeout=10)
+        assert rc.status_code == 200, rc.text
+
+        # Pending (not money)
+        r3 = admin_session.post(
+            f"{API}/admin/calendar/bookings",
+            json={
+                "date": day_pending,
+                "start_time": t_pending,
+                "customer_name": f"Rev Pending {tag}",
+                "whatsapp": "5511999007800",
+                "status": "pending",
+            },
+            timeout=15,
+        )
+        assert r3.status_code in (200, 201), r3.text
+        b3 = r3.json()
+        created.append(b3["id"])
+        assert (b3.get("payment") or {}).get("status") == "pending"
+
+        # Optional: apply discount via mongo on paid booking for discounts sum
+        mongo_url = os.environ.get("MONGO_URL", "mongodb://127.0.0.1:27017")
+        dbn = os.environ.get("DB_NAME", "arena_futsal")
+        client = MongoClient(mongo_url)
+        client[dbn].bookings.update_one(
+            {"id": b1["id"]},
+            {"$set": {"discount": 15.0, "original_total": float(b1.get("total") or 0) + 15.0}},
+        )
+        client.close()
+
+        d_from = min(day_paid, day_cancel, day_pending)
+        d_to = max(day_paid, day_cancel, day_pending)
+        rr = admin_session.get(
+            f"{API}/admin/reports/revenue",
+            params={"date_from": d_from, "date_to": d_to},
+            timeout=15,
+        )
+        assert rr.status_code == 200, rr.text
+        body = rr.json()
+        assert body["date_from"] == d_from and body["date_to"] == d_to
+        totals = body["totals"]
+        assert totals["bookings"] >= 3
+        assert totals["cancellations"] >= 1
+        assert totals["discounts"] >= 14.99
+        # Paid/confirmed money includes the paid booking; cancelled payment status is cancelled so not money
+        assert totals["revenue"] >= deposit1 - 0.01
+        assert totals["paid_count"] >= 1
+        by_d = {d["date"]: d for d in body["days"]}
+        assert day_paid in by_d
+        assert by_d[day_paid]["revenue"] >= deposit1 - 0.01
+        assert by_d[day_pending]["revenue"] == 0 or by_d[day_pending]["paid_count"] == 0
+
+        # CSV
+        csv_r = admin_session.get(
+            f"{API}/admin/reports/revenue.csv",
+            params={"date_from": d_from, "date_to": d_to},
+            timeout=15,
+        )
+        assert csv_r.status_code == 200, csv_r.text
+        assert "text/csv" in (csv_r.headers.get("content-type") or "")
+        text_csv = csv_r.content.decode("utf-8-sig")
+        assert "revenue" in text_csv.splitlines()[0]
+        assert day_paid in text_csv
+        assert "TOTAL" in text_csv
+    finally:
+        for bid in created:
+            _admin_cancel_quiet(admin_session, bid)
+

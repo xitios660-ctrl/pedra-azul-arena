@@ -112,4 +112,10 @@ export const ADMIN = {
   bookingsDateTo: "admin-bookings-date-to",
   bookingsSearch: "admin-bookings-search",
   bookingsEmpty: "admin-bookings-empty",
+  revenueTab: "admin-revenue-tab",
+  revenueDateFrom: "admin-revenue-date-from",
+  revenueDateTo: "admin-revenue-date-to",
+  revenueExport: "admin-revenue-export-csv",
+  revenueTotals: "admin-revenue-totals",
+  revenueTable: "admin-revenue-table",
 };

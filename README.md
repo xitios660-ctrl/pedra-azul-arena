@@ -256,3 +256,8 @@ Prod smoke: `GET /api/health`, `/api/courts`, `/api/site-settings`, WhatsApp `AG
 - Admin **Configurações**: textareas + toggle; landing accordion **Políticas**; booking link “Política de cancelamento” antes de confirmar.
 - Bot WA FAQ: intents `cancelamento` / `chuva` / `política` leem settings (sem inventar cobertura nem rua).
 
+## Cycle 31 notes
+- Promo tests isolados: dia útil longe + ≥3 slots livres + cancel cleanup (sem poluir `slot_locks`).
+- Relatório de faturamento admin: `GET /api/admin/reports/revenue?date_from=&date_to=` (soma calção paid/confirmed por dia; contagens reservas/cancel/no-show/descontos) + CSV `.../revenue.csv`.
+- Admin aba **Faturamento**: intervalo de datas, totais, tabela diária, export CSV. Usa só campos de pagamento já gravados (sem liquidação PIX inventada).
+

@@ -182,6 +182,7 @@ export default function AdminDashboard() {
             { id: "customers", label: "Clientes" },
             { id: "waitlist", label: "Lista de espera" },
             { id: "activity", label: "Atividade" },
+            { id: "revenue", label: "Faturamento" },
             { id: "settings", label: "Configurações" },
             { id: "tournaments", label: "Campeonatos" },
           ].map(t => (
@@ -226,6 +227,7 @@ export default function AdminDashboard() {
         )}
         {activeTab === "waitlist" && <WaitlistAdmin />}
         {activeTab === "activity" && <AuditActivityAdmin />}
+        {activeTab === "revenue" && <RevenueReportAdmin />}
         {activeTab === "settings" && (
           <div className="space-y-8">
             <SiteSettingsAdmin />
@@ -1441,6 +1443,188 @@ function formatAuditAt(iso) {
   } catch {
     return String(iso).slice(0, 16).replace("T", " ");
   }
+}
+
+function RevenueReportAdmin() {
+  const today = todayYmdSaoPaulo();
+  const defaultFrom = (() => {
+    try {
+      const d = new Date(`${today}T12:00:00`);
+      d.setDate(d.getDate() - 29);
+      return d.toISOString().slice(0, 10);
+    } catch (_) {
+      return today;
+    }
+  })();
+  const [dateFrom, setDateFrom] = useState(defaultFrom);
+  const [dateTo, setDateTo] = useState(today);
+  const [report, setReport] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [err, setErr] = useState("");
+
+  const load = async () => {
+    setLoading(true);
+    setErr("");
+    try {
+      const params = {};
+      if (dateFrom) params.date_from = dateFrom;
+      if (dateTo) params.date_to = dateTo;
+      const { data } = await api.get("/admin/reports/revenue", { params });
+      setReport(data);
+    } catch (e) {
+      setErr(e.response?.data?.detail || e.message || "Falha ao carregar faturamento");
+      setReport(null);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const exportCsv = async () => {
+    setExporting(true);
+    try {
+      const params = new URLSearchParams();
+      if (dateFrom) params.set("date_from", dateFrom);
+      if (dateTo) params.set("date_to", dateTo);
+      const qs = params.toString();
+      const url = `${API_BASE}/admin/reports/revenue.csv${qs ? `?${qs}` : ""}`;
+      const token = localStorage.getItem("arena_token");
+      const res = await fetch(url, {
+        credentials: "include",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `pedra-azul-faturamento-${dateFrom || "inicio"}_${dateTo || "fim"}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(a.href);
+    } catch (_) {
+      window.alert("Não foi possível exportar o CSV de faturamento.");
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const totals = report?.totals || {};
+  const days = report?.days || [];
+
+  return (
+    <div data-testid={ADMIN.revenueTab}>
+      <div className="flex flex-wrap items-end justify-between gap-3 mb-6">
+        <div>
+          <div className="text-[11px] tracking-[0.35em] uppercase text-[var(--brand)] mb-1">Relatório</div>
+          <h2 className="font-heading text-3xl sm:text-4xl uppercase italic">Faturamento</h2>
+          <p className="text-white/50 text-sm mt-1">
+            Soma de calções com pagamento confirmado (payment paid / reserva confirmada). Sem liquidação PIX inventada.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-3 items-end">
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.3em] text-white/40 block mb-1">De</label>
+            <input
+              data-testid={ADMIN.revenueDateFrom}
+              type="date"
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+              className="bg-black/40 border border-white/15 px-3 py-2 text-sm text-white focus:border-[var(--brand)] focus:outline-none"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.3em] text-white/40 block mb-1">Até</label>
+            <input
+              data-testid={ADMIN.revenueDateTo}
+              type="date"
+              value={dateTo}
+              onChange={(e) => setDateTo(e.target.value)}
+              className="bg-black/40 border border-white/15 px-3 py-2 text-sm text-white focus:border-[var(--brand)] focus:outline-none"
+            />
+          </div>
+          <button
+            type="button"
+            onClick={load}
+            disabled={loading}
+            className="px-4 py-2 border border-[var(--brand)]/50 text-[var(--brand)] font-heading uppercase text-xs tracking-[0.2em] hover:bg-[var(--brand)]/10 disabled:opacity-50"
+          >
+            {loading ? "…" : "Atualizar"}
+          </button>
+          <button
+            type="button"
+            data-testid={ADMIN.revenueExport}
+            onClick={exportCsv}
+            disabled={exporting}
+            className="px-4 py-2 bg-[var(--brand)] text-black font-heading uppercase text-xs tracking-[0.2em] flex items-center gap-2 disabled:opacity-50"
+          >
+            <Download className="w-3.5 h-3.5" />
+            {exporting ? "Exportando…" : "Exportar CSV"}
+          </button>
+        </div>
+      </div>
+
+      {err && (
+        <div className="mb-4 text-sm text-[var(--danger)] border border-[var(--danger)]/40 bg-[var(--danger)]/10 px-4 py-3">
+          {err}
+        </div>
+      )}
+
+      <div data-testid={ADMIN.revenueTotals} className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4 mb-8">
+        <KPI icon={<DollarSign className="w-4 h-4 text-[var(--brand)]" />} label="Receita (calção)" value={fmtBRL(totals.revenue)} />
+        <KPI icon={<CheckCircle2 className="w-4 h-4 text-[var(--success)]" />} label="Pagos / confirmados" value={totals.paid_count ?? 0} accent="var(--success)" />
+        <KPI icon={<Ticket className="w-4 h-4 text-[var(--brand)]" />} label="Reservas" value={totals.bookings ?? 0} />
+        <KPI icon={<X className="w-4 h-4 text-[var(--danger)]" />} label="Cancelamentos" value={totals.cancellations ?? 0} accent="var(--danger)" />
+        <KPI icon={<AlertCircle className="w-4 h-4 text-[var(--warning)]" />} label="No-shows" value={totals.no_shows ?? 0} accent="var(--warning)" />
+        <KPI icon={<BarChart3 className="w-4 h-4 text-[var(--brand)]" />} label="Descontos dados" value={fmtBRL(totals.discounts)} />
+      </div>
+
+      <div className="glass p-4 overflow-x-auto" data-testid={ADMIN.revenueTable}>
+        <div className="text-[11px] uppercase tracking-[0.35em] text-[var(--brand)] mb-3 flex items-center gap-2">
+          <BarChart3 className="w-4 h-4" /> Por dia
+        </div>
+        {loading && !report ? (
+          <div className="text-white/40 text-sm py-8">Carregando…</div>
+        ) : days.length === 0 ? (
+          <div className="text-white/40 text-sm py-8">Sem dados no período.</div>
+        ) : (
+          <table className="w-full text-sm min-w-[640px]">
+            <thead>
+              <tr className="text-[10px] uppercase tracking-[0.25em] text-white/40 border-b border-white/10">
+                <th className="text-left py-2 pr-3 font-normal">Data</th>
+                <th className="text-right py-2 px-2 font-normal">Receita</th>
+                <th className="text-right py-2 px-2 font-normal">Pagos</th>
+                <th className="text-right py-2 px-2 font-normal">Reservas</th>
+                <th className="text-right py-2 px-2 font-normal">Cancel.</th>
+                <th className="text-right py-2 px-2 font-normal">No-show</th>
+                <th className="text-right py-2 pl-2 font-normal">Descontos</th>
+              </tr>
+            </thead>
+            <tbody>
+              {days.map((d) => (
+                <tr key={d.date} className="border-b border-white/5 hover:bg-white/[0.03]">
+                  <td className="py-2 pr-3 font-mono text-white/80">
+                    {d.date?.slice(8, 10)}/{d.date?.slice(5, 7)}/{d.date?.slice(0, 4)}
+                  </td>
+                  <td className="py-2 px-2 text-right text-[var(--brand)]">{fmtBRL(d.revenue)}</td>
+                  <td className="py-2 px-2 text-right text-white/70">{d.paid_count}</td>
+                  <td className="py-2 px-2 text-right text-white/70">{d.bookings}</td>
+                  <td className="py-2 px-2 text-right text-white/70">{d.cancellations}</td>
+                  <td className="py-2 px-2 text-right text-white/70">{d.no_shows}</td>
+                  <td className="py-2 pl-2 text-right text-white/60">{fmtBRL(d.discounts)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function AuditActivityAdmin() {
