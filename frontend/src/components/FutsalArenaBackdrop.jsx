@@ -390,7 +390,7 @@ export default function FutsalArenaBackdrop({
           />
           <canvas
             ref={canvasRef}
-            className="absolute inset-0 w-full h-full opacity-80 mix-blend-screen pointer-events-none"
+            className="absolute inset-0 w-full h-full opacity-95 mix-blend-screen pointer-events-none"
             aria-hidden="true"
           />
         </>
