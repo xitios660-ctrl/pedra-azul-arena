@@ -226,7 +226,12 @@ export default function AdminDashboard() {
         )}
         {activeTab === "waitlist" && <WaitlistAdmin />}
         {activeTab === "activity" && <AuditActivityAdmin />}
-        {activeTab === "settings" && <SiteSettingsAdmin />}
+        {activeTab === "settings" && (
+          <div className="space-y-8">
+            <SiteSettingsAdmin />
+            <PromoCodesAdmin />
+          </div>
+        )}
         {activeTab === "tournaments" && (
           <TournamentsAdmin tournaments={tournaments} selected={selectedTour} setSelected={setSelectedTour} onUpdated={refresh} />
         )}
@@ -1398,6 +1403,8 @@ const AUDIT_ACTION_LABELS = {
   day_unblock: "Dia desbloqueado",
   range_block: "Período bloqueado",
   settings_save: "Configurações",
+  promo_create: "Cupom criado",
+  promo_deactivate: "Cupom desativado",
   whatsapp_disconnect: "WhatsApp desconectado",
   waitlist_remove: "Lista de espera",
 };
@@ -1410,6 +1417,8 @@ const AUDIT_FILTER_CHIPS = [
   { id: "booking_create", label: "Criações" },
   { id: "day_block", label: "Bloqueios" },
   { id: "settings_save", label: "Config." },
+  { id: "promo_create", label: "Cupom" },
+  { id: "promo_deactivate", label: "Cupom off" },
   { id: "whatsapp_disconnect", label: "WhatsApp" },
   { id: "booking_check_in", label: "Check-in" },
   { id: "booking_no_show", label: "No-show" },
@@ -2012,6 +2021,212 @@ function SiteSettingsAdmin() {
         Salvar
       </button>
     </form>
+  );
+}
+
+function PromoCodesAdmin() {
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState("");
+  const [ok, setOk] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [form, setForm] = useState({
+    code: "",
+    type: "percent",
+    value: "10",
+    max_uses: "",
+    expires_at: "",
+  });
+
+  const load = async () => {
+    setLoading(true); setErr("");
+    try {
+      const { data } = await api.get("/admin/promo-codes");
+      setItems(data.items || []);
+    } catch (e) {
+      setErr(e.response?.data?.detail || e.message);
+      setItems([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+
+  const create = async (e) => {
+    e.preventDefault();
+    setBusy(true); setErr(""); setOk("");
+    try {
+      const payload = {
+        code: String(form.code || "").trim().toUpperCase(),
+        type: form.type,
+        value: Number(form.value),
+        max_uses: form.max_uses === "" || form.max_uses == null ? null : Number(form.max_uses),
+        expires_at: form.expires_at || null,
+        active: true,
+      };
+      await api.post("/admin/promo-codes", payload);
+      setOk(`Cupom ${payload.code} criado.`);
+      setForm({ code: "", type: form.type, value: form.type === "percent" ? "10" : "20", max_uses: "", expires_at: "" });
+      await load();
+    } catch (e) {
+      setErr(e.response?.data?.detail || e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const deactivate = async (id, code) => {
+    if (!window.confirm(`Desativar cupom ${code}?`)) return;
+    try {
+      await api.post(`/admin/promo-codes/${id}/deactivate`);
+      await load();
+    } catch (e) {
+      window.alert(e.response?.data?.detail || e.message);
+    }
+  };
+
+  const typeLabel = (t) => (t === "percent" ? "%" : "R$ fixo");
+
+  return (
+    <div data-testid="admin-promo-codes" className="glass p-5 sm:p-6 space-y-5">
+      <div>
+        <div className="text-[11px] tracking-[0.35em] uppercase text-[var(--brand)]">// Cupons</div>
+        <h2 className="font-heading text-3xl sm:text-4xl uppercase italic">Cupons de desconto</h2>
+        <p className="text-white/55 text-sm mt-1">Código no checkout · percentual ou valor fixo · limite de usos e validade opcionais.</p>
+      </div>
+
+      <form onSubmit={create} className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3 items-end" data-testid="admin-promo-create-form">
+        <label className="block">
+          <div className="text-[10px] uppercase tracking-[0.25em] text-white/50 mb-1">Código</div>
+          <input
+            data-testid="admin-promo-code"
+            className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 min-h-[44px] uppercase"
+            value={form.code}
+            onChange={(e) => set("code", e.target.value.toUpperCase())}
+            placeholder="COPA10"
+            required
+            maxLength={32}
+          />
+        </label>
+        <label className="block">
+          <div className="text-[10px] uppercase tracking-[0.25em] text-white/50 mb-1">Tipo</div>
+          <select
+            data-testid="admin-promo-type"
+            className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 min-h-[44px]"
+            value={form.type}
+            onChange={(e) => set("type", e.target.value)}
+          >
+            <option value="percent">Percentual (%)</option>
+            <option value="fixed">Valor fixo (R$)</option>
+          </select>
+        </label>
+        <label className="block">
+          <div className="text-[10px] uppercase tracking-[0.25em] text-white/50 mb-1">Valor</div>
+          <input
+            data-testid="admin-promo-value"
+            type="number"
+            min="0.01"
+            step="0.01"
+            className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 min-h-[44px]"
+            value={form.value}
+            onChange={(e) => set("value", e.target.value)}
+            required
+          />
+        </label>
+        <label className="block">
+          <div className="text-[10px] uppercase tracking-[0.25em] text-white/50 mb-1">Máx. usos (opcional)</div>
+          <input
+            data-testid="admin-promo-max-uses"
+            type="number"
+            min="1"
+            className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 min-h-[44px]"
+            value={form.max_uses}
+            onChange={(e) => set("max_uses", e.target.value)}
+            placeholder="Ilimitado"
+          />
+        </label>
+        <label className="block">
+          <div className="text-[10px] uppercase tracking-[0.25em] text-white/50 mb-1">Validade (opcional)</div>
+          <input
+            data-testid="admin-promo-expires"
+            type="date"
+            className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 min-h-[44px]"
+            value={form.expires_at}
+            onChange={(e) => set("expires_at", e.target.value)}
+          />
+        </label>
+        <button
+          type="submit"
+          disabled={busy}
+          data-testid="admin-promo-create"
+          className="btn-neon min-h-[44px] justify-center"
+        >
+          {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : "Criar cupom"}
+        </button>
+      </form>
+
+      {err && <div className="text-[var(--danger)] text-sm" role="alert">{err}</div>}
+      {ok && <div className="text-[var(--success)] text-sm">{ok}</div>}
+
+      {loading ? (
+        <div className="text-white/50 py-6">Carregando cupons…</div>
+      ) : items.length === 0 ? (
+        <div className="text-white/50 py-6 text-center" data-testid="admin-promo-empty">Nenhum cupom ainda.</div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm min-w-[640px]">
+            <thead>
+              <tr className="text-left text-[10px] uppercase tracking-[0.2em] text-white/45 border-b border-white/10">
+                <th className="py-2 pr-3">Código</th>
+                <th className="py-2 pr-3">Tipo</th>
+                <th className="py-2 pr-3">Valor</th>
+                <th className="py-2 pr-3">Usos</th>
+                <th className="py-2 pr-3">Validade</th>
+                <th className="py-2 pr-3">Status</th>
+                <th className="py-2"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((p) => (
+                <tr key={p.id} data-testid={`admin-promo-row-${p.code}`} className="border-b border-white/5">
+                  <td className="py-3 pr-3 font-heading text-lg tracking-wider">{p.code}</td>
+                  <td className="py-3 pr-3">{typeLabel(p.type)}</td>
+                  <td className="py-3 pr-3">
+                    {p.type === "percent" ? `${p.value}%` : fmtBRL(p.value)}
+                  </td>
+                  <td className="py-3 pr-3 text-white/70">
+                    {p.used_count || 0}{p.max_uses != null ? ` / ${p.max_uses}` : " / ∞"}
+                  </td>
+                  <td className="py-3 pr-3 text-white/50 text-xs">
+                    {p.expires_at ? String(p.expires_at).slice(0, 10) : "—"}
+                  </td>
+                  <td className="py-3 pr-3">
+                    <span className={p.active ? "text-[var(--success)]" : "text-white/40"}>
+                      {p.active ? "Ativo" : "Inativo"}
+                    </span>
+                  </td>
+                  <td className="py-3 text-right">
+                    {p.active && (
+                      <button
+                        type="button"
+                        data-testid={`admin-promo-deactivate-${p.code}`}
+                        className="btn-ghost !py-1.5 !px-3 !text-xs"
+                        onClick={() => deactivate(p.id, p.code)}
+                      >
+                        Desativar
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
   );
 }
 

@@ -52,6 +52,7 @@ import site_settings as sset
 from site_settings import SiteSettingsUpdate
 import waitlist_service as wls
 import audit_log
+import promo_codes as promo_svc
 
 # -----------------------------------------------------------------------------
 # Setup
@@ -203,6 +204,7 @@ class BookingCreate(BaseModel):
     opponent_team_name: str = Field(min_length=1, max_length=60)
     your_team_crest: Optional[str] = None         # URL (uploaded) or emoji
     opponent_team_crest: Optional[str] = None
+    promo_code: Optional[str] = Field(default=None, max_length=32)
 
 
 class RecurringBookingCreate(BookingCreate):
@@ -222,6 +224,21 @@ class RecurringPreviewIn(BaseModel):
 class SeriesCancelIn(BaseModel):
     cpf: str
     from_date: Optional[str] = None  # default: today local
+
+
+class PromoValidateIn(BaseModel):
+    code: str = Field(min_length=1, max_length=32)
+    date: Optional[str] = None
+    hours: Optional[float] = Field(default=None, ge=0.5, le=3)
+
+
+class PromoCreateIn(BaseModel):
+    code: str = Field(min_length=2, max_length=32)
+    type: Literal["percent", "fixed"]
+    value: float = Field(gt=0)
+    max_uses: Optional[int] = Field(default=None, ge=1)
+    expires_at: Optional[str] = None
+    active: bool = True
 
 
 class LookupIn(BaseModel):
@@ -532,6 +549,7 @@ async def create_booking(payload: BookingCreate, request: Request):
             duration_hours=payload.duration_hours,
             source="web",
             status="pending",
+            promo_code=payload.promo_code,
         )
     except DuplicateKeyError:
         raise HTTPException(status_code=409, detail="Horário já reservado")
@@ -618,6 +636,7 @@ async def create_recurring_bookings(payload: RecurringBookingCreate, request: Re
             duration_hours=payload.duration_hours,
             source="web",
             status="pending",
+            promo_code=payload.promo_code,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -2355,6 +2374,70 @@ async def admin_cancel_series_future(series_id: str, admin: dict = Depends(requi
     return out
 
 
+
+# =============================================================================
+# PROMO CODES (Cycle 29) — public validate + admin CRUD
+# =============================================================================
+@api.post("/promo/validate")
+async def promo_validate(payload: PromoValidateIn, request: Request):
+    """Preview discount for a code — does not claim / increment used_count."""
+    _rate_limit_booking(request)
+    try:
+        hours = payload.hours if payload.hours is not None else 1.0
+        subtotal = await promo_svc.estimate_subtotal(db, date=payload.date, hours=hours)
+        return await promo_svc.validate_preview(db, code=payload.code, subtotal=subtotal)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@api.get("/admin/promo-codes")
+async def admin_list_promos(admin: dict = Depends(require_admin)):
+    items = await promo_svc.list_promos(db)
+    return {"items": items, "count": len(items)}
+
+
+@api.post("/admin/promo-codes")
+async def admin_create_promo(payload: PromoCreateIn, admin: dict = Depends(require_admin)):
+    try:
+        doc = await promo_svc.create_promo(
+            db,
+            code=payload.code,
+            type=payload.type,
+            value=payload.value,
+            max_uses=payload.max_uses,
+            expires_at=payload.expires_at,
+            active=payload.active,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    await audit_log.audit(
+        db, admin, "promo_create",
+        entity_type="promo_code",
+        entity_id=doc.get("id"),
+        summary=f"Cupom {doc.get('code')} criado",
+        meta={"code": doc.get("code"), "type": doc.get("type"), "value": doc.get("value")},
+    )
+    return doc
+
+
+@api.post("/admin/promo-codes/{promo_id}/deactivate")
+async def admin_deactivate_promo(promo_id: str, admin: dict = Depends(require_admin)):
+    try:
+        doc = await promo_svc.deactivate_promo(db, promo_id)
+    except ValueError as e:
+        msg = str(e)
+        code = 404 if "não encontrado" in msg else 400
+        raise HTTPException(status_code=code, detail=msg)
+    await audit_log.audit(
+        db, admin, "promo_deactivate",
+        entity_type="promo_code",
+        entity_id=doc.get("id"),
+        summary=f"Cupom {doc.get('code')} desativado",
+        meta={"code": doc.get("code")},
+    )
+    return doc
+
+
 # =============================================================================
 # ADMIN — Audit log (Cycle 28)
 # =============================================================================
@@ -2632,6 +2715,7 @@ async def startup():
     await daily_metrics.ensure_indexes(db)
     await wls.ensure_indexes(db)
     await audit_log.ensure_indexes(db)
+    await promo_svc.ensure_indexes(db)
     logger.info("Arena Futsal Premium API initialized (CPF + WA bot + calendar)")
 
     # Cycle 18: lightweight localhost WA sidecar self-ping (optional).

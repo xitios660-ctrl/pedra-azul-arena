@@ -436,6 +436,7 @@ async def create_booking_atomic(
     status: str = "pending",
     payment_status: Optional[str] = None,
     series_id: Optional[str] = None,
+    promo_code: Optional[str] = None,
 ) -> dict[str, Any]:
     """Insert one booking spanning N consecutive slots + unique slot_locks.
 
@@ -483,7 +484,42 @@ async def create_booking_atomic(
 
     # Price = hours × applicable hourly (weekend-aware via get_runtime / wall-clock)
     bill_hours = dur / 60.0
-    total = float(court["price_per_hour"]) * bill_hours
+    original_total = round(float(court["price_per_hour"]) * bill_hours, 2)
+    total = original_total
+    discount = 0.0
+    applied_promo = None
+    claimed_promo_code = None
+
+    # Optional promo: claim atomically after locks so we can roll back cleanly
+    booking_id = str(uuid.uuid4())
+    primary_sk = slot_key(court_id, date, start_time)
+    end_t = end_time_for(start_time, dur)
+
+    # Lock all covered slots first (unique) — then claim promo + insert booking
+    slot_keys = await acquire_slot_locks(
+        db,
+        booking_id=booking_id,
+        court_id=court_id,
+        date=date,
+        times=covered,
+    )
+
+    if promo_code and str(promo_code).strip():
+        import promo_codes as promo_svc
+        try:
+            claimed = await promo_svc.claim_promo(db, promo_code)
+            claimed_promo_code = claimed.get("code")
+            priced = promo_svc.compute_discount(original_total, claimed)
+            total = float(priced["total"])
+            discount = float(priced["discount"])
+            applied_promo = claimed_promo_code
+        except ValueError:
+            await release_slot_locks(db, booking_id)
+            raise
+        except Exception:
+            await release_slot_locks(db, booking_id)
+            raise
+
     deposit = round(total * DEPOSIT_RATE, 2)
     pay_status = payment_status or ("paid" if status == "confirmed" and source == "whatsapp" else "pending")
 
@@ -494,19 +530,6 @@ async def create_booking_atomic(
         "pix_key": settings.get("pix_key"),
         "amount": deposit,
     }
-
-    booking_id = str(uuid.uuid4())
-    primary_sk = slot_key(court_id, date, start_time)
-    end_t = end_time_for(start_time, dur)
-
-    # Lock all covered slots first (unique) — then insert booking
-    slot_keys = await acquire_slot_locks(
-        db,
-        booking_id=booking_id,
-        court_id=court_id,
-        date=date,
-        times=covered,
-    )
 
     booking = {
         "id": booking_id,
@@ -526,6 +549,9 @@ async def create_booking_atomic(
         "your_team_crest": your_team_crest,
         "opponent_team_crest": opponent_team_crest,
         "total": total,
+        "original_total": original_total,
+        "discount": discount,
+        "promo_code": applied_promo,
         "deposit": deposit,
         "status": status,
         "source": source,
@@ -558,9 +584,15 @@ async def create_booking_atomic(
         await db.bookings.insert_one(booking)
     except DuplicateKeyError:
         await release_slot_locks(db, booking_id)
+        if claimed_promo_code:
+            import promo_codes as promo_svc
+            await promo_svc.release_claim(db, claimed_promo_code)
         raise
     except Exception:
         await release_slot_locks(db, booking_id)
+        if claimed_promo_code:
+            import promo_codes as promo_svc
+            await promo_svc.release_claim(db, claimed_promo_code)
         raise
     booking.pop("_id", None)
     return booking
@@ -1094,6 +1126,7 @@ async def create_recurring_bookings(
     source: str = "web",
     status: str = "pending",
     payment_status: Optional[str] = None,
+    promo_code: Optional[str] = None,
 ) -> dict[str, Any]:
     """Create up to N weekly bookings; skip conflicts; partial success OK.
 
@@ -1106,8 +1139,11 @@ async def create_recurring_bookings(
     created: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
 
+    promo_applied = False
     for d in dates:
         try:
+            # Apply promo once on first successful occurrence (one use)
+            use_promo = promo_code if (promo_code and not promo_applied) else None
             booking = await create_booking_atomic(
                 db,
                 court_id=court_id,
@@ -1127,7 +1163,10 @@ async def create_recurring_bookings(
                 status=status,
                 payment_status=payment_status,
                 series_id=series_id,
+                promo_code=use_promo,
             )
+            if use_promo and booking.get("promo_code"):
+                promo_applied = True
             created.append(booking)
         except DuplicateKeyError:
             skipped.append({"date": d, "start_time": start_time, "reason": "Horário já reservado"})

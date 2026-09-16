@@ -243,3 +243,9 @@ Prod smoke: `GET /api/health`, `/api/courts`, `/api/site-settings`, WhatsApp `AG
 - Helper `audit_log.audit` best-effort nas mutações admin (PIX confirm/reject, cancel, create, block/unblock, settings, WhatsApp disconnect, no-show, check-in, waitlist remove, reschedule).
 - `GET /api/admin/audit?limit=&action=` (admin JWT, mais recentes primeiro); aba **Atividade** com filtros.
 - Índice `at` descendente; sem auto-delete.
+
+## Cycle 29 notes
+- Cupons de desconto (`promo_codes`): percentual ou valor fixo; `active`, `max_uses`, `used_count`, `expires_at`.
+- Admin: listar / criar / desativar em **Configurações → Cupons**; audit `promo_create` / `promo_deactivate`.
+- Público: `POST /api/promo/validate` (preview, sem consumir uso). Reserva aceita `promo_code`; claim atômico; `discount` + `promo_code` na booking; total/PIX após desconto (nunca negativo).
+- UI Booking: campo Cupom + Aplicar; mostra preço antigo/novo.

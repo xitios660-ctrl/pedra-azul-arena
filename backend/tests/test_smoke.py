@@ -1216,9 +1216,9 @@ def test_admin_no_show_rules(admin_session, s):
 
     # Past confirmed: create future then backdate via Mongo
     r2 = None
-    for day_off in (26, 27, 28):
+    for day_off in range(26, 60):
         day = (datetime.now(TZ) + timedelta(days=day_off)).strftime("%Y-%m-%d")
-        for start in ("17:00", "18:00", "19:00"):
+        for start in ("17:00", "18:00", "19:00", "20:00", "21:00"):
             r2 = admin_session.post(
                 f"{API}/admin/calendar/bookings",
                 json={
@@ -2566,3 +2566,252 @@ def test_audit_helper_strips_secrets_unit():
     assert "password" not in cleaned
     assert "access_token" not in cleaned
     assert "jwt_secret" not in cleaned
+
+
+def test_promo_discount_math_unit():
+    """Cycle 29: percent/fixed discount never negative."""
+    import sys
+    from pathlib import Path as P
+    root = P(__file__).resolve().parents[1]
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    import promo_codes as pc
+
+    p = pc.compute_discount(100.0, {"code": "P10", "type": "percent", "value": 10})
+    assert p["discount"] == 10.0 and p["total"] == 90.0
+    p2 = pc.compute_discount(100.0, {"code": "F30", "type": "fixed", "value": 30})
+    assert p2["discount"] == 30.0 and p2["total"] == 70.0
+    p3 = pc.compute_discount(20.0, {"code": "BIG", "type": "fixed", "value": 50})
+    assert p3["discount"] == 20.0 and p3["total"] == 0.0
+    p4 = pc.compute_discount(80.0, {"code": "ALL", "type": "percent", "value": 100})
+    assert p4["discount"] == 80.0 and p4["total"] == 0.0
+
+
+def test_promo_codes_validate_and_booking(admin_session, s):
+    """Cycle 29: create/validate percent+fixed; reject expired/inactive; max_uses; booking discount."""
+    import uuid as _uuid
+
+    suffix = _uuid.uuid4().hex[:6].upper()
+    code_pct = f"PCT{suffix}"
+    code_fix = f"FIX{suffix}"
+    code_max = f"MAX{suffix}"
+    code_exp = f"EXP{suffix}"
+    code_off = f"OFF{suffix}"
+
+    # Auth required for admin list
+    bare = requests.Session()
+    assert bare.get(f"{API}/admin/promo-codes", timeout=10).status_code in (401, 403)
+
+    r1 = admin_session.post(
+        f"{API}/admin/promo-codes",
+        json={"code": code_pct, "type": "percent", "value": 10, "max_uses": 50},
+        timeout=10,
+    )
+    assert r1.status_code == 200, r1.text
+    assert r1.json()["code"] == code_pct
+    assert r1.json()["type"] == "percent"
+
+    r2 = admin_session.post(
+        f"{API}/admin/promo-codes",
+        json={"code": code_fix, "type": "fixed", "value": 25},
+        timeout=10,
+    )
+    assert r2.status_code == 200, r2.text
+
+    r3 = admin_session.post(
+        f"{API}/admin/promo-codes",
+        json={"code": code_max, "type": "percent", "value": 5, "max_uses": 1},
+        timeout=10,
+    )
+    assert r3.status_code == 200, r3.text
+
+    # Expired
+    r4 = admin_session.post(
+        f"{API}/admin/promo-codes",
+        json={"code": code_exp, "type": "fixed", "value": 10, "expires_at": "2020-01-01"},
+        timeout=10,
+    )
+    assert r4.status_code == 200, r4.text
+
+    # Inactive via deactivate
+    r5 = admin_session.post(
+        f"{API}/admin/promo-codes",
+        json={"code": code_off, "type": "percent", "value": 15},
+        timeout=10,
+    )
+    assert r5.status_code == 200, r5.text
+    off_id = r5.json()["id"]
+    rd = admin_session.post(f"{API}/admin/promo-codes/{off_id}/deactivate", timeout=10)
+    assert rd.status_code == 200, rd.text
+    assert rd.json()["active"] is False
+
+    # List
+    rl = admin_session.get(f"{API}/admin/promo-codes", timeout=10)
+    assert rl.status_code == 200
+    codes = {x["code"] for x in rl.json().get("items") or []}
+    assert code_pct in codes and code_fix in codes
+
+    # Need a free slot + know price
+    day = None
+    start = None
+    price = None
+    for off in range(45, 100):
+        cand = (datetime.now(TZ) + timedelta(days=off)).strftime("%Y-%m-%d")
+        if datetime.strptime(cand, "%Y-%m-%d").weekday() >= 5:
+            continue
+        avail = s.get(
+            f"{API}/courts/availability",
+            params={"court_id": "court-1", "date": cand},
+            timeout=15,
+            headers=_xff(),
+        )
+        if avail.status_code != 200:
+            continue
+        body = avail.json()
+        price = float(body.get("settings", {}).get("effective_price_per_hour") or body.get("court", {}).get("price_per_hour") or 0)
+        free = [x["time"] for x in body.get("slots") or [] if x.get("status") == "available"]
+        if free and price > 0:
+            day, start = cand, free[0]
+            break
+    assert day and start and price, "no free weekday slot for promo test"
+
+    # Validate percent preview
+    v1 = s.post(
+        f"{API}/promo/validate",
+        json={"code": code_pct, "date": day, "hours": 1},
+        headers=_xff(),
+        timeout=10,
+    )
+    assert v1.status_code == 200, v1.text
+    pv = v1.json()
+    assert pv["valid"] is True
+    assert abs(pv["discount"] - round(price * 0.10, 2)) < 0.02
+    assert abs(pv["total"] - round(price - pv["discount"], 2)) < 0.02
+    # used_count not claimed yet
+    listed = admin_session.get(f"{API}/admin/promo-codes", timeout=10).json()["items"]
+    pct_row = next(x for x in listed if x["code"] == code_pct)
+    assert int(pct_row["used_count"] or 0) == 0
+
+    # Fixed preview
+    v2 = s.post(
+        f"{API}/promo/validate",
+        json={"code": code_fix.lower(), "date": day, "hours": 1},
+        headers=_xff(),
+        timeout=10,
+    )
+    assert v2.status_code == 200, v2.text
+    assert abs(v2.json()["discount"] - min(25.0, price)) < 0.02
+
+    # Reject expired / inactive
+    ve = s.post(f"{API}/promo/validate", json={"code": code_exp, "date": day, "hours": 1}, headers=_xff(), timeout=10)
+    assert ve.status_code == 400, ve.text
+    assert "expir" in (ve.json().get("detail") or "").lower()
+
+    vi = s.post(f"{API}/promo/validate", json={"code": code_off, "date": day, "hours": 1}, headers=_xff(), timeout=10)
+    assert vi.status_code == 400, vi.text
+
+    # Booking with percent promo
+    free2 = None
+    for t in [x["time"] for x in s.get(f"{API}/courts/availability", params={"court_id": "court-1", "date": day}, timeout=15, headers=_xff()).json().get("slots") or [] if x.get("status") == "available"]:
+        free2 = t
+        break
+    assert free2
+    cr = s.post(
+        f"{API}/bookings",
+        json={
+            "court_id": "court-1",
+            "date": day,
+            "start_time": free2,
+            "duration_hours": 1,
+            "cpf": SMOKE_CPF,
+            "customer_name": "Promo Cycle29",
+            "whatsapp": "11999887766",
+            "your_team_name": "A",
+            "opponent_team_name": "B",
+            "promo_code": code_pct,
+        },
+        headers=_xff(),
+        timeout=15,
+    )
+    assert cr.status_code in (200, 201), cr.text
+    b = cr.json()
+    assert b.get("promo_code") == code_pct
+    assert float(b.get("discount") or 0) > 0
+    assert float(b["total"]) < float(b.get("original_total") or price)
+    assert float(b["total"]) >= 0
+    assert abs(float(b["deposit"]) - round(float(b["total"]) * 0.3, 2)) < 0.02
+    assert b.get("payment", {}).get("status") == "pending"  # PIX never auto-confirm
+    assert abs(float(b["payment"]["amount"]) - float(b["deposit"])) < 0.02
+
+    # used_count incremented
+    listed2 = admin_session.get(f"{API}/admin/promo-codes", timeout=10).json()["items"]
+    pct_row2 = next(x for x in listed2 if x["code"] == code_pct)
+    assert int(pct_row2["used_count"] or 0) >= 1
+
+    # max_uses=1: first booking claims, second rejected
+    free3 = [x["time"] for x in s.get(f"{API}/courts/availability", params={"court_id": "court-1", "date": day}, timeout=15, headers=_xff()).json().get("slots") or [] if x.get("status") == "available"]
+    assert len(free3) >= 2, "need 2 free slots for max_uses test"
+    b1 = s.post(
+        f"{API}/bookings",
+        json={
+            "court_id": "court-1",
+            "date": day,
+            "start_time": free3[0],
+            "duration_hours": 1,
+            "cpf": SMOKE_CPF,
+            "customer_name": "MaxUses One",
+            "whatsapp": "11999887766",
+            "your_team_name": "A",
+            "opponent_team_name": "B",
+            "promo_code": code_max,
+        },
+        headers=_xff(),
+        timeout=15,
+    )
+    assert b1.status_code in (200, 201), b1.text
+    b2 = s.post(
+        f"{API}/bookings",
+        json={
+            "court_id": "court-1",
+            "date": day,
+            "start_time": free3[1],
+            "duration_hours": 1,
+            "cpf": SMOKE_CPF,
+            "customer_name": "MaxUses Two",
+            "whatsapp": "11999887766",
+            "your_team_name": "A",
+            "opponent_team_name": "B",
+            "promo_code": code_max,
+        },
+        headers=_xff(),
+        timeout=15,
+    )
+    assert b2.status_code == 400, b2.text
+    # booking without promo should still work on that slot after failed promo? failed should not consume slot
+    # (locks released on ValueError before insert)
+    b3 = s.post(
+        f"{API}/bookings",
+        json={
+            "court_id": "court-1",
+            "date": day,
+            "start_time": free3[1],
+            "duration_hours": 1,
+            "cpf": SMOKE_CPF,
+            "customer_name": "No Promo",
+            "whatsapp": "11999887766",
+            "your_team_name": "A",
+            "opponent_team_name": "B",
+        },
+        headers=_xff(),
+        timeout=15,
+    )
+    assert b3.status_code in (200, 201), b3.text
+    assert not b3.json().get("promo_code")
+
+    # Audit rows for create/deactivate
+    ra = admin_session.get(f"{API}/admin/audit", params={"limit": 30, "action": "promo_create"}, timeout=10)
+    assert ra.status_code == 200
+    assert any(it.get("action") == "promo_create" for it in (ra.json().get("items") or []))
+    rd2 = admin_session.get(f"{API}/admin/audit", params={"limit": 10, "action": "promo_deactivate"}, timeout=10)
+    assert rd2.status_code == 200
+    assert any(it.get("action") == "promo_deactivate" for it in (rd2.json().get("items") or []))

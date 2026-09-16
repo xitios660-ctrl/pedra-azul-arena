@@ -105,6 +105,10 @@ export default function Booking() {
   const [oppCrest, setOppCrest] = useState("🔥");
   const [uploadingCrest, setUploadingCrest] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [promoInput, setPromoInput] = useState("");
+  const [promoApplied, setPromoApplied] = useState(null); // { code, discount, total, original_total, ... }
+  const [promoBusy, setPromoBusy] = useState(false);
+  const [promoErr, setPromoErr] = useState("");
 
   const [booking, setBooking] = useState(null);
   const [err, setErr] = useState("");
@@ -241,6 +245,37 @@ export default function Booking() {
     }
   };
 
+
+  const applyPromo = async () => {
+    setPromoErr("");
+    const code = (promoInput || "").trim().toUpperCase();
+    if (!code) {
+      setPromoErr("Informe o cupom.");
+      return;
+    }
+    setPromoBusy(true);
+    try {
+      const { data } = await api.post("/promo/validate", {
+        code,
+        date,
+        hours: durationHours || 1,
+      });
+      setPromoApplied(data);
+      setPromoInput(data.code || code);
+    } catch (e) {
+      setPromoApplied(null);
+      setPromoErr(formatApiErrorDetail(e.response?.data?.detail) || e.message || "Cupom inválido.");
+    } finally {
+      setPromoBusy(false);
+    }
+  };
+
+  const clearPromo = () => {
+    setPromoApplied(null);
+    setPromoErr("");
+    setPromoInput("");
+  };
+
   const onIdentifyContinue = (e) => {
     e?.preventDefault();
     setErr("");
@@ -290,6 +325,7 @@ export default function Booking() {
         opponent_team_name: oppTeam || "Adversário",
         your_team_crest: yourCrest,
         opponent_team_crest: oppCrest,
+        ...(promoApplied?.code ? { promo_code: promoApplied.code } : {}),
       };
       let data;
       if (recurringOn && recurringWeeks >= 2) {
@@ -977,10 +1013,58 @@ export default function Booking() {
 
               {err && <div className="mt-4 text-sm text-[var(--danger)]">{err}</div>}
 
-              <div className="mt-8 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4 glass p-4">
+              <div className="mt-6 glass p-4 space-y-3" data-testid="booking-promo-box">
+                <div className="text-[10px] uppercase tracking-[0.3em] text-[var(--brand)]">Cupom</div>
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <input
+                    data-testid="booking-promo-input"
+                    className="flex-1 bg-black/40 border border-white/10 rounded-lg px-3 py-2 min-h-[44px] uppercase tracking-wider"
+                    placeholder="Ex: COPA10"
+                    value={promoInput}
+                    onChange={(e) => { setPromoInput(e.target.value.toUpperCase()); setPromoErr(""); }}
+                    maxLength={32}
+                    disabled={!!promoApplied}
+                  />
+                  {promoApplied ? (
+                    <button type="button" data-testid="booking-promo-clear" className="btn-ghost min-h-[44px]" onClick={clearPromo}>
+                      Remover
+                    </button>
+                  ) : (
+                    <button type="button" data-testid="booking-promo-apply" className="btn-neon min-h-[44px] justify-center" onClick={applyPromo} disabled={promoBusy}>
+                      {promoBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : "Aplicar"}
+                    </button>
+                  )}
+                </div>
+                {promoErr && <div className="text-sm text-[var(--danger)]" data-testid="booking-promo-error">{promoErr}</div>}
+                {promoApplied && (
+                  <div className="text-sm text-[var(--success)]" data-testid="booking-promo-ok">
+                    Cupom <strong>{promoApplied.code}</strong> aplicado · desconto {fmtBRL(promoApplied.discount || 0)}
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-4 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4 glass p-4">
                 <div>
                   <div className="text-[10px] uppercase tracking-[0.3em] text-white/40">Total · Calção (30%)</div>
-                  <div className="font-heading text-2xl sm:text-3xl">{fmtBRL((effectiveHourly || 0) * (durationHours || 1))} · <span className="text-[var(--brand)]">{fmtBRL((effectiveHourly || 0) * (durationHours || 1) * 0.3)}</span></div>
+                  {(() => {
+                    const base = (effectiveHourly || 0) * (durationHours || 1);
+                    const total = promoApplied?.total != null ? Number(promoApplied.total) : base;
+                    const deposit = total * 0.3;
+                    return (
+                      <div className="font-heading text-2xl sm:text-3xl" data-testid="booking-price-summary">
+                        {promoApplied && Number(promoApplied.discount) > 0 ? (
+                          <>
+                            <span className="text-white/40 line-through text-lg mr-2">{fmtBRL(base)}</span>
+                            <span>{fmtBRL(total)}</span>
+                          </>
+                        ) : (
+                          fmtBRL(base)
+                        )}
+                        {" · "}
+                        <span className="text-[var(--brand)]">{fmtBRL(deposit)}</span>
+                      </div>
+                    );
+                  })()}
                 </div>
                 <button
                   data-testid={BOOKING.confirmReservation}
