@@ -89,4 +89,6 @@ export const ADMIN = {
   scoreInputA: (id) => `score-a-${id}`,
   scoreInputB: (id) => `score-b-${id}`,
   saveScore: (id) => `save-score-${id}`,
+  siteSettings: "admin-site-settings",
+  siteSettingsSave: "admin-site-settings-save",
 };

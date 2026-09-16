@@ -23,7 +23,7 @@ const PORT = Number(process.env.WHATSAPP_PORT || 3001);
 const HOST = process.env.WHATSAPP_HOST || "127.0.0.1";
 const MONGO_URL = process.env.MONGO_URL;
 const DB_NAME = process.env.DB_NAME || "arena_futsal";
-const INTERNAL_TOKEN = process.env.WHATSAPP_INTERNAL_TOKEN || "";
+const INTERNAL_TOKEN = (process.env.INTERNAL_API_TOKEN || process.env.WHATSAPP_INTERNAL_TOKEN || "").trim();
 const AUTO_START = String(process.env.WHATSAPP_AUTO_START || "true").toLowerCase() !== "false";
 
 const logger = pino({ level: process.env.WHATSAPP_LOG_LEVEL || "info" });

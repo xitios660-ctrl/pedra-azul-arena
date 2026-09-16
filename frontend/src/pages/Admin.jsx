@@ -88,6 +88,7 @@ export default function AdminDashboard() {
             { id: "bookings", label: "Reservas" },
             { id: "calendar", label: "Calendário" },
             { id: "whatsapp", label: "WhatsApp" },
+            { id: "settings", label: "Configurações" },
             { id: "tournaments", label: "Campeonatos" },
           ].map(t => (
             <button key={t.id} onClick={() => setActiveTab(t.id)}
@@ -115,6 +116,7 @@ export default function AdminDashboard() {
         )}
         {activeTab === "calendar" && <AdminCalendar />}
         {activeTab === "whatsapp" && <WhatsAppAdmin />}
+        {activeTab === "settings" && <SiteSettingsAdmin />}
         {activeTab === "tournaments" && (
           <TournamentsAdmin tournaments={tournaments} selected={selectedTour} setSelected={setSelectedTour} onUpdated={refresh} />
         )}
@@ -703,3 +705,111 @@ function MatchEditor({ tournamentId, m, onUpdated }) {
     </div>
   );
 }
+
+
+function SiteSettingsAdmin() {
+  const [form, setForm] = useState(null);
+  const [err, setErr] = useState("");
+  const [ok, setOk] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data } = await api.get("/admin/site-settings");
+        setForm(data);
+      } catch (e) {
+        setErr(e.response?.data?.detail || e.message);
+      }
+    })();
+  }, []);
+
+  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+
+  const save = async (e) => {
+    e.preventDefault();
+    if (!form) return;
+    setBusy(true); setErr(""); setOk("");
+    try {
+      const payload = {
+        ...form,
+        price_per_hour: Number(form.price_per_hour),
+        open_hour: Number(form.open_hour),
+        close_hour: Number(form.close_hour),
+        slot_duration_minutes: Number(form.slot_duration_minutes),
+      };
+      const { data } = await api.put("/admin/site-settings", payload);
+      setForm(data);
+      setOk("Configurações salvas. Booking e bot usam os novos valores.");
+    } catch (e2) {
+      const d = e2.response?.data?.detail;
+      setErr(typeof d === "string" ? d : (Array.isArray(d) ? d.map(x => x.msg || JSON.stringify(x)).join("; ") : e2.message));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!form) {
+    return <div className="glass p-8 text-white/50" data-testid="admin-site-settings">Carregando configurações…</div>;
+  }
+
+  const field = (label, key, opts = {}) => (
+    <label className="block">
+      <div className="text-[10px] uppercase tracking-[0.25em] text-white/40 mb-1">{label}</div>
+      {opts.textarea ? (
+        <textarea
+          className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm min-h-[80px]"
+          value={form[key] ?? ""}
+          onChange={(e) => set(key, e.target.value)}
+          maxLength={opts.maxLength}
+        />
+      ) : (
+        <input
+          type={opts.type || "text"}
+          className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm"
+          value={form[key] ?? ""}
+          onChange={(e) => set(key, opts.type === "number" ? e.target.value : e.target.value)}
+          min={opts.min}
+          max={opts.max}
+          step={opts.step}
+        />
+      )}
+    </label>
+  );
+
+  return (
+    <form onSubmit={save} data-testid="admin-site-settings" className="glass p-6 max-w-3xl space-y-4">
+      <div className="text-[11px] uppercase tracking-[0.35em] text-[var(--brand)]">// Site · Quadra única</div>
+      <h2 className="font-heading text-4xl uppercase italic mb-2">Configurações</h2>
+      <p className="text-white/50 text-sm mb-4">
+        WhatsApp, PIX, endereço, preço e horários — usados no booking público e nas respostas do bot.
+      </p>
+      <div className="grid sm:grid-cols-2 gap-4">
+        {field("WhatsApp (E.164 dígitos)", "whatsapp_e164")}
+        {field("WhatsApp (exibição)", "whatsapp_display")}
+        {field("Chave PIX", "pix_key")}
+        {field("Preço / hora (R$)", "price_per_hour", { type: "number", min: 1, step: 1 })}
+        {field("Abre (hora 0–23)", "open_hour", { type: "number", min: 0, max: 23 })}
+        {field("Fecha — último slot (0–23)", "close_hour", { type: "number", min: 0, max: 23 })}
+        {field("Duração do slot (min)", "slot_duration_minutes", { type: "number", min: 30, max: 180, step: 30 })}
+        {field("Nome da quadra", "court_name")}
+      </div>
+      {field("Endereço / local (label)", "address_label")}
+      {field("URL Maps", "maps_url")}
+      {field("PIX copia-e-cola (texto)", "pix_copy_text", { textarea: true, maxLength: 600 })}
+      {field("Nota estacionamento", "parking_note", { textarea: true })}
+      {err && <div className="text-[var(--danger)] text-sm" role="alert">{err}</div>}
+      {ok && <div className="text-[var(--success)] text-sm">{ok}</div>}
+      <button
+        type="submit"
+        disabled={busy}
+        data-testid="admin-site-settings-save"
+        className="btn-primary inline-flex items-center gap-2"
+      >
+        {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+        Salvar
+      </button>
+    </form>
+  );
+}
+

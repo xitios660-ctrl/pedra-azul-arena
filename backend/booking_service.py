@@ -8,13 +8,16 @@ from zoneinfo import ZoneInfo
 
 from pymongo.errors import DuplicateKeyError
 
+import site_settings as sset
+
 TZ = ZoneInfo("America/Sao_Paulo")
 COURT_ID = "court-1"
+# Static fallbacks (used only until settings load; prefer get_court / get_time_slots)
 COURT = {
     "id": COURT_ID,
-    "name": "Quadra Pedra Azul — Núncio",
+    "name": sset.DEFAULTS["court_name"],
     "type": "Futsal · Society",
-    "price_per_hour": 130,
+    "price_per_hour": sset.DEFAULTS["price_per_hour"],
     "color": "#2563EB",
 }
 TIME_SLOTS = [f"{h:02d}:00" for h in range(8, 24)]
@@ -42,12 +45,27 @@ def is_past_slot(date: str, start_time: str, now: Optional[datetime] = None) -> 
         return True
     if date == today:
         try:
-            hour = int(start_time.split(":")[0])
-            if hour < n.hour or (hour == n.hour and n.minute > 0):
+            parts = start_time.split(":")
+            hour = int(parts[0])
+            minute = int(parts[1]) if len(parts) > 1 else 0
+            if hour < n.hour or (hour == n.hour and minute <= n.minute):
                 return True
         except Exception:
             return False
     return False
+
+
+async def get_runtime(db) -> dict[str, Any]:
+    settings = await sset.get_settings(db)
+    court = {
+        "id": COURT_ID,
+        "name": settings.get("court_name") or COURT["name"],
+        "type": "Futsal · Society",
+        "price_per_hour": float(settings["price_per_hour"]),
+        "color": "#2563EB",
+    }
+    slots = sset.time_slots_from(settings)
+    return {"settings": settings, "court": court, "time_slots": slots}
 
 
 async def get_blocked_times(db, court_id: str, date: str) -> set[str]:
@@ -66,6 +84,10 @@ async def build_availability(
 ) -> dict[str, Any]:
     if court_id != COURT_ID:
         raise ValueError("court_not_found")
+    runtime = await get_runtime(db)
+    court = runtime["court"]
+    time_slots = runtime["time_slots"]
+    price = court["price_per_hour"]
     bookings = await db.bookings.find(
         {
             "court_id": court_id,
@@ -78,7 +100,7 @@ async def build_availability(
     blocked = await get_blocked_times(db, court_id, date)
     slots = []
     n = now_local()
-    for t in TIME_SLOTS:
+    for t in time_slots:
         hour = int(t.split(":")[0])
         if after_hour is not None and hour < after_hour:
             continue
@@ -104,10 +126,36 @@ async def build_availability(
                 "booking_status": b["status"] if b else None,
                 "booking_id": b["id"] if b else None,
                 "customer_name": b.get("customer_name") if b else None,
-                "price": COURT["price_per_hour"],
+                "price": price,
             }
         )
-    return {"court": COURT, "date": date, "slots": slots}
+    return {"court": court, "date": date, "slots": slots, "settings": {
+        "open_hour": runtime["settings"]["open_hour"],
+        "close_hour": runtime["settings"]["close_hour"],
+        "slot_duration_minutes": runtime["settings"]["slot_duration_minutes"],
+        "price_per_hour": price,
+    }}
+
+
+def _pix_payload(settings: dict[str, Any], deposit: float) -> dict[str, Any]:
+    copy_text = (settings.get("pix_copy_text") or "").strip()
+    if not copy_text:
+        key = settings.get("pix_key") or "arena@premium"
+        copy_text = (
+            f"00020126360014BR.GOV.BCB.PIX0114{key[:14]:<14}"
+            f"5204000053039865802BR5913ARENA PREMIUM6009SAO PAULO62070503***6304"
+            f"{uuid.uuid4().hex[:8].upper()}"
+        )
+    # Keep unique suffix so mocks don't collide visually across bookings
+    if "PIX-MOCK" not in copy_text and len(copy_text) < 40:
+        copy_text = f"{copy_text}|{uuid.uuid4().hex[:8].upper()}"
+    return {
+        "method": "pix",
+        "qr_code": f"PIX-KEY-{(settings.get('pix_key') or 'arena')[:24]}",
+        "pix_copy_paste": copy_text,
+        "pix_key": settings.get("pix_key"),
+        "amount": deposit,
+    }
 
 
 async def create_booking_atomic(
@@ -124,7 +172,7 @@ async def create_booking_atomic(
     opponent_team_name: str = "Time B",
     your_team_crest: Optional[str] = None,
     opponent_team_crest: Optional[str] = None,
-    duration_minutes: int = 60,
+    duration_minutes: Optional[int] = None,
     source: str = "web",
     status: str = "pending",
     payment_status: Optional[str] = None,
@@ -132,7 +180,12 @@ async def create_booking_atomic(
     """Insert booking with unique slot_key. Raises DuplicateKeyError or ValueError."""
     if court_id != COURT_ID:
         raise ValueError("Quadra não encontrada")
-    if start_time not in TIME_SLOTS:
+    runtime = await get_runtime(db)
+    settings = runtime["settings"]
+    court = runtime["court"]
+    time_slots = runtime["time_slots"]
+    dur = int(duration_minutes or settings.get("slot_duration_minutes") or 60)
+    if start_time not in time_slots:
         raise ValueError("Horário inválido")
     try:
         datetime.strptime(date, "%Y-%m-%d")
@@ -145,9 +198,17 @@ async def create_booking_atomic(
     if start_time in blocked:
         raise ValueError("Horário bloqueado")
 
-    total = COURT["price_per_hour"] * (duration_minutes / 60)
+    total = float(court["price_per_hour"]) * (dur / 60)
     deposit = round(total * DEPOSIT_RATE, 2)
     pay_status = payment_status or ("paid" if status == "confirmed" and source == "whatsapp" else "pending")
+
+    pix_bits = _pix_payload(settings, deposit) if source == "web" else {
+        "method": "whatsapp",
+        "qr_code": None,
+        "pix_copy_paste": None,
+        "pix_key": settings.get("pix_key"),
+        "amount": deposit,
+    }
 
     booking = {
         "id": str(uuid.uuid4()),
@@ -156,10 +217,10 @@ async def create_booking_atomic(
         "customer_name": customer_name.strip(),
         "whatsapp": whatsapp,
         "court_id": court_id,
-        "court_name": COURT["name"],
+        "court_name": court["name"],
         "date": date,
         "start_time": start_time,
-        "duration_minutes": duration_minutes,
+        "duration_minutes": dur,
         "your_team_name": your_team_name,
         "opponent_team_name": opponent_team_name,
         "your_team_crest": your_team_crest,
@@ -169,14 +230,8 @@ async def create_booking_atomic(
         "status": status,
         "source": source,
         "payment": {
-            "method": "pix" if source == "web" else "whatsapp",
+            **pix_bits,
             "status": pay_status,
-            "qr_code": f"PIX-MOCK-{uuid.uuid4().hex[:16].upper()}",
-            "pix_copy_paste": (
-                f"00020126360014BR.GOV.BCB.PIX0114arena@premium5204000053039865802BR"
-                f"5913ARENA PREMIUM6009SAO PAULO62070503***6304{uuid.uuid4().hex[:8].upper()}"
-            ),
-            "amount": deposit,
             "created_at": now_iso(),
             "expires_at": (
                 (datetime.now(timezone.utc) + timedelta(minutes=PIX_TTL_MINUTES)).isoformat()
@@ -200,8 +255,6 @@ async def create_booking_atomic(
         raise
     booking.pop("_id", None)
     return booking
-
-
 
 
 async def expire_stale_pending(db) -> int:
@@ -237,14 +290,17 @@ async def expire_stale_pending(db) -> int:
     )
     return result.modified_count
 
+
 async def calendar_range(db, start_date: str, days: int = 7) -> dict[str, Any]:
     """Day or week view for the single court."""
     from datetime import timedelta
 
     start = datetime.strptime(start_date, "%Y-%m-%d")
     days_out = []
+    court = None
     for i in range(max(1, min(days, 14))):
         d = (start + timedelta(days=i)).strftime("%Y-%m-%d")
         avail = await build_availability(db, COURT_ID, d)
+        court = avail["court"]
         days_out.append(avail)
-    return {"court": COURT, "start_date": start_date, "days": days_out}
+    return {"court": court or COURT, "start_date": start_date, "days": days_out}

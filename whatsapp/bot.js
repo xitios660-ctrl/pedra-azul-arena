@@ -12,16 +12,37 @@ import {
   weekdayNamePt,
 } from "./nl.js";
 
-const PRICE = Number(process.env.COURT_PRICE_PER_HOUR || 130);
-const LOCATION =
-  process.env.COURT_LOCATION ||
-  "Quadra Pedra Azul — Núncio · Alto Tietê · SP";
-const MAPS_URL =
-  process.env.COURT_MAPS_URL ||
-  "https://www.google.com/maps/search/?api=1&query=Pedra%20Azul%20Nuncio%20Alto%20Tiete%20SP";
 const ADMIN_JID = (process.env.WHATSAPP_ADMIN_JID || "").trim();
-const COURT_NAME = "Quadra Pedra Azul — Núncio";
-const GAME_MINUTES = Number(process.env.COURT_DURATION_MINUTES || 60);
+
+const FALLBACK_SETTINGS = {
+  price_per_hour: Number(process.env.COURT_PRICE_PER_HOUR || 130),
+  address_label:
+    process.env.COURT_LOCATION ||
+    "Núncio · Alto Tietê · SP",
+  maps_url:
+    process.env.COURT_MAPS_URL ||
+    "https://www.google.com/maps/search/?api=1&query=Pedra%20Azul%20Nuncio%20Alto%20Tiete%20SP",
+  court_name: "Quadra Pedra Azul — Núncio",
+  slot_duration_minutes: Number(process.env.COURT_DURATION_MINUTES || 60),
+  pix_key: process.env.PIX_KEY || "arena@premium",
+  pix_copy_text: process.env.PIX_COPY_TEXT || "",
+  parking_note: "Estacionamento no entorno da quadra — chegue ~10 min antes.",
+  open_hour: 8,
+  close_hour: 23,
+};
+
+let _settingsCache = { at: 0, data: null };
+async function getSiteSettings() {
+  const now = Date.now();
+  if (_settingsCache.data && now - _settingsCache.at < 60_000) return _settingsCache.data;
+  try {
+    const data = await api.siteSettings();
+    _settingsCache = { at: now, data: { ...FALLBACK_SETTINGS, ...data } };
+    return _settingsCache.data;
+  } catch (_) {
+    return _settingsCache.data || FALLBACK_SETTINGS;
+  }
+}
 
 function phoneFromJid(jid) {
   return String(jid || "").split("@")[0].split(":")[0].replace(/\D/g, "");
@@ -76,7 +97,7 @@ function helpFallback() {
 function greet() {
   return (
     `Olá! Aqui é a *Pedra Azul* ⚽\n` +
-    `Quadra única · ${COURT_NAME}.\n\n` +
+    `Quadra única · Pedra Azul — Núncio.\n\n` +
     `Me diga o que precisa: horários, reservar, preço, PIX, endereço ou cancelar.`
   );
 }
@@ -150,6 +171,10 @@ export function createBot(deps) {
     const reply = async (msg) => {
       await sendToJid(jid, msg);
     };
+    const site = await getSiteSettings();
+    const PRICE = site.price_per_hour;
+    const COURT_NAME = site.court_name;
+    const GAME_MINUTES = site.slot_duration_minutes || 60;
 
     try {
       switch (parsed.intent) {
@@ -162,23 +187,31 @@ export function createBot(deps) {
           await reply(helpFallback());
           return;
 
-        case "parking":
+        case "parking": {
+          const s = await getSiteSettings();
           await reply(
-            `🅿️ *Estacionamento:* há espaço para carros próximo à quadra (rua / entorno).\n` +
-              `Chegue com uns 10 min de antecedência. Se estiver lotado no sábado à noite, oriente o time a combinar caronas.`
+            `🅿️ *Estacionamento:* ${s.parking_note || "há espaço para carros próximo à quadra."}\n` +
+              `Se estiver lotado no sábado à noite, oriente o time a combinar caronas.`
           );
           return;
+        }
 
-        case "duration":
+        case "duration": {
+          const s = await getSiteSettings();
+          const mins = s.slot_duration_minutes || 60;
           await reply(
-            `⏱️ Cada reserva é de *${GAME_MINUTES} minutos* (1 hora) na *${COURT_NAME}*.\n` +
-              `Valor: *R$ ${PRICE}/hora*. Quer ver horários? Ex.: "sábado à noite" ou "depois das 20".`
+            `⏱️ Cada reserva é de *${mins} minutos* na *${s.court_name}*.\n` +
+              `Valor: *R$ ${s.price_per_hour}/hora*. Horário: ${String(s.open_hour).padStart(2,"0")}h–${String(s.close_hour).padStart(2,"0")}h. Quer ver vagas? Ex.: "sábado à noite".`
           );
           return;
+        }
 
-        case "pix_howto":
+        case "pix_howto": {
+          const s = await getSiteSettings();
+          const keyLine = s.pix_key ? `Chave PIX: *${s.pix_key}*\n` : "";
           await reply(
             `💳 *Como pagar (PIX)*\n` +
+              keyLine +
               `1) Reserve no *site* (fluxo com CPF) → gera PIX do *calção (30%)*.\n` +
               `2) Pague e *envie a foto do comprovante* no site *ou aqui no WhatsApp*.\n` +
               `3) Status: *aguardando → informado → confirmado* (só o admin confirma — nunca automático).\n` +
@@ -186,21 +219,26 @@ export function createBot(deps) {
               `PIX do site expira em ~45 min se não pagar.`
           );
           return;
+        }
 
-        case "price":
+        case "price": {
+          const s = await getSiteSettings();
           await reply(
-            `A *${COURT_NAME}* custa *R$ ${PRICE}/hora* (${GAME_MINUTES} min).\n` +
+            `A *${s.court_name}* custa *R$ ${s.price_per_hour}/hora* (${s.slot_duration_minutes || 60} min).\n` +
               `No site: calção PIX 30% + comprovante. Pelo WhatsApp combinamos o pagamento na confirmação.`
           );
           return;
+        }
 
-        case "address":
+        case "address": {
+          const s = await getSiteSettings();
           await reply(
-            `📍 *Local:* ${LOCATION}\n` +
-              `🗺️ Maps (busca): ${MAPS_URL}\n` +
+            `📍 *Local:* ${s.address_label}\n` +
+              `🗺️ Maps (busca): ${s.maps_url}\n` +
               `(Não inventamos rua completa no cadastro — se precisar do ponto exato, peça aqui.)`
           );
           return;
+        }
 
         case "change_mind": {
           await conv.clear(jid);

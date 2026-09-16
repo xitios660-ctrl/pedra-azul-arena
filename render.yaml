@@ -14,6 +14,7 @@ services:
       - key: DB_NAME
         value: arena_futsal
       - key: CORS_ORIGINS
+        # Prefer explicit origins in production (comma-separated). "*" disables credentialed CORS.
         value: "*"
       - key: MONGO_URL
         sync: false
@@ -21,6 +22,10 @@ services:
         value: "true"
       - key: WHATSAPP_INTERNAL_TOKEN
         generateValue: true
+      # Preferred shared secret for FastAPI ↔ WhatsApp sidecar (X-Internal-Token).
+      # Generate locally: openssl rand -hex 32 — set the same value in the dashboard.
+      - key: INTERNAL_API_TOKEN
+        sync: false
       - key: WHATSAPP_ADMIN_JID
         sync: false
       # PORT is set automatically by Render

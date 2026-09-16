@@ -11,11 +11,13 @@ import { TournamentsList, TournamentDetail } from "@/pages/Tournaments";
 import AdminDashboard from "@/pages/Admin";
 import Presentation from "@/pages/Presentation";
 import IntroVideoModal from "@/components/IntroVideoModal";
+import { SiteSettingsProvider } from "@/lib/SiteSettings";
 
 function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
+        <SiteSettingsProvider>
         <IntroVideoModal />
         <Routes>
           <Route path="/" element={<Landing />} />
@@ -31,6 +33,7 @@ function App() {
           <Route path="/register" element={<Navigate to="/login" replace />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+        </SiteSettingsProvider>
       </AuthProvider>
     </BrowserRouter>
   );

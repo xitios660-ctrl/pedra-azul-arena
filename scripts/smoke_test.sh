@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pedra Azul — local/API smoke tests (Cycle 5)
+# Pedra Azul — local/API smoke tests (Cycle 6)
 # Usage:
 #   BASE_URL=http://127.0.0.1:8000 ./scripts/smoke_test.sh
 set -euo pipefail
@@ -36,6 +36,25 @@ else
     ok "GET /api/courts (array)"
   else
     bad "courts" "$C"
+  fi
+fi
+
+
+# 2b) Public site-settings
+SS=$(curl -fsS "$API/site-settings" || true)
+if echo "$SS" | grep -q 'price_per_hour'; then
+  ok "GET /api/site-settings"
+else
+  bad "site-settings" "$SS"
+fi
+
+# 2c) Internal without token (only assert 401 when token configured)
+if [ -n "${INTERNAL_API_TOKEN:-}${WHATSAPP_INTERNAL_TOKEN:-}" ]; then
+  IC=$(curl -s -o /tmp/pa_int.json -w "%{http_code}" "$API/internal/whatsapp/availability?date=2099-01-01" || echo "000")
+  if [ "$IC" = "401" ]; then
+    ok "GET /api/internal/... without token → 401"
+  else
+    bad "internal token" "expected 401 got $IC"
   fi
 fi
 

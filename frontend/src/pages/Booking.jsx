@@ -11,6 +11,7 @@ import {
   COURT_PRICE_LABEL,
   COURT_LOCATION,
 } from "@/lib/siteConfig";
+import { useSiteSettings } from "@/lib/SiteSettings";
 import { pixPipelineLabel } from "@/lib/paymentStatus";
 import { useMotionSystem, easings } from "@/lib/motion";
 import VictoryBurst from "@/components/motion/VictoryBurst";
@@ -65,6 +66,7 @@ function flowIndex(step, hasCourt, hasDate, hasSlot) {
 }
 
 export default function Booking() {
+  const { settings } = useSiteSettings();
   const navigate = useNavigate();
   const [courts, setCourts] = useState([]);
   const [courtsError, setCourtsError] = useState("");
@@ -158,7 +160,7 @@ export default function Booking() {
         court_id: selectedCourt.id,
         date,
         start_time: pickedSlot.time,
-        duration_minutes: 60,
+        duration_minutes: settings?.slot_duration_minutes || 60,
         cpf,
         customer_name: name.trim(),
         whatsapp,
@@ -211,7 +213,7 @@ export default function Booking() {
 
   const activeFlow = flowIndex(step, !!selectedCourt, !!date, !!pickedSlot);
   const freeSlots = availability?.slots?.filter((s) => isSlotAvailable(s))?.length ?? null;
-  const waHref = whatsappUrl(defaultWhatsAppPrefill());
+  const waHref = whatsappUrl(defaultWhatsAppPrefill(), settings?.whatsapp_e164);
   const m = useMotionSystem();
 
   return (

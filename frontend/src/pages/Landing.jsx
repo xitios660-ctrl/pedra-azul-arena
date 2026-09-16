@@ -9,13 +9,14 @@ import {
 } from "lucide-react";
 import api from "@/lib/api";
 import {
-  WHATSAPP_DISPLAY,
   whatsappUrl,
   defaultWhatsAppPrefill,
-  COURT_PRICE_LABEL,
   COURT_LOCATION,
   BALEYS_VIDEO_SRC,
+  BALEYS_POSTER_SRC,
+  BALEYS_POSTER_FALLBACK,
 } from "@/lib/siteConfig";
+import { useSiteSettings } from "@/lib/SiteSettings";
 import { useMotionSystem } from "@/lib/motion";
 import Particles from "@/components/motion/Particles";
 import SoftLetterbox from "@/components/motion/SoftLetterbox";
@@ -127,7 +128,9 @@ export default function Landing() {
       .catch(() => {});
   }, []);
 
-  const waHref = whatsappUrl(defaultWhatsAppPrefill());
+  const { settings, priceLabel: COURT_PRICE_LABEL } = useSiteSettings();
+  const WHATSAPP_DISPLAY = settings.whatsapp_display;
+  const waHref = whatsappUrl(defaultWhatsAppPrefill(), settings.whatsapp_e164);
 
   return (
     <PageShell>
@@ -148,7 +151,7 @@ export default function Landing() {
           <video
             className="absolute inset-0 w-full h-full object-cover hero-baleys-video"
             src={BALEYS_VIDEO_SRC}
-            poster={STADIUM_IMG}
+            poster={BALEYS_POSTER_SRC || BALEYS_POSTER_FALLBACK || STADIUM_IMG}
             autoPlay
             muted
             loop
@@ -289,8 +292,8 @@ export default function Landing() {
       {/* Subtle HUD ticker — brand only */}
       <div className="hud-ticker hidden sm:block" aria-hidden="true">
         <div className={`hud-ticker-track${m.reduce ? " hud-ticker-track--static" : ""}`}>
-          <span>PEDRA AZUL F.S.  ·  COPA ALTO TIETÊ  ·  QUADRA NÚNCIO  ·  R$ 130/H  ·  </span>
-          <span>PEDRA AZUL F.S.  ·  COPA ALTO TIETÊ  ·  QUADRA NÚNCIO  ·  R$ 130/H  ·  </span>
+          <span>PEDRA AZUL F.S.  ·  COPA ALTO TIETÊ  ·  QUADRA NÚNCIO  ·  {COURT_PRICE_LABEL.toUpperCase()}  ·  </span>
+          <span>PEDRA AZUL F.S.  ·  COPA ALTO TIETÊ  ·  QUADRA NÚNCIO  ·  {COURT_PRICE_LABEL.toUpperCase()}  ·  </span>
         </div>
       </div>
 
@@ -304,11 +307,12 @@ export default function Landing() {
             <video
               className="absolute inset-0 w-full h-full object-cover opacity-40"
               src={BALEYS_VIDEO_SRC}
+              poster={BALEYS_POSTER_SRC}
               autoPlay
               muted
               loop
               playsInline
-              preload="none"
+              preload="metadata"
               aria-hidden="true"
             />
           )}

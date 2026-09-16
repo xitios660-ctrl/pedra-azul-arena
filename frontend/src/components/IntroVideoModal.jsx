@@ -2,7 +2,8 @@ import React, { useState, useCallback } from "react";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import { ChevronRight, X, MapPin, Calendar } from "lucide-react";
-import { BALEYS_VIDEO_SRC } from "@/lib/siteConfig";
+import { BALEYS_VIDEO_SRC, BALEYS_POSTER_SRC } from "@/lib/siteConfig";
+import { useSiteSettings } from "@/lib/SiteSettings";
 
 /**
  * INTRO VIDEO MODAL — "Até a Pedra Azul"
@@ -17,6 +18,7 @@ const SESSION_KEY = "pedra_azul_intro_played_v4";
 const STADIUM_BG = "https://images.unsplash.com/photo-1521334884684-d80222895322?crop=entropy&cs=srgb&fm=jpg&q=85&w=2400";
 
 export default function IntroVideoModal() {
+  const { priceLabel } = useSiteSettings();
   const navigate = useNavigate();
   const reduce = useReducedMotion();
   const [open, setOpen] = useState(() => {
@@ -59,12 +61,12 @@ export default function IntroVideoModal() {
             <video
               className="absolute inset-0 w-full h-full object-cover"
               src={BALEYS_VIDEO_SRC}
-              poster={STADIUM_BG}
+              poster={BALEYS_POSTER_SRC || STADIUM_BG}
               autoPlay
               muted
               loop
               playsInline
-              preload="auto"
+              preload="metadata"
               aria-hidden="true"
             />
           </motion.div>
@@ -249,7 +251,7 @@ export default function IntroVideoModal() {
             transition={{ delay: 4.2, duration: 0.6 }}
             className="mt-8 text-[var(--accent)] font-heading text-2xl md:text-3xl uppercase tracking-wider"
           >
-            R$ 130/<span className="text-white/70 text-lg">hora</span>
+            {priceLabel.replace("/h", "")}/<span className="text-white/70 text-lg">hora</span>
           </motion.div>
         </div>
 

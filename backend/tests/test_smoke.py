@@ -1,4 +1,4 @@
-"""Cycle 5 smoke / regression tests — hit local or BASE_URL API.
+"""Cycle 6 smoke / regression tests — hit local or BASE_URL API.
 
 Run:
   BASE_URL=http://127.0.0.1:8000 python -m pytest backend/tests/test_smoke.py -q
@@ -249,3 +249,49 @@ def test_admin_awaiting_queue_and_reject(admin_session):
     assert got.status_code == 200
     assert got.json()["status"] == "cancelled"
     assert got.json()["payment"]["status"] == "cancelled"
+
+
+def test_public_site_settings(s):
+    r = s.get(f"{API}/site-settings", timeout=10)
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert "price_per_hour" in data
+    assert "open_hour" in data and "close_hour" in data
+    assert "whatsapp_e164" in data
+    assert "pix_key" in data
+    assert float(data["price_per_hour"]) > 0
+
+
+def test_admin_site_settings_auth_and_update(admin_session):
+    bare = requests.Session()
+    r0 = bare.get(f"{API}/admin/site-settings", timeout=10)
+    assert r0.status_code in (401, 403), r0.text
+    r = admin_session.get(f"{API}/admin/site-settings", timeout=10)
+    assert r.status_code == 200, r.text
+    cur = r.json()
+    assert cur.get("price_per_hour")
+    # round-trip save (same values) — validates schema
+    r2 = admin_session.put(f"{API}/admin/site-settings", json=cur, timeout=10)
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["price_per_hour"] == cur["price_per_hour"]
+
+
+def test_internal_routes_require_token_when_set(s):
+    """If INTERNAL_API_TOKEN / WHATSAPP_INTERNAL_TOKEN is set, missing header → 401."""
+    tok = (os.environ.get("INTERNAL_API_TOKEN") or os.environ.get("WHATSAPP_INTERNAL_TOKEN") or "").strip()
+    day = (datetime.now(TZ) + timedelta(days=10)).strftime("%Y-%m-%d")
+    if not tok:
+        # Dev mode: routes open — still must return 200/4xx not 500
+        r = s.get(f"{API}/internal/whatsapp/availability", params={"date": day}, timeout=10)
+        assert r.status_code in (200, 400, 404), r.text
+        return
+    bare = requests.Session()
+    r = bare.get(f"{API}/internal/whatsapp/availability", params={"date": day}, timeout=10)
+    assert r.status_code == 401, r.text
+    r2 = bare.get(
+        f"{API}/internal/whatsapp/availability",
+        params={"date": day},
+        headers={"X-Internal-Token": tok},
+        timeout=10,
+    )
+    assert r2.status_code == 200, r2.text

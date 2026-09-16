@@ -153,3 +153,8 @@ async def run_all_seeds(db):
     await seed_admin(db)
     await seed_demo_user(db)
     await seed_tournaments(db)
+    try:
+        import site_settings as sset
+        await sset.ensure_seeded(db)
+    except Exception:
+        pass

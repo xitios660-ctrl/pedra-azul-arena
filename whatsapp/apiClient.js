@@ -2,7 +2,11 @@
  * HTTP client from WhatsApp sidecar → FastAPI (same host, internal token).
  */
 const API_BASE = (process.env.API_INTERNAL_URL || `http://127.0.0.1:${process.env.PORT || 8000}`).replace(/\/$/, "");
-const TOKEN = process.env.WHATSAPP_INTERNAL_TOKEN || "";
+const TOKEN = (
+  process.env.INTERNAL_API_TOKEN ||
+  process.env.WHATSAPP_INTERNAL_TOKEN ||
+  ""
+).trim();
 
 function headers(json = true) {
   const h = { Accept: "application/json" };
@@ -77,5 +81,6 @@ export const api = {
   dueReminders: () => req("GET", "/internal/whatsapp/reminders/due"),
   markReminderSent: (bookingId) =>
     req("POST", `/internal/whatsapp/reminders/${bookingId}/sent`, {}),
+  siteSettings: () => req("GET", "/site-settings"),
   uploadComprovante,
 };

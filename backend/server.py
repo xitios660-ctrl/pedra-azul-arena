@@ -44,6 +44,8 @@ from cpf_utils import validate_cpf, mask_cpf, only_digits, normalize_whatsapp, p
 import metrics as ops_metrics
 import daily_metrics as daily_metrics
 from seed_data import run_all_seeds
+import site_settings as sset
+from site_settings import SiteSettingsUpdate
 
 # -----------------------------------------------------------------------------
 # Setup
@@ -204,7 +206,8 @@ async def me(user: dict = Depends(get_current_user)):
 # =============================================================================
 @api.get("/courts")
 async def list_courts():
-    return COURTS
+    runtime = await bsvc.get_runtime(db)
+    return [runtime["court"]]
 
 
 @api.get("/courts/availability")
@@ -216,6 +219,25 @@ async def court_availability(court_id: str, date: str):
         return await bsvc.build_availability(db, court_id, date)
     except ValueError:
         raise HTTPException(status_code=404, detail="Quadra não encontrada")
+
+
+@api.get("/site-settings")
+async def public_site_settings():
+    """Public singleton — price/hours/contact for booking + landing + WA bot."""
+    return await sset.get_settings(db)
+
+
+@api.get("/admin/site-settings")
+async def admin_get_site_settings(admin: dict = Depends(require_admin)):
+    return await sset.get_settings(db)
+
+
+@api.put("/admin/site-settings")
+async def admin_put_site_settings(payload: SiteSettingsUpdate, admin: dict = Depends(require_admin)):
+    try:
+        return await sset.update_settings(db, payload)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 # =============================================================================
@@ -494,7 +516,8 @@ async def admin_dashboard(admin: dict = Depends(require_admin)):
     full_value = sum(b.get("total", 0) for b in confirmed)
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     today_confirmed = [b for b in confirmed if b["date"] == today]
-    total_slots_today = len(COURTS) * len(TIME_SLOTS)
+    runtime = await bsvc.get_runtime(db)
+    total_slots_today = 1 * len(runtime["time_slots"])
     occupancy_today = round((len(today_confirmed) / total_slots_today) * 100, 1) if total_slots_today else 0
 
     from collections import Counter
@@ -639,8 +662,17 @@ async def admin_awaiting_queue(admin: dict = Depends(require_admin)):
 # =============================================================================
 # INTERNAL — WhatsApp sidecar (X-Internal-Token)
 # =============================================================================
+def _internal_api_token() -> str:
+    """Prefer INTERNAL_API_TOKEN; fall back to legacy WHATSAPP_INTERNAL_TOKEN."""
+    return (
+        os.environ.get("INTERNAL_API_TOKEN")
+        or os.environ.get("WHATSAPP_INTERNAL_TOKEN")
+        or ""
+    ).strip()
+
+
 def _require_internal(request: Request):
-    token = os.environ.get("WHATSAPP_INTERNAL_TOKEN", "")
+    token = _internal_api_token()
     if not token:
         return  # open in local/dev when unset (same as sidecar)
     got = request.headers.get("x-internal-token") or ""
@@ -902,7 +934,8 @@ async def admin_calendar(
 
 @api.post("/admin/calendar/block")
 async def admin_block_slot(payload: AdminBlockIn, admin: dict = Depends(require_admin)):
-    if payload.start_time not in TIME_SLOTS:
+    runtime = await bsvc.get_runtime(db)
+    if payload.start_time not in runtime["time_slots"]:
         raise HTTPException(status_code=400, detail="Horário inválido")
     sk = bsvc.slot_key(COURT_ID, payload.date, payload.start_time)
     # refuse if active booking
@@ -1143,6 +1176,7 @@ async def startup():
     except Exception as e:
         logger.warning("reminder_sent backfill: %s", e)
     await run_all_seeds(db)
+    await sset.ensure_seeded(db)
     await daily_metrics.ensure_indexes(db)
     logger.info("Arena Futsal Premium API initialized (CPF + WA bot + calendar)")
 
@@ -1200,13 +1234,14 @@ if FRONTEND_BUILD:
     logger.info("Serving frontend from %s", FRONTEND_BUILD)
 
 # CORS: set CORS_ORIGINS to explicit origins in production (comma-separated).
-# Default "*" remains for same-origin Docker; credentials + wildcard is browser-limited.
+# Wildcard + credentials is unsafe/invalid — when "*" we disable credentials (same-origin Docker OK).
 _cors_raw = os.environ.get("CORS_ORIGINS", "*").strip() or "*"
 _cors_origins = [o.strip() for o in _cors_raw.split(",") if o.strip()]
+_cors_wildcard = _cors_origins == ["*"]
 app.add_middleware(
     CORSMiddleware,
-    allow_credentials=True,
+    allow_credentials=not _cors_wildcard,
     allow_origins=_cors_origins,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["*"],
+    allow_headers=["Authorization", "Content-Type", "X-Internal-Token", "Accept", "Origin"],
 )

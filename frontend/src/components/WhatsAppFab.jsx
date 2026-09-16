@@ -1,18 +1,16 @@
 import React from "react";
 import { motion } from "framer-motion";
 import { MessageCircle } from "lucide-react";
-import {
-  WHATSAPP_DISPLAY,
-  whatsappUrl,
-  defaultWhatsAppPrefill,
-} from "@/lib/siteConfig";
+import { defaultWhatsAppPrefill, whatsappUrl } from "@/lib/siteConfig";
+import { useSiteSettings } from "@/lib/SiteSettings";
 
 /**
  * Floating WhatsApp balloon (FAB) — fixed bottom-right, brand green, subtle pulse.
  */
 export default function WhatsAppFab({ prefill } = {}) {
-  const href = whatsappUrl(prefill || defaultWhatsAppPrefill());
-  const label = `Abrir WhatsApp ${WHATSAPP_DISPLAY} — Fale no WhatsApp`;
+  const { settings } = useSiteSettings();
+  const href = whatsappUrl(prefill || defaultWhatsAppPrefill(), settings.whatsapp_e164);
+  const label = `Abrir WhatsApp ${settings.whatsapp_display} — Fale no WhatsApp`;
 
   return (
     <motion.a

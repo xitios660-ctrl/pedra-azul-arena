@@ -19,7 +19,8 @@ Reserva de **uma** quadra (Pedra Azul — Núncio), fluxo CPF + PIX + confirmaç
 | `WHATSAPP_SERVICE_URL` | não | Default `http://127.0.0.1:3001` |
 | `WHATSAPP_PORT` | não | Default `3001` |
 | `WHATSAPP_HOST` | não | Default `127.0.0.1` (só localhost) |
-| `WHATSAPP_INTERNAL_TOKEN` | não | Token compartilhado FastAPI ↔ sidecar |
+| `WHATSAPP_INTERNAL_TOKEN` | não | Legacy token FastAPI ↔ sidecar (ainda aceito) |
+| `INTERNAL_API_TOKEN` | prod | Preferido: header `X-Internal-Token` nas rotas `/api/internal/*`. Gere com `openssl rand -hex 32`. Em `render.yaml` está `sync: false` — defina no dashboard. |
 | `WHATSAPP_SESSION_ID` | não | Default `default` (chave Mongo auth) |
 | `WHATSAPP_AUTO_START` | não | Default `true` — tenta restaurar sessão no boot |
 | `WHATSAPP_ADMIN_JID` | não | JID admin p/ notificar reservas WA (ex.: `5511999999999@s.whatsapp.net`) |
@@ -129,3 +130,8 @@ Cobertura smoke: health (sem leak), courts, create booking + **409** conflict, a
 - Persisted funnel metrics in Mongo (`daily_metrics`); `GET /api/admin/metrics` includes `last_7_days`.
 - Admin **Fila PIX** for informados + one-click confirm / reject.
 
+## Cycle 6 notes
+- Admin **Configurações** (`site_settings` singleton): WhatsApp, PIX, endereço/Maps, preço/hora, abertura/fechamento, duração do slot.
+- Booking público e bot WA leem preço/horários/contato dessas settings (fallback nos defaults).
+- Hero video: `preload=metadata`, poster `baleys-poster.jpg`, cópia leve `baleys-lite.mp4` (ffmpeg).
+- Segurança: `INTERNAL_API_TOKEN` (ou legacy `WHATSAPP_INTERNAL_TOKEN`) obrigatório quando definido; CORS `*` sem credentials.
