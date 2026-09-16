@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <defs>
+    <linearGradient id="diamond-grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#93C5FD"/>
+      <stop offset="50%" stop-color="#3B82F6"/>
+      <stop offset="100%" stop-color="#1E3A8A"/>
+    </linearGradient>
+    <linearGradient id="crown-grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#FFD56B"/>
+      <stop offset="100%" stop-color="#F59E0B"/>
+    </linearGradient>
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Outer ring -->
+  <circle cx="100" cy="100" r="92" fill="none" stroke="#1E3A8A" stroke-width="3" opacity="0.6"/>
+  <circle cx="100" cy="100" r="86" fill="#050810"/>
+
+  <!-- Crown -->
+  <g filter="url(#glow)">
+    <path d="M 55 60 L 65 40 L 78 56 L 100 32 L 122 56 L 135 40 L 145 60 L 145 72 L 55 72 Z"
+          fill="url(#crown-grad)" stroke="#92400E" stroke-width="1.5" stroke-linejoin="round"/>
+    <!-- Crown gems -->
+    <circle cx="65" cy="55" r="3" fill="#EF4444"/>
+    <circle cx="100" cy="48" r="4" fill="#EF4444"/>
+    <circle cx="135" cy="55" r="3" fill="#EF4444"/>
+  </g>
+
+  <!-- Diamond (faceted) -->
+  <g filter="url(#glow)">
+    <!-- Top -->
+    <polygon points="55,85 145,85 130,110 70,110" fill="#60A5FA" stroke="#1E3A8A" stroke-width="1.5"/>
+    <!-- Top facets -->
+    <polygon points="55,85 70,110 85,85" fill="#93C5FD" opacity="0.85"/>
+    <polygon points="85,85 70,110 100,110 100,85" fill="#3B82F6" opacity="0.9"/>
+    <polygon points="115,85 100,110 130,110 130,85" fill="#3B82F6" opacity="0.9"/>
+    <polygon points="115,85 130,110 145,85" fill="#93C5FD" opacity="0.85"/>
+    <!-- Bottom -->
+    <polygon points="70,110 130,110 100,168" fill="url(#diamond-grad)" stroke="#1E3A8A" stroke-width="1.5"/>
+    <!-- Bottom facets -->
+    <line x1="70" y1="110" x2="100" y2="168" stroke="#1E3A8A" stroke-width="1" opacity="0.7"/>
+    <line x1="130" y1="110" x2="100" y2="168" stroke="#1E3A8A" stroke-width="1" opacity="0.7"/>
+    <line x1="100" y1="110" x2="100" y2="168" stroke="#93C5FD" stroke-width="0.5" opacity="0.5"/>
+    <!-- Shine -->
+    <polygon points="78,114 88,135 95,168 92,168 82,135" fill="#FFFFFF" opacity="0.3"/>
+  </g>
+
+  <!-- Banner -->
+  <g>
+    <path d="M 35 122 L 165 122 L 158 138 L 42 138 Z" fill="#1E3A8A" stroke="#FFFFFF" stroke-width="1.5"/>
+    <text x="100" y="134" text-anchor="middle" font-family="Arial Black, sans-serif" font-size="11" font-weight="900" fill="#FFFFFF" letter-spacing="1">PEDRA AZUL F.S.</text>
+  </g>
+
+  <!-- Bottom date -->
+  <text x="100" y="180" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" font-weight="bold" fill="#93C5FD" letter-spacing="2">FUND. 19 · 04 · 15</text>
+</svg>

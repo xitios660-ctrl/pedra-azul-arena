@@ -1,0 +1,115 @@
+{
+  "theme": "dark",
+  "archetype": "Archetype 2 (The Performance Pro) mixed with Archetype 7 (Electric & Neon)",
+  "vibe": "Cinematic, Video-Game Main Menu (EA Sports FC / FIFA style), High-end Premium Futsal SaaS",
+  "colors": {
+    "background": {
+      "base": "#030305",
+      "surface": "#0C0C12",
+      "surface_elevated": "#14141E"
+    },
+    "brand": {
+      "primary": "#00E5FF",
+      "primary_glow": "rgba(0, 229, 255, 0.4)",
+      "primary_muted": "rgba(0, 229, 255, 0.15)"
+    },
+    "accent": {
+      "success": "#00FF66",
+      "danger": "#FF0055",
+      "warning": "#FFB800"
+    },
+    "text": {
+      "primary": "#FFFFFF",
+      "secondary": "#A0A0B0",
+      "muted": "#5A5A6E"
+    },
+    "border": {
+      "default": "rgba(255, 255, 255, 0.08)",
+      "highlight": "rgba(0, 229, 255, 0.3)"
+    }
+  },
+  "typography": {
+    "heading_font": "Teko, Rajdhani, sans-serif",
+    "body_font": "Exo 2, sans-serif",
+    "scales": {
+      "h1": "text-6xl md:text-8xl font-black uppercase tracking-tighter italic",
+      "h2": "text-4xl md:text-5xl font-bold uppercase tracking-tight",
+      "h3": "text-2xl md:text-3xl font-bold uppercase",
+      "body_lg": "text-lg md:text-xl font-medium tracking-wide",
+      "body": "text-base font-normal",
+      "label": "text-xs font-bold uppercase tracking-[0.2em] text-[#00E5FF]"
+    }
+  },
+  "visual_enhancers": {
+    "glassmorphism": {
+      "panel": "backdrop-blur-xl bg-white/5 border border-white/10 shadow-[0_8px_32px_rgba(0,0,0,0.4)]",
+      "card_hover": "hover:bg-white/10 hover:border-[#00E5FF]/50 transition-all duration-300"
+    },
+    "shadows": {
+      "neon_blue": "drop-shadow-[0_0_15px_rgba(0,229,255,0.6)]",
+      "neon_green": "drop-shadow-[0_0_15px_rgba(0,255,102,0.6)]",
+      "neon_red": "drop-shadow-[0_0_15px_rgba(255,0,85,0.6)]"
+    },
+    "layering": "Use 'bg-black/60' vignettes over stadium backgrounds to allow vibrant UI layers to pop. Utilize skewed shapes (transform: skewX(-5deg)) for speed lines and dynamic presentation.",
+    "animations": "Framer Motion for page transitions. Scale up cards on hover (scale-105) with border glow. Staggered fade-ins for leaderboard rows and brackets."
+  },
+  "components": {
+    "cinematic_hero": {
+      "layout": "Fullscreen (100vh), flex-col, justify-end pb-24 px-8 md:px-16",
+      "background": "Dark stadium image with a heavy linear-gradient overlay (to-b from-black/20 via-black/60 to-[#030305])",
+      "content": "Massive italicized H1 'ARENA PREMIUM', neon blue CTA button skewed slightly, overlaying glowing particles."
+    },
+    "main_menu_cards": {
+      "style": "EA FC style tall rectangular cards (w-64 h-96). Glassmorphic background, subtle inner shadow.",
+      "hover_state": "Scale up to 1.05, border color shifts to #00E5FF, electric blue box-shadow, inner image saturation increases."
+    },
+    "booking_calendar_slot": {
+      "base": "Flex row, items-center, justify-between, p-4, backdrop-blur-md bg-white/5 border-l-4 rounded-r-lg cursor-pointer",
+      "available": "border-l-[#00FF66] hover:bg-white/10",
+      "occupied": "border-l-[#FF0055] opacity-50 cursor-not-allowed",
+      "typography": "Time in Rajdhani bold, price in Exo 2 right-aligned."
+    },
+    "matchmaking_modal": {
+      "layout": "Grid cols-3, items-center. Left: User Team Crest, Right: Opponent Crest, Center: 'VS' text glowing.",
+      "surface": "Crystal glassmorphism (bg-[#0C0C12]/80 backdrop-blur-2xl border border-white/10)",
+      "action": "PIX payment button, full width, electric blue background, black text."
+    },
+    "tournament_bracket_node": {
+      "style": "Rectangular dark card, 2 rows (Team A, Team B). Winning team has white text, losing team has gray text.",
+      "connector_lines": "1px solid rgba(255, 255, 255, 0.2), active path glowing #00E5FF."
+    },
+    "leaderboard_row": {
+      "style": "Grid layout. Dense control room grid. Rank, Crest, Team Name, Points.",
+      "top_3": "Rank number glows. 1st place gold (#FFB800), 2nd silver, 3rd bronze.",
+      "hover": "Subtle translation (-translate-y-0.5) and bg-white/10."
+    },
+    "admin_kpi_card": {
+      "style": "Cardless or very subtle 1px border. Dark gray surface. Big numbers in Rajdhani. Small trend indicator in green/red."
+    }
+  },
+  "media": {
+    "backgrounds": {
+      "stadium_night": "https://images.unsplash.com/photo-1779406283467-5124ba4631c3?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjY2NjV8MHwxfHNlYXJjaHwxfHxkYXJrJTIwZnV0c2FsJTIwc3RhZGl1bSUyMG5pZ2h0fGVufDB8fHx8MTc4MDk2OTUxMXww&ixlib=rb-4.1.0&q=85",
+      "stadium_lights": "https://images.unsplash.com/photo-1638573615178-6f2950746614?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA2MjJ8MHwxfHNlYXJjaHwxfHxuZW9uJTIwc3BvcnRzJTIwc3RhZGl1bSUyMGxpZ2h0c3xlbnwwfHx8fDE3ODA5Njk1MTF8MA&ixlib=rb-4.1.0&q=85"
+    },
+    "action_shots": {
+      "player_kick": "https://images.unsplash.com/photo-1517927033932-b3d18e61fb3a?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2Nzh8MHwxfHNlYXJjaHwyfHxzb2NjZXIlMjBhY3Rpb24lMjBuaWdodCUyMGRhcmt8ZW58MHx8fHwxNzgwOTY5NTExfDA&ixlib=rb-4.1.0&q=85",
+      "player_run": "https://images.unsplash.com/photo-1730652128205-f5e98e542786?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjY2NjV8MHwxfHNlYXJjaHwzfHxkYXJrJTIwZnV0c2FsJTIwc3RhZGl1bSUyMG5pZ2h0fGVufDB8fHx8MTc4MDk2OTUxMXww&ixlib=rb-4.1.0&q=85"
+    },
+    "team_crests": {
+      "placeholder_1": "https://images.unsplash.com/photo-1589656671241-18aa214b189a?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NDh8MHwxfHNlYXJjaHwyfHxzb2NjZXIlMjB0ZWFtJTIwY3Jlc3QlMjBsb2dvJTIwbWluaW1hbCUyMGRhcmt8ZW58MHx8fHwxNzgwOTY5NTQwfDA&ixlib=rb-4.1.0&q=85",
+      "placeholder_2": "https://images.unsplash.com/photo-1623159939595-3784f96230ed?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NDh8MHwxfHNlYXJjaHwzfHxzb2NjZXIlMjB0ZWFtJTIwY3Jlc3QlMjBsb2dvJTIwbWluaW1hbCUyMGRhcmt8ZW58MHx8fHwxNzgwOTY5NTQwfDA&ixlib=rb-4.1.0&q=85"
+    }
+  },
+  "instructions_to_main_agent": [
+    "Install and use 'lucide-react' for icons. Phosphor icons are also acceptable.",
+    "Install Google Fonts: Teko (or Rajdhani) for headings, Exo 2 for body. Import them in index.css.",
+    "Do NOT use standard Shadcn cards for the main menu. Create custom Framer Motion enabled tall rectangular cards.",
+    "Use Radix UI / Shadcn for the Matchmaking Dialog/Modal, but heavily override the styles to match the dark glassmorphism theme.",
+    "Implement 'data-testid' on all booking slots, buttons, and form elements.",
+    "Do not use generic 'Inter' anywhere. The vibe relies entirely on the typography conveying speed and sport.",
+    "For the PIX mock payment, build a simple modal that shows a mock QR code and a 'Simulate Payment' button that transitions state from Pending to Confirmed.",
+    "For tournaments, use CSS Grid for the bracket layout with custom SVG lines connecting the nodes if possible, or simple border hacks.",
+    "Apply backdrop-blur heavily. Text over images must have enough contrast; use text-shadow if necessary."
+  ]
+}

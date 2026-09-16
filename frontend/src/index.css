@@ -1,0 +1,503 @@
+@import url('https://fonts.googleapis.com/css2?family=Teko:wght@400;500;600;700&family=Rajdhani:wght@400;500;600;700&family=Exo+2:ital,wght@0,400;0,500;0,600;0,700;1,400;1,700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg-base: #030305;
+  --bg-surface: #0C0C12;
+  --bg-elev: #14141E;
+  --brand: #00E5FF;
+  --brand-2: #00B8D4;
+  --brand-glow: rgba(0, 229, 255, 0.45);
+  --brand-muted: rgba(0, 229, 255, 0.15);
+  --accent: #FF6B00;
+  --accent-glow: rgba(255, 107, 0, 0.55);
+  --success: #00FF66;
+  --danger: #FF0055;
+  --warning: #FFB800;
+  --text: #FFFFFF;
+  --text-2: #A0A0B0;
+  --text-3: #5A5A6E;
+  --border: rgba(255, 255, 255, 0.08);
+  --border-hi: rgba(0, 229, 255, 0.35);
+  --wa: #25D366;
+  --wa-dark: #128C7E;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root {
+  background: var(--bg-base);
+  color: var(--text);
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: 'Exo 2', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background:
+    radial-gradient(ellipse 80% 50% at 50% -10%, rgba(0,229,255,0.14), transparent 60%),
+    radial-gradient(ellipse 60% 40% at 100% 100%, rgba(255,107,0,0.10), transparent 70%),
+    #030305;
+  background-attachment: fixed;
+  overflow-x: hidden;
+}
+
+/* ----- Typography helpers ----- */
+.font-heading { font-family: 'Teko', 'Rajdhani', sans-serif; letter-spacing: 0.005em; }
+.font-display { font-family: 'Rajdhani', 'Teko', sans-serif; }
+.font-body { font-family: 'Exo 2', system-ui, sans-serif; }
+
+h1, h2, h3, h4 { font-family: 'Teko', 'Rajdhani', sans-serif; letter-spacing: -0.01em; }
+
+/* ----- Neon utilities ----- */
+.text-brand { color: var(--brand); }
+.bg-brand { background-color: var(--brand); }
+.glow-brand { box-shadow: 0 0 24px var(--brand-glow), inset 0 0 0 1px rgba(0,229,255,0.5); }
+.text-glow-brand { text-shadow: 0 0 18px var(--brand-glow); }
+.text-glow-strong { text-shadow: 0 0 22px rgba(0,229,255,0.8), 0 0 4px rgba(255,255,255,0.6); }
+
+.glass {
+  background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.015));
+  backdrop-filter: blur(18px) saturate(120%);
+  -webkit-backdrop-filter: blur(18px) saturate(120%);
+  border: 1px solid var(--border);
+}
+.glass-strong {
+  background: linear-gradient(180deg, rgba(20,20,30,0.85), rgba(12,12,18,0.85));
+  backdrop-filter: blur(24px) saturate(140%);
+  border: 1px solid rgba(255,255,255,0.10);
+}
+
+/* ----- Scanline overlay ----- */
+.scanlines::before {
+  content: "";
+  position: absolute; inset: 0; pointer-events: none;
+  background-image: repeating-linear-gradient(
+    to bottom, rgba(255,255,255,0.03) 0 1px, transparent 1px 3px);
+  mix-blend-mode: overlay;
+}
+
+/* ----- Grid background ----- */
+.bg-grid {
+  background-image:
+    linear-gradient(rgba(0,229,255,0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0,229,255,0.06) 1px, transparent 1px);
+  background-size: 56px 56px;
+  background-position: -1px -1px;
+  mask-image: radial-gradient(ellipse 70% 50% at 50% 50%, black 30%, transparent 80%);
+}
+
+/* ----- Skew tag (FIFA-style label) ----- */
+.skew-tag {
+  display: inline-block;
+  transform: skewX(-12deg);
+  padding: 4px 14px;
+  border-left: 3px solid var(--brand);
+}
+.skew-tag > span { display: inline-block; transform: skewX(12deg); }
+
+/* ----- Neon button (orange CTA) ----- */
+.btn-neon {
+  position: relative;
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 14px 28px;
+  font-family: 'Teko', sans-serif;
+  font-weight: 600; font-size: 20px; letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #ffffff;
+  background: linear-gradient(90deg, #FF7A1A, #FF5400);
+  border: none;
+  clip-path: polygon(8% 0, 100% 0, 92% 100%, 0 100%);
+  cursor: pointer;
+  transition: transform 0.2s ease, filter 0.2s ease, box-shadow 0.2s ease;
+  box-shadow: 0 0 28px rgba(255,107,0,0.55);
+}
+.btn-neon:hover { transform: translateY(-2px); filter: brightness(1.15); box-shadow: 0 0 40px rgba(255,107,0,0.85); }
+.btn-neon:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ----- Blue button (secondary primary) ----- */
+.btn-blue {
+  position: relative;
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 14px 28px;
+  font-family: 'Teko', sans-serif;
+  font-weight: 600; font-size: 20px; letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #ffffff;
+  background: linear-gradient(90deg, #00E5FF, #00B8D4);
+  border: none;
+  clip-path: polygon(8% 0, 100% 0, 92% 100%, 0 100%);
+  cursor: pointer;
+  transition: transform 0.2s ease, filter 0.2s ease, box-shadow 0.2s ease;
+  box-shadow: 0 0 28px rgba(0,229,255,0.45);
+  color: #030305;
+}
+.btn-blue:hover { transform: translateY(-2px); filter: brightness(1.1); box-shadow: 0 0 40px rgba(0,229,255,0.75); }
+
+.btn-ghost {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 12px 24px;
+  font-family: 'Teko', sans-serif; font-weight: 500;
+  font-size: 18px; letter-spacing: 0.12em; text-transform: uppercase;
+  color: #fff;
+  background: transparent;
+  border: 1px solid rgba(255,255,255,0.18);
+  cursor: pointer;
+  clip-path: polygon(6% 0, 100% 0, 94% 100%, 0 100%);
+  transition: all 0.2s ease;
+}
+.btn-ghost:hover { background: rgba(0,229,255,0.10); border-color: var(--brand); color: var(--brand); }
+
+/* ----- Scanlines (CRT/cinematic effect) ----- */
+.scanlines {
+  background-image: repeating-linear-gradient(
+    0deg,
+    rgba(0,0,0,0.15) 0px,
+    rgba(0,0,0,0.15) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  pointer-events: none;
+  mix-blend-mode: multiply;
+}
+
+/* ----- Slot states ----- */
+.slot-free   { border-left: 4px solid var(--success); }
+.slot-occ    { border-left: 4px solid var(--danger); opacity: 0.55; cursor: not-allowed; }
+
+/* ----- Selection ----- */
+::selection { background: rgba(0,229,255,0.45); color: white; }
+
+/* ----- Custom scrollbar ----- */
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: #07070C; }
+*::-webkit-scrollbar-thumb { background: rgba(0,229,255,0.30); border-radius: 8px; }
+*::-webkit-scrollbar-thumb:hover { background: rgba(0,229,255,0.55); }
+
+/* ----- Cinematic intro pulse ----- */
+@keyframes pulse-ring {
+  0% { box-shadow: 0 0 0 0 rgba(0,229,255,0.6); }
+  100% { box-shadow: 0 0 0 24px rgba(0,229,255,0); }
+}
+.pulse-ring { animation: pulse-ring 2.4s infinite; }
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.shimmer-line {
+  background: linear-gradient(90deg, transparent, rgba(0,229,255,0.7), transparent);
+  background-size: 200% 100%;
+  animation: shimmer 3s linear infinite;
+}
+
+@keyframes float-slow {
+  0%,100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+.float-slow { animation: float-slow 6s ease-in-out infinite; }
+
+/* Diagonal divider (decorative) */
+.diagonal-stripe {
+  position: relative;
+}
+.diagonal-stripe::after {
+  content: "";
+  position: absolute; left: 0; right: 0; bottom: -1px; height: 2px;
+  background: linear-gradient(90deg, transparent, var(--brand) 50%, transparent);
+  filter: drop-shadow(0 0 8px var(--brand-glow));
+}
+
+
+/* ----- WhatsApp FAB ----- */
+@keyframes wa-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(37, 211, 102, 0.55); opacity: 0.9; }
+  70% { box-shadow: 0 0 0 18px rgba(37, 211, 102, 0); opacity: 0; }
+  100% { box-shadow: 0 0 0 0 rgba(37, 211, 102, 0); opacity: 0; }
+}
+.whatsapp-fab-pulse {
+  animation: wa-pulse 2.2s ease-out infinite;
+  background: transparent;
+}
+.whatsapp-fab:focus-visible {
+  outline: 2px solid #25D366;
+  outline-offset: 4px;
+}
+
+/* ----- Booking step rail ----- */
+.booking-step-rail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.booking-step-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  border: 1px solid rgba(255,255,255,0.1);
+  background: rgba(255,255,255,0.03);
+  color: rgba(255,255,255,0.45);
+  transition: all 0.25s ease;
+}
+.booking-step-chip.is-active {
+  border-color: rgba(0,229,255,0.5);
+  background: rgba(0,229,255,0.1);
+  color: var(--brand);
+  box-shadow: 0 0 18px rgba(0,229,255,0.2);
+}
+.booking-step-chip.is-done {
+  border-color: rgba(0,255,102,0.35);
+  color: var(--success);
+}
+.booking-step-num {
+  width: 22px; height: 22px;
+  display: grid; place-items: center;
+  font-size: 12px;
+  border: 1px solid currentColor;
+}
+
+/* Trust strip */
+.trust-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+  align-items: center;
+}
+.trust-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.7);
+  border: 1px solid rgba(255,255,255,0.1);
+  background: rgba(0,0,0,0.35);
+}
+.trust-pill strong { color: var(--brand); font-weight: 700; }
+
+/* Empty / loading panels */
+.state-panel {
+  min-height: 180px;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  padding: 2rem;
+  color: rgba(255,255,255,0.55);
+}
+
+/* ----- Motion / videogame pass ----- */
+.title-screen { isolation: isolate; }
+
+.menu-card {
+  box-shadow: 0 0 0 0 rgba(0,229,255,0);
+  transition: box-shadow 0.35s ease, border-color 0.35s ease;
+}
+.group:hover .menu-card,
+.group:focus-within .menu-card {
+  box-shadow: 0 12px 40px rgba(0,229,255,0.18), 0 0 0 1px rgba(0,229,255,0.25);
+}
+
+.cta-select:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 4px;
+}
+
+.hud-stat {
+  position: relative;
+}
+.hud-stat::before {
+  content: "";
+  position: absolute; left: 0; top: 0; bottom: 0; width: 2px;
+  background: linear-gradient(180deg, var(--brand), transparent);
+  opacity: 0.7;
+}
+
+/* Mission HUD (booking step rail) */
+.mission-hud {
+  position: relative;
+  padding: 12px 0 4px;
+}
+.mission-hud-track {
+  position: absolute;
+  left: 8px; right: 8px; top: 50%;
+  height: 2px;
+  background: rgba(255,255,255,0.08);
+  transform: translateY(-50%);
+  z-index: 0;
+  pointer-events: none;
+  display: none;
+}
+@media (min-width: 640px) {
+  .mission-hud-track { display: block; }
+}
+.mission-hud-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--success), var(--brand));
+  box-shadow: 0 0 12px var(--brand-glow);
+  max-width: 100%;
+}
+
+.booking-step-chip.is-locked {
+  opacity: 0.55;
+}
+.booking-step-chip.is-active {
+  transform: translateY(-1px);
+}
+
+/* Match-time slot picker */
+.slot-match {
+  position: relative;
+  overflow: hidden;
+}
+.slot-locked {
+  filter: grayscale(0.35);
+}
+.slot-selected {
+  border-color: rgba(0,229,255,0.65) !important;
+  background: rgba(0,229,255,0.12) !important;
+  box-shadow: 0 0 22px rgba(0,229,255,0.35), inset 0 0 0 1px rgba(0,229,255,0.35);
+}
+.slot-selected-glow {
+  background: radial-gradient(ellipse at 20% 50%, rgba(0,229,255,0.25), transparent 65%);
+}
+.slot-free:hover:not(.slot-selected) {
+  border-color: rgba(0,229,255,0.35);
+  box-shadow: 0 0 16px rgba(0,229,255,0.15);
+}
+.court-select.is-selected {
+  box-shadow: 0 0 28px rgba(0,229,255,0.35), inset 0 0 0 1px rgba(0,229,255,0.45);
+}
+
+.victory-panel {
+  border-color: rgba(0,255,102,0.25);
+}
+
+
+/* ----- Mobile-first polish (~390px phones) ----- */
+.whatsapp-fab {
+  /* size already ≥44px (w-14); bottom set via inline safe-area */
+  min-width: 44px;
+  min-height: 44px;
+}
+
+@media (max-width: 639px) {
+  .booking-step-rail {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    gap: 6px;
+    padding-bottom: 2px;
+    max-width: 100%;
+  }
+  .booking-step-rail::-webkit-scrollbar { display: none; height: 0; }
+  .booking-step-chip {
+    flex-shrink: 0;
+    min-height: 44px;
+    padding: 10px 14px;
+  }
+  .booking-step-num {
+    width: 24px; height: 24px;
+  }
+
+  .btn-neon, .btn-blue, .btn-ghost {
+    min-height: 44px;
+    padding: 12px 18px;
+    font-size: 17px;
+    letter-spacing: 0.08em;
+    max-width: 100%;
+  }
+
+  .trust-strip { gap: 8px; }
+  .trust-pill { min-height: 36px; }
+
+  .menu-card {
+    min-height: 280px;
+  }
+
+  .slot-match {
+    min-height: 72px;
+  }
+
+  /* Hero HUD stats: keep 3-col but tighten type */
+  .hud-stat {
+    padding-left: 0.65rem;
+    padding-right: 0.5rem;
+  }
+}
+
+/* Modals: keep within visual viewport on short phones */
+.booking-modal-sheet {
+  max-height: min(92vh, 100dvh - 1.5rem);
+}
+
+
+/* ----- Baleys arena video / HUD ticker ----- */
+.hero-baleys-video {
+  transform: scale(1.02);
+}
+.hud-ticker {
+  overflow: hidden;
+  border-block: 1px solid rgba(255,255,255,0.06);
+  background: rgba(0,0,0,0.55);
+  padding: 0.45rem 0;
+}
+.hud-ticker-track {
+  display: flex;
+  width: max-content;
+  gap: 0;
+  font-family: ui-monospace, monospace;
+  font-size: 10px;
+  letter-spacing: 0.35em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.4);
+  white-space: nowrap;
+  animation: hud-ticker-scroll 28s linear infinite;
+}
+.hud-ticker-track--static {
+  animation: none;
+  transform: none;
+  width: 100%;
+  justify-content: center;
+}
+@keyframes hud-ticker-scroll {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+/* Prefer reduced motion — kill decorative loops */
+@media (prefers-reduced-motion: reduce) {
+  .shimmer-line,
+  .float-slow,
+  .pulse-ring,
+  .whatsapp-fab-pulse,
+  .hud-ticker-track {
+    animation: none !important;
+  }
+  .hero-baleys-video {
+    display: none !important;
+  }
+  .scanlines {
+    opacity: 0.25;
+  }
+  .menu-card,
+  .slot-match,
+  .btn-neon,
+  .btn-blue,
+  .btn-ghost {
+    transition: none !important;
+  }
+}

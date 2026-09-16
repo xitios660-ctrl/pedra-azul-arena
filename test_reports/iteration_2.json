@@ -1,0 +1,40 @@
+{
+  "summary": "Tested the new cinematic /apresentacao page + smoke-tested existing routes and backend APIs. All requested flows pass.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_results": {
+    "landing_hero_cta_visible": "PASS - hero text 'JOGUE. DOMINE. SEJA LENDA.' visible, hero-presentation-cta button visible with text 'Assistir Apresentação'",
+    "hero_cta_navigation": "PASS - clicking hero-presentation-cta navigates to /apresentacao",
+    "presentation_root_render": "PASS - presentation-root, REC indicator, scene counter '01 / 08' all visible",
+    "auto_advance_scenes": "PASS - scene counter advanced 01->02 (5s), 02->03 (10s), 03->04 (15s), 04->05 (25s), 05->06 (30s), 06->07 (35s), 07->08 (45s)",
+    "audio_toggle": "PASS - presentation-audio-toggle clickable, toggles state",
+    "play_pause_toggle": "PASS - pause freezes scene counter (stayed at 03 for 3s while paused); resume works",
+    "skip_intro": "PASS - presentation-skip navigates back to / (home)",
+    "final_cta_visible_and_navigates": "PASS - after ~45s SceneFinal appears, presentation-final-cta 'ENTRAR NA ARENA' visible; clicking navigates to /booking successfully",
+    "existing_pages": "PASS - /booking, /tournaments, /minhas-reservas, /login all return 200 with no JS page errors",
+    "backend_api_courts": "PASS - GET /api/courts returns 200 with 3 courts",
+    "backend_api_tournaments": "PASS - GET /api/tournaments returns 200 with 2 tournaments"
+  },
+  "test_report_links": ["/app/backend/tests/backend_test.py"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Presentation.jsx is ~1000 lines and could be split into scene files (Scene0..Scene7 + AudioHook) under /pages/presentation/ for maintainability, but functionally OK.",
+    "401 errors on /api/auth/me appear in console for non-logged-in visits (expected behavior, but consider returning 200 with null user to avoid noisy console errors).",
+    "useCinematicAudio: AudioContext is only created via user gesture (audio button). Good. However on unmount cleanup logs may double-fire because both stopFnRef cleanup and useEffect return cleanup call it. Low risk.",
+    "Final CTA only navigates after full 52s playback - good UX; users can use Skip or Final CTA path."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "seed_data_creation": "None - used existing pre-seeded data (3 courts, 2 tournaments)",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Cinematic /apresentacao presentation fully working: 8 scenes auto-advance over ~52s, all HUD controls (audio toggle, play/pause, skip, final CTA) functional. Skip navigates to /, Final CTA navigates to /booking. No backend changes were made; courts (3) and tournaments (2) seed verified. Use polling (5s interval up to 50s) when waiting for Final CTA to appear during testing.",
+  "test_credentials": "Admin: admin@arena.com / Admin@123 (not used in this iteration - presentation flow does not require auth)"
+}

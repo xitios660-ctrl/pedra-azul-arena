@@ -1,0 +1,20 @@
+# Render Blueprint — Pedra Azul / Arena Futsal
+# MongoDB is NOT provided by Render. Use MongoDB Atlas and set MONGO_URL manually.
+services:
+  - type: web
+    name: pedra-azul
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: free
+    healthCheckPath: /api/health
+    envVars:
+      - key: JWT_SECRET
+        generateValue: true
+      - key: DB_NAME
+        value: arena_futsal
+      - key: CORS_ORIGINS
+        value: "*"
+      - key: MONGO_URL
+        sync: false
+      # PORT is set automatically by Render
