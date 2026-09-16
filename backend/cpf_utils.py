@@ -43,3 +43,30 @@ def normalize_whatsapp(num: str) -> str:
     if not d.startswith("55"):
         d = "55" + d
     return d
+
+
+def phone_variants(num: str) -> list[str]:
+    """BR WhatsApp digit variants (55 / no-55 / with-without 9th digit)."""
+    d = only_digits(num)
+    if not d:
+        return []
+    out = {d}
+    if d.startswith("55") and len(d) > 11:
+        out.add(d[2:])
+    elif not d.startswith("55") and len(d) >= 10:
+        out.add("55" + d)
+    for v in list(out):
+        local = v[2:] if v.startswith("55") else v
+        if len(local) == 11 and local[2] == "9":
+            without9 = local[:2] + local[3:]
+            out.add(without9)
+            out.add("55" + without9)
+        if len(local) == 10:
+            with9 = local[:2] + "9" + local[2:]
+            out.add(with9)
+            out.add("55" + with9)
+    return list(out)
+
+
+def phones_match(a: str, b: str) -> bool:
+    return bool(set(phone_variants(a)) & set(phone_variants(b)))

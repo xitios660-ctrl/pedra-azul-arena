@@ -213,7 +213,7 @@ async function startSocket() {
           last_error: null,
           last_disconnect_reason: null,
         });
-        logger.info({ number: num }, "WhatsApp connected");
+        logger.info({ event: "wa_connect", number: num }, "WhatsApp connected");
       }
 
       if (connection === "close") {
@@ -226,7 +226,7 @@ async function startSocket() {
         starting = false;
 
         const loggedOut = statusCode === DisconnectReason.loggedOut;
-        logger.warn({ reason: reasonName, intentionalLogout }, "WhatsApp disconnected");
+        logger.warn({ event: "wa_disconnect", reason: reasonName, intentionalLogout, code: statusCode ?? null }, "WhatsApp disconnected");
 
         if (intentionalLogout || loggedOut) {
           setState({
@@ -266,7 +266,7 @@ function scheduleReconnect() {
   if (reconnectTimer) clearTimeout(reconnectTimer);
   reconnectAttempt += 1;
   const delay = Math.min(30_000, 1000 * 2 ** Math.min(reconnectAttempt, 5));
-  logger.info({ delay, attempt: reconnectAttempt }, "scheduling reconnect");
+  logger.info({ event: "wa_reconnect", delay, attempt: reconnectAttempt }, "scheduling reconnect");
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
     startSocket().catch((e) => logger.error({ err: String(e) }, "reconnect failed"));
@@ -322,6 +322,16 @@ app.get("/health", (_req, res) => {
 
 app.get("/status", (_req, res) => {
   res.json(publicState());
+});
+
+app.get("/metrics", (_req, res) => {
+  res.json({
+    wa_status: status,
+    last_error_code: lastDisconnectReason || lastError || null,
+    reconnect_attempt: reconnectAttempt,
+    bot: Boolean(bot),
+    reminders: Boolean(stopReminders),
+  });
 });
 
 app.post("/start", async (_req, res) => {
@@ -394,7 +404,17 @@ async function main() {
     conv,
     logger,
   });
-  logger.info({ db: DB_NAME }, "Mongo auth + bot ready");
+  logger.info({ db: DB_NAME, conv_ttl_ms: conv.ttlMs }, "Mongo auth + bot ready");
+
+  // Periodic idle timeout sweep — clears stale mid-flow conversation state
+  setInterval(async () => {
+    try {
+      const n = await conv.clearStale();
+      if (n > 0) logger.info({ event: "conv_idle_sweep", cleared: n }, "cleared stale conversations");
+    } catch (e) {
+      logger.warn({ err: String(e) }, "conv idle sweep failed");
+    }
+  }, 5 * 60 * 1000);
 
   const lockCol = db.collection("whatsapp_locks");
   const lockId = process.env.WHATSAPP_SESSION_ID || "default";

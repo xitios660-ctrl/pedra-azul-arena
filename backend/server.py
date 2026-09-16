@@ -40,7 +40,8 @@ from auth_utils import (
     set_auth_cookies,
     clear_auth_cookies,
 )
-from cpf_utils import validate_cpf, mask_cpf, only_digits, normalize_whatsapp
+from cpf_utils import validate_cpf, mask_cpf, only_digits, normalize_whatsapp, phone_variants, phones_match
+import metrics as ops_metrics
 from seed_data import run_all_seeds
 
 # -----------------------------------------------------------------------------
@@ -104,6 +105,7 @@ async def health():
     wa_status = await whatsapp_bridge.get_status()
     wa = wa_status.get("status") or "DESCONECTADO"
     ok = db_ok
+    ops_metrics.set_wa_status(wa)
     return {
         "ok": ok,
         "db": "ok" if db_ok else "error",
@@ -280,6 +282,13 @@ async def create_booking(payload: BookingCreate, request: Request):
         msg = str(e)
         code = 404 if "não encontrada" in msg else 400
         raise HTTPException(status_code=code, detail=msg)
+    ops_metrics.note_booking_create("web")
+    logger.info(
+        "event=booking_create source=web booking_id=%s date=%s time=%s",
+        booking["id"][:8],
+        booking["date"],
+        booking["start_time"],
+    )
     return booking
 
 
@@ -341,6 +350,11 @@ async def cancel_booking(booking_id: str, cpf: str):
     await db.bookings.update_one(
         {"id": booking_id},
         {"$set": {"status": "cancelled", "payment.status": "cancelled"}},
+    )
+    ops_metrics.note_booking_cancel("customer")
+    logger.info(
+        "event=booking_cancel source=customer booking_id=%s",
+        booking_id[:8],
     )
     return {"ok": True}
 
@@ -541,6 +555,8 @@ async def admin_cancel_booking(booking_id: str, admin: dict = Depends(require_ad
         {"id": booking_id},
         {"$set": {"status": "cancelled", "payment.status": "cancelled"}},
     )
+    ops_metrics.note_booking_cancel("admin")
+    logger.info("event=booking_cancel source=admin booking_id=%s", booking_id[:8])
     return {"ok": True}
 
 
@@ -620,43 +636,60 @@ async def internal_wa_create_booking(request: Request, payload: WaBookingIn):
         raise HTTPException(status_code=409, detail="Horário já reservado")
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    ops_metrics.note_booking_create("whatsapp")
+    logger.info(
+        "event=booking_create source=whatsapp booking_id=%s date=%s time=%s",
+        booking["id"][:8],
+        booking["date"],
+        booking["start_time"],
+    )
     return booking
 
 
 @api.get("/internal/whatsapp/bookings")
 async def internal_wa_list_bookings(request: Request, phone: str):
     _require_internal(request)
-    digits = normalize_whatsapp(phone)
+    variants = phone_variants(phone) or [normalize_whatsapp(phone)]
     items = await db.bookings.find(
-        {"whatsapp": digits},
+        {"whatsapp": {"$in": variants}},
         {"_id": 0},
     ).sort("date", 1).to_list(50)
-    # also match without country code variants
-    if not items:
-        alt = only_digits(phone)
-        items = await db.bookings.find(
-            {"whatsapp": {"$in": [alt, normalize_whatsapp(alt)]}},
-            {"_id": 0},
-        ).sort("date", 1).to_list(50)
+    # Extra safety: filter with phones_match (covers odd legacy formats)
+    items = [b for b in items if phones_match(phone, b.get("whatsapp") or "")]
     return {"bookings": items}
 
 
 @api.post("/internal/whatsapp/bookings/cancel")
 async def internal_wa_cancel(request: Request, payload: WaCancelIn):
+    """Cancel only when WhatsApp phone matches the booking (variant-aware)."""
     _require_internal(request)
-    digits = normalize_whatsapp(payload.phone)
+    variants = phone_variants(payload.phone) or [normalize_whatsapp(payload.phone)]
     q = {
-        "whatsapp": digits,
+        "whatsapp": {"$in": variants},
         "status": {"$in": ["pending", "awaiting_admin", "confirmed"]},
     }
     if payload.booking_id:
         q["id"] = payload.booking_id
     b = await db.bookings.find_one(q, sort=[("date", 1), ("start_time", 1)])
-    if not b:
+    if not b or not phones_match(payload.phone, b.get("whatsapp") or ""):
         return {"cancelled": False, "message": "Nenhuma reserva ativa neste número"}
-    await db.bookings.update_one(
-        {"id": b["id"]},
+    # Atomic: only cancel if phone still matches (prevents id-only cancel without phone)
+    res = await db.bookings.update_one(
+        {
+            "id": b["id"],
+            "whatsapp": {"$in": variants},
+            "status": {"$in": ["pending", "awaiting_admin", "confirmed"]},
+        },
         {"$set": {"status": "cancelled", "payment.status": "cancelled"}},
+    )
+    if res.modified_count != 1:
+        return {"cancelled": False, "message": "Nenhuma reserva ativa neste número"}
+    ops_metrics.note_booking_cancel("whatsapp")
+    logger.info(
+        "event=booking_cancel source=whatsapp booking_id=%s date=%s time=%s",
+        b["id"][:8],
+        b["date"],
+        b["start_time"],
     )
     return {
         "cancelled": True,
@@ -789,7 +822,33 @@ async def admin_calendar_create_booking(payload: AdminBookingIn, admin: dict = D
         raise HTTPException(status_code=409, detail="Horário já reservado")
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    ops_metrics.note_booking_create("admin")
+    logger.info(
+        "event=booking_create source=admin booking_id=%s date=%s time=%s",
+        booking["id"][:8],
+        booking["date"],
+        booking["start_time"],
+    )
     return booking
+
+
+# =============================================================================
+# ADMIN — Ops metrics (in-memory; no secrets)
+# =============================================================================
+@api.get("/admin/metrics")
+async def admin_metrics(admin: dict = Depends(require_admin)):
+    wa_status = await whatsapp_bridge.get_status()
+    wa = wa_status.get("status") or "DESCONECTADO"
+    ops_metrics.set_wa_status(wa)
+    snap = ops_metrics.snapshot(wa)
+    # Enrich last_error_code from WA sidecar when present (safe codes/reasons only)
+    last_err = wa_status.get("last_disconnect_reason") or wa_status.get("last_error")
+    if last_err and not snap.get("last_error_code"):
+        ops_metrics.note_error(str(last_err)[:80])
+        snap = ops_metrics.snapshot(wa)
+    elif last_err:
+        snap["last_error_code"] = str(last_err)[:80]
+    return snap
 
 
 # =============================================================================

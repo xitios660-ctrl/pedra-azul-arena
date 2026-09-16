@@ -66,11 +66,9 @@ export function nowSaoPaulo() {
     weekday: "short",
   });
   const parts = Object.fromEntries(fmt.formatToParts(new Date()).map((p) => [p.type, p.value]));
-  // weekday short: Sun Mon ... — map via Date in SP
   const ymd = `${parts.year}-${parts.month}-${parts.day}`;
   const hour = Number(parts.hour === "24" ? "0" : parts.hour);
   const minute = Number(parts.minute);
-  // Get weekday number in SP
   const wdFmt = new Intl.DateTimeFormat("en-US", { timeZone: "America/Sao_Paulo", weekday: "short" });
   const wd = wdFmt.format(new Date());
   const map = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
@@ -88,10 +86,7 @@ function addDaysYmd(ymd, days) {
 }
 
 function nextWeekday(fromYmd, fromWd, targetWd) {
-  let delta = (targetWd - fromWd + 7) % 7;
-  if (delta === 0) delta = 7; // "sábado" means next Saturday if today is Saturday? Usually next occurrence including today for booking
-  // Prefer today if same weekday and slots remain — caller can filter past
-  delta = (targetWd - fromWd + 7) % 7;
+  const delta = (targetWd - fromWd + 7) % 7;
   return addDaysYmd(fromYmd, delta);
 }
 
@@ -113,7 +108,7 @@ export function parseTime(text) {
     const period = m[2];
     if (period === "noite") {
       if (h >= 1 && h <= 11) h += 12;
-      if (h === 12) h = 0; // rare
+      if (h === 12) h = 0;
     } else if (period === "tarde") {
       if (h >= 1 && h <= 11) h += 12;
     } else if (period === "manha") {
@@ -194,11 +189,10 @@ export function parseDate(text, now = null) {
     }
   }
 
-  // "depois das 20" / "depois de 20" is time filter, not date — handled separately
   return null;
 }
 
-/** "depois das 18" / "após as 20" → minimum hour inclusive */
+/** "depois das 18" / "após as 20" / "a partir das 20" → minimum hour inclusive */
 export function parseAfterHour(text) {
   const t = normalizeText(text);
   let m = t.match(/\b(?:depois|apos|após)\s+(?:das?\s+|as\s+)?(\d{1,2})\b/);
@@ -211,7 +205,34 @@ export function parseAfterHour(text) {
     const h = Number(m[1]);
     if (h >= 0 && h <= 23) return h;
   }
+  // "depois das 20h" / "depois das 20:00"
+  m = t.match(/\b(?:depois|apos|após)\s+(?:das?\s+|as\s+)?(\d{1,2})\s*[:h]/);
+  if (m) {
+    const h = Number(m[1]);
+    if (h >= 0 && h <= 23) return h;
+  }
   return null;
+}
+
+/** "sábado à noite" / "sabado de noite" → afterHour 18 (evening window) */
+export function parseNightWindow(text) {
+  const t = normalizeText(text);
+  if (/\b(a\s+noite|à\s+noite|de\s+noite|noitezinha|final\s+da\s+noite)\b/.test(t)) {
+    return 18;
+  }
+  if (/\b(a\s+tarde|de\s+tarde)\b/.test(t) && !/\bdepois\b/.test(t)) {
+    return 14;
+  }
+  return null;
+}
+
+/** Mid-flow change of mind: "na verdade", "mudei de ideia", "outra data", "melhor amanhã" */
+export function isChangeOfMind(text) {
+  const t = normalizeText(text);
+  return (
+    /\b(na verdade|mudei de ideia|mudei de ideia|melhor|outra data|outro horario|outro horário|esquece|deixa pra la|deixa pra lá|quero mudar|mudar (a )?data|mudar (o )?horario)\b/.test(t) ||
+    /\b(nao quero mais|não quero mais|volta|recome[cç]ar|comeca de novo|começa de novo)\b/.test(t)
+  );
 }
 
 export function detectIntent(text, conversationState) {
@@ -219,7 +240,7 @@ export function detectIntent(text, conversationState) {
   const state = conversationState?.state || "idle";
 
   // Affirm / deny while in confirm flows
-  if (state === "awaiting_confirm" || state === "awaiting_cancel_confirm") {
+  if (state === "awaiting_confirm" || state === "awaiting_cancel_confirm" || state === "awaiting_reschedule_confirm") {
     if (/^(s|sim|ss|confirma|confirmar|ok|pode|claro|isso|fechado|bora)\b/.test(t) || t === "s") {
       return { intent: "affirm" };
     }
@@ -228,16 +249,43 @@ export function detectIntent(text, conversationState) {
     }
   }
 
+  // Change of mind mid-flow (before treating as name / slot)
+  if (["awaiting_name", "awaiting_confirm", "awaiting_slot", "awaiting_cancel_confirm", "awaiting_reschedule_confirm"].includes(state)) {
+    if (isChangeOfMind(t)) {
+      const date = parseDate(t);
+      const time = parseTime(t);
+      const afterHour = parseAfterHour(t) ?? parseNightWindow(t);
+      return { intent: "change_mind", date, time, afterHour };
+    }
+    // New date/time while confirming → treat as change
+    if (state === "awaiting_confirm" || state === "awaiting_name") {
+      const date = parseDate(t);
+      const time = parseTime(t);
+      if (date || (time && /\b(as|às|horario|horário|amanha|hoje|sabado|sábado)\b/.test(t))) {
+        return {
+          intent: "change_mind",
+          date: date || conversationState?.data?.date || null,
+          time: time || null,
+          afterHour: parseAfterHour(t) ?? parseNightWindow(t),
+        };
+      }
+    }
+  }
+
   if (state === "awaiting_name") {
-    // treat as name unless clear cancel/help
-    if (/\b(cancelar|cancela|menu|ajuda|oi|ola)\b/.test(t) && t.length < 20) {
-      // fall through
+    if (/\b(cancelar|cancela|menu|ajuda|oi|ola|reagendar|remarcar)\b/.test(t) && t.length < 24) {
+      // fall through to global intents
     } else {
       return { intent: "provide_name", name: String(text).trim() };
     }
   }
 
   if (state === "awaiting_slot") {
+    // date provided instead of time (change)
+    const maybeDate = parseDate(t);
+    if (maybeDate && !parseTime(t) && /\b(hoje|amanha|sabado|sábado|segunda|terca|terça|quarta|quinta|sexta|domingo|\d{1,2}[\/\-])\b/.test(t)) {
+      return { intent: "change_mind", date: maybeDate, time: null, afterHour: parseAfterHour(t) ?? parseNightWindow(t) };
+    }
     const time = parseTime(t);
     if (time) return { intent: "provide_slot", time };
   }
@@ -252,18 +300,35 @@ export function detectIntent(text, conversationState) {
     return { intent: "help" };
   }
 
+  // Parking
+  if (/\b(estacionamento|estacionar|vaga de carro|tem lugar pra carro|tem estacionamento|onde estaciono|onde estacionar)\b/.test(t)) {
+    return { intent: "parking" };
+  }
+
+  // Game duration
+  if (/\b(duracao|duração|quanto tempo|tempo de jogo|dura quanto|1 hora|uma hora|60 min|sessao|sessão)\b/.test(t) &&
+      !/\b(reserv|agend)\b/.test(t)) {
+    return { intent: "duration" };
+  }
+
+  // PIX how-to
+  if (/\b(pix|como pagar|pagamento|calcao|calção|comprovante|qr ?code|copia e cola|copia-e-cola)\b/.test(t)) {
+    return { intent: "pix_howto" };
+  }
+
   // Price
-  if (/\b(preco|preço|valor|quanto custa|quanto e|quanto é|taxa|hora)\b/.test(t)) {
+  if (/\b(preco|preço|valor|quanto custa|quanto e|quanto é|taxa)\b/.test(t)) {
     return { intent: "price" };
   }
 
-  // Address / location
-  if (/\b(endereco|endereço|onde fica|localizacao|localização|como chegar|onde e|onde é|mapa|quadra)\b/.test(t) &&
-      !/\b(reserv|agend|dispon|horario|horário)\b/.test(t)) {
+  // Address / location / maps
+  if (/\b(endereco|endereço|onde fica|localizacao|localização|como chegar|onde e|onde é|mapa|maps|google maps|waze)\b/.test(t)) {
     return { intent: "address" };
   }
-  if (/\b(endereco|endereço|onde fica|localizacao|localização|como chegar)\b/.test(t)) {
-    return { intent: "address" };
+
+  // Reschedule
+  if (/\b(reagendar|remarcar|trocar horario|trocar horário|mudar horario|mudar horário|adiar)\b/.test(t)) {
+    return { intent: "reschedule" };
   }
 
   // Cancel
@@ -279,7 +344,14 @@ export function detectIntent(text, conversationState) {
 
   const date = parseDate(t);
   const time = parseTime(t);
-  const afterHour = parseAfterHour(t);
+  let afterHour = parseAfterHour(t);
+  const night = parseNightWindow(t);
+  if (afterHour == null && night != null) afterHour = night;
+
+  // "sábado à noite" without explicit book verb → availability with evening filter
+  if (date && night != null && !time && !wantsBook) {
+    return { intent: "availability", date, afterHour: night };
+  }
 
   if (wantsBook || (wantsAvail && time) || (state === "idle" && time && date)) {
     if (time && date) {
@@ -295,7 +367,6 @@ export function detectIntent(text, conversationState) {
       intent: "availability",
       date: date || null,
       afterHour,
-      // "hoje" / "amanha" often paired
     };
   }
 
@@ -314,10 +385,8 @@ export function formatDateBr(ymd) {
 
 export function weekdayNamePt(ymd) {
   const [y, m, d] = ymd.split("-").map(Number);
-  // Use noon UTC to avoid TZ edge — weekday for calendar date in SP ≈ that date
   const dt = new Date(Date.UTC(y, m - 1, d, 15, 0, 0));
   const names = ["domingo", "segunda", "terça", "quarta", "quinta", "sexta", "sábado"];
-  // Compute weekday as if local SP: en-US short in SP
   const wd = new Intl.DateTimeFormat("en-US", { timeZone: "America/Sao_Paulo", weekday: "short" }).format(dt);
   const map = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
   return names[map[wd] ?? 0];

@@ -107,6 +107,10 @@ export default function MyBookings() {
           <div className="glass state-panel mt-8">
             <Ticket className="w-8 h-8 text-white/30 mb-3" />
             <div className="font-heading text-2xl uppercase">Nada encontrado</div>
+            <p className="text-sm text-white/55 mt-2 max-w-sm mx-auto">Confira o CPF ou faça uma nova reserva na Quadra Pedra Azul.</p>
+            <button type="button" onClick={() => navigate("/booking")} className="btn-neon !py-2 !px-5 !text-sm mt-4">
+              Reservar horário
+            </button>
           </div>
         )}
 

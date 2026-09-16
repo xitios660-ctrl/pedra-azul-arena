@@ -355,8 +355,10 @@ export default function Booking() {
               <div className="flex items-center gap-2"><span className="w-3 h-3 inline-block border-l-4 border-[var(--success)]" /> Disponível</div>
               <div className="flex items-center gap-2"><span className="w-3 h-3 inline-block border-l-4 border-[var(--warning)]" /> Reservado</div>
               <div className="flex items-center gap-2"><span className="w-3 h-3 inline-block border-l-4 border-white/30" /> Indisponível</div>
-              <div className="mt-4 pt-3 border-t border-white/10">
-                Calção PIX = 30% do valor. Confirmação pelo WhatsApp.
+              <div className="mt-4 pt-3 border-t border-white/10 space-y-1">
+                <div>Calção PIX = 30% · restante na quadra.</div>
+                <div>Após pagar: envie comprovante → admin confirma → WhatsApp.</div>
+                <div>1 horário = 1 hora na Quadra Pedra Azul.</div>
               </div>
             </div>
           </div>
@@ -384,6 +386,14 @@ export default function Booking() {
                 {Array.from({ length: 9 }).map((_, i) => (
                   <div key={i} className="skeleton-slot h-[72px] sm:h-[80px]" />
                 ))}
+              </div>
+            )}
+
+            {!loading && !availError && !availability && (
+              <div className="state-panel">
+                <Clock className="w-8 h-8 text-white/30 mb-3" />
+                <div className="font-heading text-2xl uppercase text-white/70">Escolha uma data</div>
+                <p className="text-sm mt-2 max-w-sm">Os horários da Quadra Pedra Azul aparecem aqui. Uma quadra · slots de 1 hora.</p>
               </div>
             )}
 
@@ -590,6 +600,10 @@ export default function Booking() {
                 <span className="w-1.5 h-1.5 rounded-full bg-[var(--warning)] animate-pulse" aria-hidden />
                 Status: {pixPipelineLabel(booking)} · aguardando pagamento
               </div>
+              <p className="mt-3 text-sm text-white/65 max-w-xl">
+                Pague o <strong className="text-white">calção de 30%</strong> via PIX (copia-e-cola abaixo). Depois envie o <strong className="text-white">comprovante em imagem</strong>.
+                Só o admin confirma — mensagem de texto sozinha <em>não</em> libera a quadra.
+              </p>
 
               <div className="grid md:grid-cols-[200px_1fr] gap-6 md:gap-8 mt-6 items-start">
                 <div className="w-[160px] h-[160px] sm:w-[200px] sm:h-[200px] mx-auto md:mx-0 glass grid place-items-center relative" aria-label="QR Code PIX simulado">

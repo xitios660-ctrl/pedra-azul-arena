@@ -11,6 +11,11 @@ export const WHATSAPP_DISPLAY = "+55 (11) 4002-8922";
 
 export const COURT_PRICE_LABEL = "R$ 130/h";
 export const COURT_LOCATION = "Núncio · Alto Tietê · SP";
+/** Google Maps search — no invented street address */
+export const COURT_MAPS_URL =
+  "https://www.google.com/maps/search/?api=1&query=Pedra%20Azul%20Nuncio%20Alto%20Tiete%20SP";
+export const COURT_DURATION_LABEL = "1 hora (60 min)";
+export const PARKING_NOTE = "Estacionamento no entorno da quadra — chegue ~10 min antes.";
 
 /** Brand arena video (cinematic opening / hero loop) */
 export const BALEYS_VIDEO_SRC = "/assets/video/baleys.mp4";

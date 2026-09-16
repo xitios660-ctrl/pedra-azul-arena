@@ -26,9 +26,9 @@ export function startReminderLoop({ sendText, logger, isConnected }) {
             `🏟 ${b.court_name}\n` +
             `Chegue ~10 min antes. Nos vemos na quadra! ⚽`;
           await sendText(b.whatsapp, msg);
-          logger.info({ booking: b.id }, "reminder sent");
+          logger.info({ event: "reminder_send", booking_id: String(b.id).slice(0, 8), date: b.date, time: b.start_time }, "reminder sent");
         } catch (e) {
-          logger.warn({ err: String(e), booking: b.id }, "reminder failed");
+          logger.warn({ event: "reminder_fail", err: String(e), booking_id: String(b.id).slice(0, 8) }, "reminder failed");
         }
       }
     } catch (e) {

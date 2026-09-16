@@ -167,6 +167,7 @@ function WhatsAppAdmin() {
   const [state, setState] = useState({ status: "DESCONECTADO", qr: null, number: null });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [metrics, setMetrics] = useState(null);
 
   useEffect(() => {
     let es;
@@ -178,6 +179,10 @@ function WhatsAppAdmin() {
       } catch (e) {
         if (!cancelled) setErr("Não foi possível ler status do WhatsApp.");
       }
+      try {
+        const { data } = await api.get("/admin/metrics");
+        if (!cancelled) setMetrics(data);
+      } catch (_) {}
       // Prefer cookie-auth SSE via fetch stream is complex; use EventSource with credentials
       try {
         es = new EventSource(`${API_BASE}/admin/whatsapp/events`, { withCredentials: true });
@@ -203,6 +208,10 @@ function WhatsAppAdmin() {
       try {
         const { data } = await api.get("/admin/whatsapp/status");
         if (!cancelled) setState(data);
+      } catch (_) {}
+      try {
+        const { data } = await api.get("/admin/metrics");
+        if (!cancelled) setMetrics(data);
       } catch (_) {}
     }, 4000);
     return () => {
@@ -288,6 +297,35 @@ function WhatsAppAdmin() {
           Escaneie o QR com o WhatsApp do celular (Aparelhos conectados). A sessão é salva no MongoDB
           e sobrevive a reinícios no Render. Credenciais nunca vão para o frontend.
         </p>
+        {metrics && (
+          <div className="mt-5 grid grid-cols-3 gap-2 text-center" data-testid="admin-ops-metrics">
+            <div className="glass p-3">
+              <div className="text-[9px] uppercase tracking-[0.2em] text-white/40">Reservas hoje</div>
+              <div className="font-heading text-2xl text-[var(--brand)]">{metrics.bookings_today ?? 0}</div>
+            </div>
+            <div className="glass p-3">
+              <div className="text-[9px] uppercase tracking-[0.2em] text-white/40">WA status</div>
+              <div className="font-heading text-sm mt-1" style={{ color: st.color }}>{metrics.wa_status || state.status}</div>
+            </div>
+            <div className="glass p-3">
+              <div className="text-[9px] uppercase tracking-[0.2em] text-white/40">Last error</div>
+              <div className="text-[11px] text-white/60 mt-1 break-all">{metrics.last_error_code || "—"}</div>
+            </div>
+          </div>
+        )}
+        <details className="mt-6 group">
+          <summary className="cursor-pointer text-[11px] uppercase tracking-[0.25em] text-[var(--brand)] list-none flex items-center gap-2">
+            <Activity className="w-3.5 h-3.5" /> Troubleshooting WhatsApp
+          </summary>
+          <ul className="mt-3 text-xs text-white/55 leading-relaxed space-y-2 list-disc pl-5 max-w-lg">
+            <li>QR não aparece: clique em <strong className="text-white">Conectar / Gerar QR</strong> e aguarde status AGUARDANDO_QR (até ~30s).</li>
+            <li>Fica em CONECTANDO: confira logs do sidecar; reinicie o serviço no Render se travar.</li>
+            <li>Desconectou sozinho: clique Conectar de novo — sessão no Mongo costuma restaurar sem QR.</li>
+            <li>loggedOut / ERRO: use <strong className="text-white">Desconectar</strong> (limpa sessão) e gere QR novo no celular.</li>
+            <li>Bot não responde: health deve mostrar whatsapp CONECTADO; mensagens de grupo são ignoradas.</li>
+            <li>Nunca compartilhe QR ou dump de <code className="text-white/70">whatsapp_auth</code>.</li>
+          </ul>
+        </details>
       </div>
 
       <div className="glass p-6 flex flex-col items-center justify-center min-h-[360px]">
@@ -421,7 +459,12 @@ function BookingsAdmin({ bookings, onConfirm, onCancel }) {
         <div className="min-w-[1100px] grid grid-cols-[160px_220px_1fr_100px_140px_120px_220px] px-4 py-3 text-[10px] uppercase tracking-[0.3em] text-white/40 border-b border-white/10">
           <div>Data / Hora</div><div>Cliente</div><div>Partida</div><div>CPF</div><div>WhatsApp</div><div>Status</div><div>Ações</div>
         </div>
-        {filtered.length === 0 ? <div className="p-8 text-center text-white/40">Nenhuma reserva neste filtro.</div> : filtered.map((b) => (
+        {filtered.length === 0 ? (
+          <div className="p-10 text-center text-white/50">
+            <div className="font-heading text-2xl uppercase text-white/70">Nenhuma reserva neste filtro</div>
+            <p className="text-sm mt-2 max-w-sm mx-auto">Ajuste o filtro ou aguarde novas reservas do site / WhatsApp. Use o Calendário para bloquear horários.</p>
+          </div>
+        ) : filtered.map((b) => (
           <BookingRow key={b.id} b={b} onConfirm={onConfirm} onCancel={onCancel} />
         ))}
       </div>

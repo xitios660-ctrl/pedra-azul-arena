@@ -95,3 +95,31 @@ Admin → aba **Calendário**: visão dia/semana, bloquear/desbloquear, criar/ca
 - Service worker (`/sw.js`): **network-first** para HTML/navegação (não prende deploy velho); **nunca cacheia** `/api/*`; cache-first só para `/static/*` hashed
 - SEO local: meta/OG + JSON-LD `SportsActivityLocation`/`LocalBusiness` (Núncio · Alto Tietê — **sem** inventar rua)
 - PIX: estados **aguardando → informado → confirmado** (admin) · **cancelado** · **expirado** (~45 min). Nunca auto-confirma por texto
+
+
+## Bot + Observability (Cycle 4)
+
+Intents extras (pt-BR): estacionamento, duração (1h), PIX how-to, endereço/Maps (busca), “depois das 20”, sábado à noite, remarcar, mudança de ideia no meio do fluxo.
+
+Cancel/remarcar só se o WhatsApp bater com a reserva (variantes 55 / 9º dígito). Estado de conversa expira por idle (~30 min) + sweep periódico.
+
+### Observability
+
+- Logs estruturados: `event=booking_create|booking_cancel`, `wa_connect|wa_disconnect|wa_reconnect`, `reminder_send` (sem secrets)
+- Admin: `GET /api/admin/metrics` → `{ bookings_today, wa_status, last_error_code, ... }` (JWT admin only)
+- Health público permanece seguro: `{ ok, db, whatsapp, whatsapp_bot, court }`
+
+### Smoke / regression
+
+```bash
+# API precisa estar no ar
+BASE_URL=http://127.0.0.1:8000 ./scripts/smoke_test.sh
+
+# ou pytest
+BASE_URL=http://127.0.0.1:8000 python -m pytest backend/tests/test_smoke.py -q
+
+# NL parser (sem API)
+cd whatsapp && node tests/nl_smoke.mjs
+```
+
+Cobertura smoke: health (sem leak), courts, create booking + **409** conflict, admin auth reject (dashboard + metrics).
