@@ -6,6 +6,7 @@ export const HOME = {
   navTournaments: "nav-tournaments",
   navAdmin: "nav-admin",
   navMyBookings: "nav-my-bookings",
+  navFaq: "nav-faq",
   navLogin: "nav-login",          // discreet admin login
   navLogout: "nav-logout",
   menuCardBook: "menu-card-book",
@@ -119,3 +120,15 @@ export const ADMIN = {
   revenueTotals: "admin-revenue-totals",
   revenueTable: "admin-revenue-table",
 };
+
+export const FAQ = {
+  page: "faq-page",
+  accordion: "faq-accordion",
+  empty: "faq-empty",
+  itemPrefix: "faq-item-",
+  mapsLink: "faq-maps-link",
+  ctaBand: "faq-cta-band",
+  ctaBook: "faq-cta-book",
+  ctaWhatsapp: "faq-cta-whatsapp",
+};
+

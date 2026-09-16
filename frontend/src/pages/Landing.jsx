@@ -5,7 +5,7 @@ import PageShell from "@/components/PageShell";
 import { HOME } from "@/constants/testIds";
 import {
   ChevronRight, CalendarDays, Trophy, Ticket, Zap, Activity, Play,
-  MessageCircle, MapPin, ShieldCheck, Banknote, Car, Clock, Sparkles, CloudRain, ScrollText, Images, X,
+  MessageCircle, MapPin, ShieldCheck, Banknote, Car, Clock, Sparkles, CloudRain, ScrollText, Images, X, HelpCircle,
 } from "lucide-react";
 import api from "@/lib/api";
 import {
@@ -554,6 +554,21 @@ export default function Landing() {
           </div>
         </section>
       )}
+
+      {/* ===== FAQ TEASER ===== */}
+      <section className="relative py-8 sm:py-10 border-b border-white/5" data-testid="landing-faq-teaser">
+        <div className="max-w-3xl mx-auto px-6 md:px-10 text-center">
+          <Link
+            to="/faq"
+            data-testid="landing-faq-link"
+            className="inline-flex items-center gap-2 min-h-[44px] text-sm text-white/70 hover:text-[var(--brand)] transition-colors"
+          >
+            <HelpCircle className="w-4 h-4 text-[var(--brand)]" aria-hidden />
+            Perguntas frequentes — horários, preço, PIX, cancelamento e local
+            <ChevronRight className="w-4 h-4" aria-hidden />
+          </Link>
+        </div>
+      </section>
 
       {/* ===== MAIN MENU CARDS ===== */}
       <section className="relative py-24">

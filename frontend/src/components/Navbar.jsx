@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { useAuth } from "@/lib/auth";
 import { HOME } from "@/constants/testIds";
-import { Trophy, CalendarDays, ShieldCheck, LogOut, Ticket, Lock, MessageCircle } from "lucide-react";
+import { Trophy, CalendarDays, ShieldCheck, LogOut, Ticket, Lock, MessageCircle, HelpCircle } from "lucide-react";
 import { useSiteSettings } from "@/lib/SiteSettings";
 
 export default function Navbar() {
@@ -54,6 +54,7 @@ export default function Navbar() {
             {navItem("/booking", "Reservar", HOME.navBook, <CalendarDays className="w-4 h-4" />)}
             {navItem("/tournaments", "Campeonatos", HOME.navTournaments, <Trophy className="w-4 h-4" />)}
             {navItem("/minhas-reservas", "Minhas Reservas", HOME.navMyBookings, <Ticket className="w-4 h-4" />)}
+            {navItem("/faq", "FAQ", HOME.navFaq, <HelpCircle className="w-4 h-4" />)}
             {isAdmin && navItem("/admin", "Admin", HOME.navAdmin, <ShieldCheck className="w-4 h-4" />)}
           </nav>
 

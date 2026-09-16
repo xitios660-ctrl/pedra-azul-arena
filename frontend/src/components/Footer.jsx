@@ -1,5 +1,6 @@
 import React from "react";
-import { Instagram, Phone, MapPin, Mail, MessageCircle } from "lucide-react";
+import { Link } from "react-router-dom";
+import { Instagram, Phone, MapPin, Mail, MessageCircle, HelpCircle } from "lucide-react";
 import { useSiteSettings } from "@/lib/SiteSettings";
 import { defaultWhatsAppPrefill, whatsappUrl, mapsUrlReady } from "@/lib/siteConfig";
 
@@ -123,6 +124,13 @@ export default function Footer() {
                 <MapPin className="w-3.5 h-3.5" /> Como chegar
               </a>
             )}
+            <Link
+              to="/faq"
+              data-testid="footer-faq"
+              className="flex items-center gap-2 hover:text-[var(--brand)] transition-colors"
+            >
+              <HelpCircle className="w-3.5 h-3.5 text-[var(--brand)]" /> Perguntas frequentes
+            </Link>
           </div>
         </div>
         <div>

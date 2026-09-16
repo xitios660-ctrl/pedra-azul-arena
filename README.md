@@ -276,3 +276,9 @@ Prod smoke: `GET /api/health`, `/api/courts`, `/api/site-settings`, WhatsApp `AG
 - Público `GET /api/gallery`; admin upload/legenda/reordenar/remover (máx. 12; magic bytes; sem SVG).
 - Landing: seção **Galeria / Conheça a quadra** com grid + lightbox; oculta se vazia (sem fotos inventadas).
 - Audit: `gallery_upload` / `gallery_delete` (+ caption/reorder).
+
+## Cycle 35 notes
+- Página pública **FAQ** em `/faq` (alias `/perguntas` → `/faq`): accordion neon com Q&As de `site_settings` ao vivo (horários incl. fim de semana, preço, PIX, cancelamento, chuva, estacionamento, duração, WhatsApp se `waReady`, endereço/maps).
+- JSON-LD `FAQPage` só com respostas não vazias; `document.title` + meta description; políticas vazias/`policies_enabled=false` ocultas.
+- Links no Navbar, Footer e teaser na Landing; CTAs Reservar + WhatsApp.
+
