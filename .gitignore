@@ -87,6 +87,7 @@ credentials.json
 *.key
 .credentials
 
-# Runtime uploads (do not commit user files)
-backend/uploads/**
+# Runtime uploads (keep dirs, ignore files)
+backend/uploads/**/*
+!backend/uploads/**/
 !backend/uploads/**/.gitkeep
