@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { isWhatsAppPlaceholder, isPixKeyPlaceholder, OPEN_DAY_LABELS } from "@/lib/siteConfig";
 import AdminCalendar from "@/components/AdminCalendar";
+import RescheduleModal from "@/components/RescheduleModal";
 
 function fmtBRL(n) { return (n || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }); }
 
@@ -36,6 +37,7 @@ export default function AdminDashboard() {
   const [activeTab, setActiveTab] = useState("dashboard");
   const [selectedTour, setSelectedTour] = useState(null);
   const [waModal, setWaModal] = useState(null);
+  const [rescheduleTarget, setRescheduleTarget] = useState(null);
 
   const refresh = async () => {
     const [s, b, t] = await Promise.all([
@@ -117,7 +119,8 @@ export default function AdminDashboard() {
           <BookingsAdmin bookings={bookings}
             onConfirm={confirmAndPrepareWhatsapp}
             onCancel={cancelBooking}
-            onReject={rejectBooking} />
+            onReject={rejectBooking}
+            onReschedule={(b) => setRescheduleTarget(b)} />
         )}
         {activeTab === "calendar" && <AdminCalendar />}
         {activeTab === "whatsapp" && <WhatsAppAdmin />}
@@ -128,6 +131,15 @@ export default function AdminDashboard() {
       </div>
 
       {/* WhatsApp Confirmation Modal */}
+      {rescheduleTarget && (
+        <RescheduleModal
+          booking={rescheduleTarget}
+          mode="admin"
+          onClose={() => setRescheduleTarget(null)}
+          onDone={() => { setRescheduleTarget(null); refresh(); }}
+        />
+      )}
+
       {waModal && (
         <div className="fixed inset-0 z-[60] bg-black/80 backdrop-blur-md grid place-items-center p-4" onClick={() => setWaModal(null)}>
           <div onClick={(e) => e.stopPropagation()} className="glass-strong w-[min(640px,95vw)] p-8">
@@ -641,7 +653,7 @@ function DashboardView({ stats, bookings = [], onConfirm, onReject }) {
   );
 }
 
-function BookingsAdmin({ bookings, onConfirm, onCancel, onReject }) {
+function BookingsAdmin({ bookings, onConfirm, onCancel, onReject, onReschedule }) {
   const awaitingCount = bookings.filter((b) => b.status === "awaiting_admin").length;
   const [filter, setFilter] = useState("all");
   const [dateFrom, setDateFrom] = useState("");
@@ -827,7 +839,7 @@ function BookingsAdmin({ bookings, onConfirm, onCancel, onReject }) {
             )}
           </div>
         ) : filtered.map((b) => (
-          <BookingRow key={b.id} b={b} onConfirm={onConfirm} onCancel={onCancel} onReject={onReject} />
+          <BookingRow key={b.id} b={b} onConfirm={onConfirm} onCancel={onCancel} onReject={onReject} onReschedule={onReschedule} />
         ))}
       </div>
     </div>
@@ -885,7 +897,7 @@ function AwaitingPixQueue({ bookings, onConfirm, onReject }) {
   );
 }
 
-function BookingRow({ b, onConfirm, onCancel, onReject }) {
+function BookingRow({ b, onConfirm, onCancel, onReject, onReschedule }) {
   return (
     <motion.div data-testid={ADMIN.bookingRow(b.id)} initial={{ opacity: 0 }} animate={{ opacity: 1 }}
       className="min-w-[1100px] grid grid-cols-[160px_220px_1fr_100px_140px_120px_220px] px-4 py-3 items-center border-b border-white/5 hover:bg-white/[0.03] text-sm">
@@ -932,6 +944,12 @@ function BookingRow({ b, onConfirm, onCancel, onReject }) {
           <button data-testid={ADMIN.rejectBooking(b.id)} onClick={() => onReject(b.id)}
             className="text-[10px] uppercase tracking-[0.2em] px-2 py-1 border border-[var(--warning)] text-[var(--warning)] hover:bg-[var(--warning)]/15 flex items-center gap-1">
             <FileCheck className="w-3 h-3" /> Recusar PIX
+          </button>
+        )}
+        {b.status !== "cancelled" && b.status !== "expired" && onReschedule && (
+          <button data-testid={ADMIN.rescheduleBooking(b.id)} onClick={() => onReschedule(b)}
+            className="text-[10px] uppercase tracking-[0.2em] px-2 py-1 border border-[var(--brand)]/60 text-[var(--brand)] hover:bg-[var(--brand)]/15 flex items-center gap-1">
+            <RefreshCw className="w-3 h-3" /> Reagendar
           </button>
         )}
         {b.status !== "cancelled" && b.status !== "expired" && b.status !== "awaiting_admin" && (
@@ -1129,7 +1147,7 @@ function SiteSettingsAdmin() {
       <h2 className="font-heading text-4xl uppercase italic mb-2">Configurações</h2>
       <p className="text-white/55 text-sm mb-4">
         WhatsApp, PIX, endereço, estrutura/amenities, preço, horários e dias abertos — booking público, landing e bot WA.
-        Cancelamento pelo cliente respeita as horas mínimas; admin cancela sempre.
+        Cancelamento/remarcação pelo cliente respeita as horas mínimas; admin cancela/remarca sempre.
       </p>
       <div className="grid sm:grid-cols-2 gap-4">
         {field("WhatsApp (E.164 dígitos)", "whatsapp_e164")}

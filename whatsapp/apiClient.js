@@ -78,6 +78,13 @@ export const api = {
   listByPhone: (phone) => req("GET", `/internal/whatsapp/bookings?phone=${encodeURIComponent(phone)}`),
   cancelByPhone: (phone, bookingId) =>
     req("POST", "/internal/whatsapp/bookings/cancel", { phone, booking_id: bookingId || null }),
+  rescheduleByPhone: (phone, bookingId, date, startTime) =>
+    req("POST", "/internal/whatsapp/bookings/reschedule", {
+      phone,
+      booking_id: bookingId || null,
+      date,
+      start_time: startTime,
+    }),
   dueReminders: () => req("GET", "/internal/whatsapp/reminders/due"),
   markReminderSent: (bookingId) =>
     req("POST", `/internal/whatsapp/reminders/${bookingId}/sent`, {}),

@@ -140,6 +140,14 @@ Intents extras (pt-BR): estacionamento, duração (1h), PIX how-to, endereço/Ma
 
 Cancel/remarcar só se o WhatsApp bater com a reserva (variantes 55 / 9º dígito). Estado de conversa expira por idle (~30 min) + sweep periódico.
 
+### Remarcação (Cycle 19)
+
+- Cliente: `POST /api/bookings/{id}/reschedule` (CPF + `date` + `start_time`) — janela = `cancel_min_hours` antes do horário **original**
+- Admin: `POST /api/admin/bookings/{id}/reschedule` — sem janela
+- Atômico: atualiza `date`/`start_time`/`slot_key` no mesmo doc (índice único parcial); conflito → **409**; pagamento/status preservados
+- UI: **Reagendar** em Minhas Reservas e Admin → Reservas
+- WhatsApp: intent `remarcar` / `mudar horário` → confirma → escolhe novo slot via `POST /api/internal/whatsapp/bookings/reschedule` (não cancela antes)
+
 ### Observability
 
 - Logs estruturados: `event=booking_create|booking_cancel`, `wa_connect|wa_disconnect|wa_reconnect`, `reminder_send` (sem secrets)

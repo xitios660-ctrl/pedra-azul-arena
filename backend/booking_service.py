@@ -467,3 +467,81 @@ async def unblock_day(
     _parse_ymd(date)
     res = await db.blocked_slots.delete_many({"court_id": court_id, "date": date})
     return {"ok": True, "date": date, "removed": int(res.deleted_count)}
+
+
+async def reschedule_booking_atomic(
+    db,
+    *,
+    booking_id: str,
+    new_date: str,
+    new_start_time: str,
+    match_extra: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    """Move an active booking to a new slot in-place (same id).
+
+    Preserves status and payment.* (pending stays pending; paid stays paid).
+    Relies on partial unique index uniq_active_slot_key — DuplicateKeyError → conflict.
+    Raises DuplicateKeyError or ValueError.
+    """
+    from pymongo import ReturnDocument
+
+    try:
+        datetime.strptime(new_date, "%Y-%m-%d")
+    except ValueError as e:
+        raise ValueError("Data inválida") from e
+
+    runtime = await get_runtime(db)
+    settings = runtime["settings"]
+    time_slots = runtime["time_slots"]
+    if new_start_time not in time_slots:
+        raise ValueError("Horário inválido")
+    if is_past_slot(new_date, new_start_time):
+        raise ValueError("Horário indisponível")
+    if not sset.is_open_weekday(new_date, settings):
+        raise ValueError("Quadra fechada neste dia da semana")
+
+    q: dict[str, Any] = {"id": booking_id, "status": {"$in": list(ACTIVE_STATUSES)}}
+    if match_extra:
+        q.update(match_extra)
+
+    existing = await db.bookings.find_one(q)
+    if not existing:
+        raise ValueError("Reserva não encontrada ou inativa")
+
+    court_id = existing.get("court_id") or COURT_ID
+    if court_id != COURT_ID:
+        raise ValueError("Quadra não encontrada")
+
+    old_date = existing.get("date")
+    old_time = existing.get("start_time")
+    if old_date == new_date and old_time == new_start_time:
+        raise ValueError("Já está neste horário")
+
+    blocked = await get_blocked_times(db, court_id, new_date)
+    if new_start_time in blocked:
+        raise ValueError("Horário bloqueado")
+
+    new_sk = slot_key(court_id, new_date, new_start_time)
+    update_fields = {
+        "date": new_date,
+        "start_time": new_start_time,
+        "slot_key": new_sk,
+        "rescheduled_at": now_iso(),
+        "previous_date": old_date,
+        "previous_start_time": old_time,
+        # New slot needs a fresh reminder window
+        "reminder_sent": False,
+        "reminder_sent_at": None,
+    }
+    try:
+        updated = await db.bookings.find_one_and_update(
+            q,
+            {"$set": update_fields},
+            return_document=ReturnDocument.AFTER,
+            projection={"_id": 0},
+        )
+    except DuplicateKeyError:
+        raise
+    if not updated:
+        raise ValueError("Reserva não encontrada ou inativa")
+    return updated

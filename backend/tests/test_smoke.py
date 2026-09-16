@@ -922,3 +922,150 @@ def test_health_whatsapp_restore_fields(s):
     blob = r.text.lower()
     for bad in ("password", "jwt_secret", "mongo_url", "private"):
         assert bad not in blob
+
+
+def _pick_two_free_slots(s, day: str):
+    """Return (time_a, time_b) two available slots on day, or skip."""
+    r = s.get(f"{API}/courts/availability", params={"court_id": "court-1", "date": day}, timeout=10)
+    assert r.status_code == 200, r.text
+    free = [x["time"] for x in r.json().get("slots") or [] if x.get("status") == "available"]
+    if len(free) < 2:
+        pytest.skip(f"need 2 free slots on {day}, got {len(free)}")
+    return free[0], free[1]
+
+
+def test_reschedule_customer_frees_old_takes_new(s):
+    """Cycle 19: book A, reschedule to free B → A free, B taken; payment preserved."""
+    day = (datetime.now(TZ) + timedelta(days=3)).strftime("%Y-%m-%d")
+    t_a, t_b = _pick_two_free_slots(s, day)
+    payload = {
+        "court_id": "court-1",
+        "date": day,
+        "start_time": t_a,
+        "duration_minutes": 60,
+        "cpf": SMOKE_CPF,
+        "customer_name": "Smoke Reschedule",
+        "whatsapp": "11944443333",
+        "your_team_name": "A",
+        "opponent_team_name": "B",
+    }
+    r1 = s.post(f"{API}/bookings", json=payload, headers=_xff(), timeout=15)
+    assert r1.status_code in (200, 201), r1.text
+    bid = r1.json()["id"]
+    pay_before = (r1.json().get("payment") or {}).get("status")
+    try:
+        rr = s.post(
+            f"{API}/bookings/{bid}/reschedule",
+            json={"cpf": SMOKE_CPF, "date": day, "start_time": t_b},
+            headers=_xff(),
+            timeout=15,
+        )
+        assert rr.status_code == 200, rr.text
+        body = rr.json()
+        assert body["id"] == bid
+        assert body["date"] == day
+        assert body["start_time"] == t_b
+        assert body["status"] in ("pending", "awaiting_admin", "confirmed")
+        assert (body.get("payment") or {}).get("status") == pay_before
+
+        av = s.get(f"{API}/courts/availability", params={"court_id": "court-1", "date": day}, timeout=10)
+        assert av.status_code == 200
+        by_t = {x["time"]: x for x in av.json().get("slots") or []}
+        assert by_t[t_a]["status"] == "available", by_t[t_a]
+        assert by_t[t_b]["status"] == "reserved", by_t[t_b]
+        assert by_t[t_b].get("booking_id") == bid
+    finally:
+        s.post(f"{API}/bookings/{bid}/cancel", params={"cpf": SMOKE_CPF}, timeout=10)
+
+
+def test_reschedule_conflict_409(s):
+    """Cycle 19: reschedule onto taken slot → 409; original stays."""
+    day = (datetime.now(TZ) + timedelta(days=4)).strftime("%Y-%m-%d")
+    t_a, t_b = _pick_two_free_slots(s, day)
+    base = {
+        "court_id": "court-1",
+        "date": day,
+        "duration_minutes": 60,
+        "cpf": SMOKE_CPF,
+        "customer_name": "Smoke Resched Conflict",
+        "whatsapp": "11944445555",
+        "your_team_name": "A",
+        "opponent_team_name": "B",
+    }
+    r_a = s.post(f"{API}/bookings", json={**base, "start_time": t_a}, headers=_xff(), timeout=15)
+    r_b = s.post(
+        f"{API}/bookings",
+        json={**base, "start_time": t_b, "whatsapp": "11944446666", "customer_name": "Occupier"},
+        headers=_xff(),
+        timeout=15,
+    )
+    assert r_a.status_code in (200, 201), r_a.text
+    assert r_b.status_code in (200, 201), r_b.text
+    bid_a, bid_b = r_a.json()["id"], r_b.json()["id"]
+    try:
+        rr = s.post(
+            f"{API}/bookings/{bid_a}/reschedule",
+            json={"cpf": SMOKE_CPF, "date": day, "start_time": t_b},
+            headers=_xff(),
+            timeout=15,
+        )
+        assert rr.status_code == 409, rr.text
+        got = s.get(f"{API}/bookings/{bid_a}", timeout=10)
+        assert got.json()["start_time"] == t_a
+        assert got.json()["status"] in ("pending", "awaiting_admin", "confirmed")
+    finally:
+        s.post(f"{API}/bookings/{bid_a}/cancel", params={"cpf": SMOKE_CPF}, timeout=10)
+        s.post(f"{API}/bookings/{bid_b}/cancel", params={"cpf": SMOKE_CPF}, timeout=10)
+
+
+def test_reschedule_blocked_inside_cancel_min_hours(admin_session, s):
+    """Cycle 19: customer reschedule blocked inside cancel_min_hours; admin can."""
+    cur = admin_session.get(f"{API}/admin/site-settings", timeout=10)
+    assert cur.status_code == 200, cur.text
+    original = cur.json()
+    patched = {**original, "cancel_min_hours": 72}
+    assert admin_session.put(f"{API}/admin/site-settings", json=patched, timeout=10).status_code == 200
+    try:
+        day = (datetime.now(TZ) + timedelta(days=1)).strftime("%Y-%m-%d")
+        av = s.get(f"{API}/courts/availability", params={"court_id": "court-1", "date": day}, timeout=10)
+        free = [x["time"] for x in av.json().get("slots") or [] if x.get("status") == "available"]
+        if len(free) < 2:
+            pytest.skip("need 2 free slots")
+        t_a, t_b = free[0], free[1]
+        payload = {
+            "court_id": "court-1",
+            "date": day,
+            "start_time": t_a,
+            "duration_minutes": 60,
+            "cpf": SMOKE_CPF,
+            "customer_name": "Smoke Resched Window",
+            "whatsapp": "11933334444",
+            "your_team_name": "A",
+            "opponent_team_name": "B",
+        }
+        r1 = s.post(f"{API}/bookings", json=payload, headers=_xff(), timeout=15)
+        assert r1.status_code in (200, 201), r1.text
+        bid = r1.json()["id"]
+
+        rc = s.post(
+            f"{API}/bookings/{bid}/reschedule",
+            json={"cpf": SMOKE_CPF, "date": day, "start_time": t_b},
+            headers=_xff(),
+            timeout=15,
+        )
+        assert rc.status_code == 400, rc.text
+        detail = (rc.json().get("detail") or "").lower()
+        assert "antes" in detail or "hora" in detail or "remarca" in detail
+
+        ra = admin_session.post(
+            f"{API}/admin/bookings/{bid}/reschedule",
+            json={"date": day, "start_time": t_b},
+            timeout=15,
+        )
+        assert ra.status_code == 200, ra.text
+        assert ra.json()["start_time"] == t_b
+        assert ra.json()["id"] == bid
+
+        admin_session.post(f"{API}/admin/bookings/{bid}/cancel", timeout=10)
+    finally:
+        admin_session.put(f"{API}/admin/site-settings", json=original, timeout=10)

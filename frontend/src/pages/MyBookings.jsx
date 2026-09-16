@@ -12,9 +12,10 @@ import {
 import { useSiteSettings } from "@/lib/SiteSettings";
 import {
   IdCard, Search, Calendar, Clock, CheckCircle2, XCircle, Hourglass, Upload,
-  FileCheck, Loader2, MessageCircle, Ticket,
+  FileCheck, Loader2, MessageCircle, Ticket, RefreshCw,
 } from "lucide-react";
 import { pixBadgeFor } from "@/lib/paymentStatus";
+import RescheduleModal from "@/components/RescheduleModal";
 
 const STATUS_ICON = {
   pending: Hourglass,
@@ -175,6 +176,7 @@ function BookingCard({ b, cpf, idx, onChanged }) {
   const fileRef = useRef(null);
   const [uploading, setUploading] = useState(false);
   const [err, setErr] = useState("");
+  const [showReschedule, setShowReschedule] = useState(false);
 
   const uploadComprovante = async (file) => {
     if (!file) return;
@@ -191,9 +193,15 @@ function BookingCard({ b, cpf, idx, onChanged }) {
 
   const cancel = async () => {
     if (!window.confirm("Cancelar esta reserva?")) return;
-    await api.post(`/bookings/${b.id}/cancel`, null, { params: { cpf: onlyDigits(cpf) }});
-    onChanged();
+    try {
+      await api.post(`/bookings/${b.id}/cancel`, null, { params: { cpf: onlyDigits(cpf) }});
+      onChanged();
+    } catch (e) {
+      setErr(formatApiErrorDetail(e.response?.data?.detail) || e.message);
+    }
   };
+
+  const isActive = ["pending", "awaiting_admin", "confirmed"].includes(b.status);
 
   const renderCrest = (c) => {
     const isUrl = typeof c === "string" && c.startsWith("http");
@@ -258,10 +266,6 @@ function BookingCard({ b, cpf, idx, onChanged }) {
           </button>
           <input ref={fileRef} type="file" accept="image/*,application/pdf" className="hidden"
             onChange={(e) => uploadComprovante(e.target.files?.[0])} />
-          <button data-testid={MYB.cancelBooking(b.id)} onClick={cancel}
-            className="text-xs text-white/40 hover:text-[var(--danger)] mt-2 transition-colors">
-            Cancelar reserva
-          </button>
         </div>
       )}
 
@@ -284,7 +288,34 @@ function BookingCard({ b, cpf, idx, onChanged }) {
         </div>
       )}
 
+      {isActive && (
+        <div className="mt-4 flex flex-wrap gap-3 items-center">
+          <button
+            data-testid={MYB.rescheduleBooking(b.id)}
+            type="button"
+            onClick={() => setShowReschedule(true)}
+            className="text-xs text-[var(--brand)] hover:underline inline-flex items-center gap-1"
+          >
+            <RefreshCw className="w-3 h-3" /> Reagendar
+          </button>
+          <button data-testid={MYB.cancelBooking(b.id)} onClick={cancel}
+            className="text-xs text-white/40 hover:text-[var(--danger)] transition-colors">
+            Cancelar reserva
+          </button>
+        </div>
+      )}
+
       {err && <div className="mt-2 text-xs text-[var(--danger)]">{err}</div>}
+
+      {showReschedule && (
+        <RescheduleModal
+          booking={b}
+          cpf={cpf}
+          mode="customer"
+          onClose={() => setShowReschedule(false)}
+          onDone={() => { setShowReschedule(false); onChanged(); }}
+        />
+      )}
     </motion.div>
   );
 }

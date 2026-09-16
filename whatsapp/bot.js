@@ -316,6 +316,65 @@ export function createBot(deps) {
         }
 
         case "provide_slot": {
+          if (session.state === "awaiting_reschedule_slot") {
+            const date = parseDate(text) || session.data?.date || null;
+            const time = parsed.time || parseTime(text);
+            if (!date) {
+              await reply(`Qual a *nova data*? Ex.: amanhã, sábado ou 20/09.`);
+              return;
+            }
+            if (!time) {
+              await conv.set(jid, "awaiting_reschedule_slot", {
+                booking_id: session.data?.booking_id || null,
+                date,
+              });
+              const data = await api.availability(date, null);
+              const list = formatSlots(data.slots);
+              if (!list) {
+                await reply(`Sem vagas em *${formatDateBr(date)}*. Outra data?`);
+              } else {
+                await reply(`Horários livres em *${formatDateBr(date)}*: ${list}\nQual horário?`);
+              }
+              return;
+            }
+            try {
+              const result = await api.rescheduleByPhone(
+                phone,
+                session.data?.booking_id || null,
+                date,
+                time
+              );
+              if (!result.ok) {
+                await reply(result.message || `Não consegui remarcar esse horário.`);
+                return;
+              }
+              logger.info(
+                {
+                  event: "booking_reschedule",
+                  source: "whatsapp",
+                  booking_id: result.id?.slice?.(0, 8),
+                  date: result.date,
+                  time: result.start_time,
+                },
+                "booking rescheduled"
+              );
+              await conv.clear(jid);
+              await reply(
+                `Pronto! Remarcamos de *${formatDateBr(result.previous_date)} ${result.previous_start_time}* ` +
+                  `para *${formatDateBr(result.date)}* às *${result.start_time}*.\n` +
+                  `Status/pagamento anterior mantido.`
+              );
+              await notifyAdmin(
+                `🔁 Remarcação WA +${phone}\n` +
+                  `${formatDateBr(result.previous_date)} ${result.previous_start_time} → ` +
+                  `${formatDateBr(result.date)} ${result.start_time}`
+              );
+            } catch (e) {
+              const detail = typeof e.data?.detail === "string" ? e.data.detail : e.message;
+              await reply(`Falha ao remarcar: ${detail}`);
+            }
+            return;
+          }
           const date = session.data?.date;
           if (!date) {
             await conv.clear(jid);
@@ -437,27 +496,14 @@ export function createBot(deps) {
             return;
           }
           if (session.state === "awaiting_reschedule_confirm") {
-            // Cancel old, then ask for new slot
-            try {
-              const result = await api.cancelByPhone(phone, session.data?.booking_id || null);
-              if (!result.cancelled) {
-                await conv.clear(jid);
-                await reply(result.message || `Não consegui liberar a reserva antiga.`);
-                return;
-              }
-              logger.info(
-                { event: "booking_reschedule_cancel", source: "whatsapp", booking_id: result.id?.slice?.(0, 8) },
-                "reschedule: old cancelled"
-              );
-              await conv.clear(jid);
-              await reply(
-                `Liberamos *${formatDateBr(result.date)}* às *${result.start_time}*.\n` +
-                  `Qual a *nova data e horário*? Ex.: "amanhã às 21h" ou "sábado depois das 20".`
-              );
-            } catch (e) {
-              await conv.clear(jid);
-              await reply(`Falha ao remarcar: ${e.message}`);
-            }
+            // Keep old booking until new slot is chosen (atomic API preserves payment)
+            await conv.set(jid, "awaiting_reschedule_slot", {
+              booking_id: session.data?.booking_id || null,
+            });
+            await reply(
+              `Beleza — qual a *nova data e horário*?\n` +
+                `Ex.: "amanhã às 21h" ou "sábado 20h". A reserva atual só muda se o novo horário estiver livre.`
+            );
             return;
           }
           await reply(helpFallback());
@@ -529,8 +575,8 @@ export function createBot(deps) {
           const b = active[0];
           await conv.set(jid, "awaiting_reschedule_confirm", { booking_id: b.id });
           await reply(
-            `Remarcar *${formatDateBr(b.date)}* às *${b.start_time}*?\n` +
-              `Vou *cancelar* essa e em seguida você escolhe o novo horário.\n` +
+            `Remarcar *${formatDateBr(b.date)}* às *${b.start_time}* (${b.customer_name})?\n` +
+              `O pagamento/status atual é mantido — só trocamos data/hora.\n` +
               `Responda *sim* ou *não*.`
           );
           return;

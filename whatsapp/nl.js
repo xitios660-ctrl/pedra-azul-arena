@@ -250,7 +250,7 @@ export function detectIntent(text, conversationState) {
   }
 
   // Change of mind mid-flow (before treating as name / slot)
-  if (["awaiting_name", "awaiting_confirm", "awaiting_slot", "awaiting_cancel_confirm", "awaiting_reschedule_confirm"].includes(state)) {
+  if (["awaiting_name", "awaiting_confirm", "awaiting_slot", "awaiting_cancel_confirm", "awaiting_reschedule_confirm", "awaiting_reschedule_slot"].includes(state)) {
     if (isChangeOfMind(t)) {
       const date = parseDate(t);
       const time = parseTime(t);
@@ -280,7 +280,7 @@ export function detectIntent(text, conversationState) {
     }
   }
 
-  if (state === "awaiting_slot") {
+  if (state === "awaiting_slot" || state === "awaiting_reschedule_slot") {
     // date provided instead of time (change)
     const maybeDate = parseDate(t);
     if (maybeDate && !parseTime(t) && /\b(hoje|amanha|sabado|sábado|segunda|terca|terça|quarta|quinta|sexta|domingo|\d{1,2}[\/\-])\b/.test(t)) {

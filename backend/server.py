@@ -354,8 +354,8 @@ def _slot_start_local(booking: dict) -> datetime:
     return naive.replace(tzinfo=tz)
 
 
-def _customer_cancel_allowed(booking: dict, settings: dict) -> tuple[bool, str]:
-    """Simple cancel window: must be >= cancel_min_hours before slot start."""
+def _customer_cancel_allowed(booking: dict, settings: dict, *, action: str = "Cancelamento") -> tuple[bool, str]:
+    """Alter/cancel window: must be >= cancel_min_hours before *original* slot start."""
     min_h = int(settings.get("cancel_min_hours") if settings.get("cancel_min_hours") is not None else 2)
     if min_h <= 0:
         return True, ""
@@ -364,7 +364,7 @@ def _customer_cancel_allowed(booking: dict, settings: dict) -> tuple[bool, str]:
     hours_left = (slot - now).total_seconds() / 3600.0
     if hours_left < min_h:
         return False, (
-            f"Cancelamento só é permitido até {min_h}h antes do horário. "
+            f"{action} só é permitido até {min_h}h antes do horário. "
             f"Fale com a arena pelo WhatsApp se precisar."
         )
     return True, ""
@@ -390,6 +390,27 @@ async def _notify_cancel_wa(booking: dict, *, source: str) -> bool:
     sent = await whatsapp_bridge.send_text(phone, msg)
     return bool(sent)
 
+
+
+async def _notify_reschedule_wa(booking: dict, *, old_date: str, old_time: str, source: str) -> bool:
+    """Best-effort short natural reschedule message if WA connected."""
+    phone = (booking.get("whatsapp") or "").strip()
+    if not phone:
+        return False
+    date = booking.get("date") or ""
+    time = booking.get("start_time") or ""
+    if source == "admin":
+        msg = (
+            f"Pedra Azul: sua reserva foi remarcada pela arena — "
+            f"de {old_date} às {old_time} para {date} às {time}. Nos vemos lá!"
+        )
+    else:
+        msg = (
+            f"Pedra Azul: reserva remarcada — de {old_date} às {old_time} "
+            f"para {date} às {time}. Horário antigo liberado."
+        )
+    sent = await whatsapp_bridge.send_text(phone, msg)
+    return bool(sent)
 
 @api.get("/uploads/{subdir}/{filename}")
 async def serve_upload(subdir: str, filename: str):
@@ -549,6 +570,57 @@ async def cancel_booking(booking_id: str, cpf: str):
         wa_ok,
     )
     return {"ok": True, "whatsapp_notified": wa_ok}
+
+
+class CustomerRescheduleIn(BaseModel):
+    cpf: str
+    date: str
+    start_time: str
+
+
+@api.post("/bookings/{booking_id}/reschedule")
+async def reschedule_booking(booking_id: str, payload: CustomerRescheduleIn):
+    """Customer remarca: CPF + cancel_min_hours on original start; atomic slot move; payment preserved."""
+    await bsvc.expire_stale_pending(db)
+    b = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    if not b:
+        raise HTTPException(status_code=404, detail="Reserva não encontrada")
+    if b.get("cpf") != only_digits(payload.cpf):
+        raise HTTPException(status_code=403, detail="CPF não confere com esta reserva")
+    if b.get("status") not in ACTIVE_STATUSES:
+        raise HTTPException(status_code=400, detail="Reserva já cancelada ou expirada")
+    settings = await sset.get_settings(db)
+    ok_alter, reason = _customer_cancel_allowed(b, settings, action="Remarcação")
+    if not ok_alter:
+        raise HTTPException(status_code=400, detail=reason)
+    old_date, old_time = b.get("date"), b.get("start_time")
+    try:
+        updated = await bsvc.reschedule_booking_atomic(
+            db,
+            booking_id=booking_id,
+            new_date=payload.date,
+            new_start_time=payload.start_time,
+            match_extra={"cpf": only_digits(payload.cpf)},
+        )
+    except DuplicateKeyError:
+        raise HTTPException(status_code=409, detail="Horário já reservado")
+    except ValueError as e:
+        msg = str(e)
+        code = 404 if "não encontrada" in msg.lower() else 400
+        raise HTTPException(status_code=code, detail=msg)
+    wa_ok = await _notify_reschedule_wa(updated, old_date=old_date, old_time=old_time, source="customer")
+    logger.info(
+        "event=booking_reschedule source=customer booking_id=%s %s %s -> %s %s wa=%s pay=%s",
+        booking_id[:8],
+        old_date,
+        old_time,
+        updated.get("date"),
+        updated.get("start_time"),
+        wa_ok,
+        (updated.get("payment") or {}).get("status"),
+    )
+    return {**updated, "whatsapp_notified": wa_ok}
+
 
 
 # =============================================================================
@@ -967,8 +1039,49 @@ async def admin_cancel_booking(booking_id: str, admin: dict = Depends(require_ad
     return {"ok": True, "whatsapp_notified": wa_ok}
 
 
+class AdminRescheduleIn(BaseModel):
+    date: str
+    start_time: str
 
 
+@api.post("/admin/bookings/{booking_id}/reschedule")
+async def admin_reschedule_booking(
+    booking_id: str,
+    payload: AdminRescheduleIn,
+    admin: dict = Depends(require_admin),
+):
+    """Admin remarca sem janela cancel_min_hours; atomic; payment preserved."""
+    await bsvc.expire_stale_pending(db)
+    b = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    if not b:
+        raise HTTPException(status_code=404, detail="Reserva não encontrada")
+    if b.get("status") not in ACTIVE_STATUSES:
+        raise HTTPException(status_code=400, detail="Reserva já cancelada ou expirada")
+    old_date, old_time = b.get("date"), b.get("start_time")
+    try:
+        updated = await bsvc.reschedule_booking_atomic(
+            db,
+            booking_id=booking_id,
+            new_date=payload.date,
+            new_start_time=payload.start_time,
+        )
+    except DuplicateKeyError:
+        raise HTTPException(status_code=409, detail="Horário já reservado")
+    except ValueError as e:
+        msg = str(e)
+        code = 404 if "não encontrada" in msg.lower() else 400
+        raise HTTPException(status_code=code, detail=msg)
+    wa_ok = await _notify_reschedule_wa(updated, old_date=old_date, old_time=old_time, source="admin")
+    logger.info(
+        "event=booking_reschedule source=admin booking_id=%s %s %s -> %s %s wa=%s",
+        booking_id[:8],
+        old_date,
+        old_time,
+        updated.get("date"),
+        updated.get("start_time"),
+        wa_ok,
+    )
+    return {**updated, "whatsapp_notified": wa_ok}
 
 
 @api.post("/admin/bookings/{booking_id}/reject")
@@ -1186,6 +1299,68 @@ async def internal_wa_cancel(request: Request, payload: WaCancelIn):
         "message": f"Reserva cancelada: {b['date']} às {b['start_time']}. Horário liberado.",
     }
 
+
+class WaRescheduleIn(BaseModel):
+    phone: str
+    booking_id: Optional[str] = None
+    date: str
+    start_time: str
+
+
+@api.post("/internal/whatsapp/bookings/reschedule")
+async def internal_wa_reschedule(request: Request, payload: WaRescheduleIn):
+    """Atomic remarcação by WhatsApp phone match; respects cancel_min_hours; payment preserved."""
+    _require_internal(request)
+    await bsvc.expire_stale_pending(db)
+    variants = phone_variants(payload.phone) or [normalize_whatsapp(payload.phone)]
+    q = {
+        "whatsapp": {"$in": variants},
+        "status": {"$in": list(ACTIVE_STATUSES)},
+    }
+    if payload.booking_id:
+        q["id"] = payload.booking_id
+    b = await db.bookings.find_one(q, sort=[("date", 1), ("start_time", 1)])
+    if not b or not phones_match(payload.phone, b.get("whatsapp") or ""):
+        return {"ok": False, "message": "Nenhuma reserva ativa neste número"}
+    settings = await sset.get_settings(db)
+    ok_alter, reason = _customer_cancel_allowed(b, settings, action="Remarcação")
+    if not ok_alter:
+        return {"ok": False, "message": reason}
+    old_date, old_time = b.get("date"), b.get("start_time")
+    try:
+        updated = await bsvc.reschedule_booking_atomic(
+            db,
+            booking_id=b["id"],
+            new_date=payload.date,
+            new_start_time=payload.start_time,
+            match_extra={"whatsapp": {"$in": variants}},
+        )
+    except DuplicateKeyError:
+        return {"ok": False, "message": "Horário já reservado"}
+    except ValueError as e:
+        return {"ok": False, "message": str(e)}
+    logger.info(
+        "event=booking_reschedule source=whatsapp booking_id=%s %s %s -> %s %s",
+        updated["id"][:8],
+        old_date,
+        old_time,
+        updated.get("date"),
+        updated.get("start_time"),
+    )
+    return {
+        "ok": True,
+        "id": updated["id"],
+        "date": updated["date"],
+        "start_time": updated["start_time"],
+        "previous_date": old_date,
+        "previous_start_time": old_time,
+        "status": updated.get("status"),
+        "payment_status": (updated.get("payment") or {}).get("status"),
+        "message": (
+            f"Reserva remarcada: de {old_date} às {old_time} "
+            f"para {updated['date']} às {updated['start_time']}."
+        ),
+    }
 
 
 @api.post("/internal/whatsapp/comprovante")
