@@ -17,4 +17,8 @@ services:
         value: "*"
       - key: MONGO_URL
         sync: false
+      - key: WHATSAPP_AUTO_START
+        value: "true"
+      - key: WHATSAPP_INTERNAL_TOKEN
+        generateValue: true
       # PORT is set automatically by Render
