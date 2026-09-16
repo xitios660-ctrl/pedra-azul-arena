@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import PageShell from "@/components/PageShell";
 import api, { API_BASE } from "@/lib/api";
+import { useSiteSettings } from "@/lib/SiteSettings";
 import { ADMIN } from "@/constants/testIds";
 import {
   TrendingUp, CheckCircle2, Hourglass, Activity, DollarSign, BarChart3, Save,
@@ -744,6 +745,7 @@ function MatchEditor({ tournamentId, m, onUpdated }) {
 
 
 function SiteSettingsAdmin() {
+  const { refresh: refreshPublicSettings } = useSiteSettings();
   const [form, setForm] = useState(null);
   const [err, setErr] = useState("");
   const [ok, setOk] = useState("");
@@ -776,7 +778,8 @@ function SiteSettingsAdmin() {
       };
       const { data } = await api.put("/admin/site-settings", payload);
       setForm(data);
-      setOk("Configurações salvas. Booking e bot usam os novos valores.");
+      try { await refreshPublicSettings(); } catch (_) { /* public cache best-effort */ }
+      setOk("Configurações salvas. Booking, landing e bot usam os novos valores.");
     } catch (e2) {
       const d = e2.response?.data?.detail;
       setErr(typeof d === "string" ? d : (Array.isArray(d) ? d.map(x => x.msg || JSON.stringify(x)).join("; ") : e2.message));

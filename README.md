@@ -44,15 +44,43 @@ Health: `GET /api/health` → `{ ok, db, whatsapp }`.
 
 Blueprint: `render.yaml` (Docker). Configure `MONGO_URL` no dashboard.
 
+## Admin — login (seed)
+
+1. Abra `/login`
+2. Credenciais **seed** (override com env):
+   - Email: `ADMIN_EMAIL` (default `Gugu123@`)
+   - Senha: `ADMIN_PASSWORD` (default `Gugu123@`)
+3. Troque a senha em produção (`ADMIN_EMAIL` / `ADMIN_PASSWORD` no Render) — o seed reaplica o hash se a env mudar.
+
 ## Admin — conectar WhatsApp (QR)
 
-1. Login em `/login` (admin)
+1. Login em `/login` (admin seed acima)
 2. Aba **WhatsApp** no dashboard
 3. **Conectar / Gerar QR** → status `AGUARDANDO_QR`
 4. Celular: WhatsApp → Aparelhos conectados → escanear QR grande
 5. Status vira `CONECTADO` + número; confirmações de reserva enviam mensagem automática
+6. Se cair para `DESCONECTADO` / `ERRO`: Gerar QR de novo (auth state fica em Mongo `whatsapp_auth`)
 
 SSE: `GET /api/admin/whatsapp/events` (JWT/cookie admin).
+
+## Admin — Configurações
+
+Aba **Configurações** edita o singleton `site_settings` (WhatsApp E.164, PIX, endereço/Maps, preço/hora, abertura/fechamento, duração do slot, estacionamento, nome da quadra).
+
+- Público: `GET /api/site-settings`
+- Admin JWT: `GET|PUT /api/admin/site-settings`
+- Booking web + bot WhatsApp leem esses valores (cache ~60s no sidecar).
+
+## INTERNAL_API_TOKEN (FastAPI ↔ WhatsApp)
+
+Defina **um** segredo compartilhado no Render (`openssl rand -hex 32`):
+
+| Variável | Papel |
+|----------|--------|
+| `INTERNAL_API_TOKEN` | Preferido — header `X-Internal-Token` |
+| `WHATSAPP_INTERNAL_TOKEN` | Legacy / `generateValue` no blueprint |
+
+`start.sh` **unifica** os dois no boot (prefere `INTERNAL_API_TOKEN`) para o bridge Python, as rotas `/api/internal/*` e o sidecar Node usarem o mesmo valor. Sem token, rotas internas ficam abertas (só localhost/dev).
 
 ## Dev local
 
@@ -121,9 +149,14 @@ BASE_URL=http://127.0.0.1:8000 python -m pytest backend/tests/test_smoke.py -q
 
 # NL parser (sem API)
 cd whatsapp && node tests/nl_smoke.mjs
+
+# Produção (health + courts + site-settings + WA AGUARDANDO_QR|CONECTADO)
+./scripts/prod_smoke.sh
+# BASE_URL=https://pedra-azul.onrender.com ./scripts/prod_smoke.sh
 ```
 
 Cobertura smoke: health (sem leak), courts, create booking + **409** conflict, admin auth reject (dashboard + metrics).
+Prod smoke: `GET /api/health`, `/api/courts`, `/api/site-settings`, WhatsApp `AGUARDANDO_QR` ou `CONECTADO`.
 
 ## Cycle 5 notes
 - WhatsApp **image comprovante** → booking `awaiting_admin` (informado); **never** auto-confirms.
@@ -135,3 +168,9 @@ Cobertura smoke: health (sem leak), courts, create booking + **409** conflict, a
 - Booking público e bot WA leem preço/horários/contato dessas settings (fallback nos defaults).
 - Hero video: `preload=metadata`, poster `baleys-poster.jpg`, cópia leve `baleys-lite.mp4` (ffmpeg).
 - Segurança: `INTERNAL_API_TOKEN` (ou legacy `WHATSAPP_INTERNAL_TOKEN`) obrigatório quando definido; CORS `*` sem credentials.
+
+## Cycle 8 notes
+- Token unify: `start.sh` + `whatsapp_bridge` preferem `INTERNAL_API_TOKEN` (evita mismatch com sidecar).
+- Booking: data local (não UTC via `toISOString`); preço das settings no UI; aviso **confirmação manual / WhatsApp pendente** se WA ≠ `CONECTADO`.
+- Admin calendário mês: semana começa na **segunda** (pt-BR); Configurações refrescam o provider público ao salvar.
+- `scripts/prod_smoke.sh` contra Render.

@@ -174,15 +174,16 @@ export default function AdminCalendar() {
 
   const days = data?.days || [];
 
-  // Pad month grid to weeks starting Sunday (pt-BR often Mon — use Sun for simple CSS grid)
+  // Pad month grid to weeks starting Monday (pt-BR)
   const monthCells = useMemo(() => {
     if (mode !== "month" || !days.length) return [];
     const first = days[0]?.date;
     if (!first) return [];
     const [y, m, d] = first.split("-").map(Number);
-    const weekday = new Date(y, m - 1, d).getDay(); // 0=Sun
+    const sundayIdx = new Date(y, m - 1, d).getDay(); // 0=Sun
+    const mondayIdx = (sundayIdx + 6) % 7; // Mon=0 … Sun=6
     const cells = [];
-    for (let i = 0; i < weekday; i++) cells.push(null);
+    for (let i = 0; i < mondayIdx; i++) cells.push(null);
     days.forEach((day) => cells.push(day));
     while (cells.length % 7 !== 0) cells.push(null);
     return cells;
@@ -276,7 +277,7 @@ export default function AdminCalendar() {
       {mode === "month" && monthCells.length > 0 && (
         <div data-testid="admin-calendar-month" className="glass p-3">
           <div className="grid grid-cols-7 gap-1 mb-2">
-            {["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"].map((w) => (
+            {["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"].map((w) => (
               <div key={w} className="text-center text-[10px] uppercase tracking-[0.2em] text-white/40 py-1">
                 {w}
               </div>

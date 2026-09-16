@@ -8,8 +8,8 @@ import { maskCPF, validateCPF, maskPhoneBR, onlyDigits } from "@/lib/cpf";
 import {
   whatsappUrl,
   defaultWhatsAppPrefill,
-  COURT_PRICE_LABEL,
   COURT_LOCATION,
+  priceLabel,
 } from "@/lib/siteConfig";
 import { useSiteSettings } from "@/lib/SiteSettings";
 import { pixPipelineLabel } from "@/lib/paymentStatus";
@@ -23,9 +23,13 @@ import {
 } from "lucide-react";
 
 function todayISO() {
+  // Local calendar date (browser TZ). Avoid toISOString() which shifts UTC and can
+  // pick the wrong day near midnight for some offsets.
   const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  return d.toISOString().slice(0, 10);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 function fmtBRL(n) { return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }); }
 
@@ -66,8 +70,10 @@ function flowIndex(step, hasCourt, hasDate, hasSlot) {
 }
 
 export default function Booking() {
-  const { settings } = useSiteSettings();
+  const { settings, priceLabel: livePriceLabel } = useSiteSettings();
+  const courtPriceLabel = livePriceLabel || priceLabel(settings?.price_per_hour);
   const navigate = useNavigate();
+  const [waStatus, setWaStatus] = useState(null); // CONECTADO | AGUARDANDO_QR | DESCONECTADO | ...
   const [courts, setCourts] = useState([]);
   const [courtsError, setCourtsError] = useState("");
   const [selectedCourt, setSelectedCourt] = useState(null);
@@ -105,6 +111,20 @@ export default function Booking() {
         setCourtsError(formatApiErrorDetail(e.response?.data?.detail) || "Não foi possível carregar as quadras.");
       });
   }, []);
+
+  // Public health exposes WhatsApp status (no secrets) — used for success copy.
+  useEffect(() => {
+    if (step !== "pix" && step !== "awaiting") return;
+    let cancelled = false;
+    api.get("/health")
+      .then(({ data }) => {
+        if (!cancelled) setWaStatus(data?.whatsapp || "DESCONECTADO");
+      })
+      .catch(() => {
+        if (!cancelled) setWaStatus("DESCONECTADO");
+      });
+    return () => { cancelled = true; };
+  }, [step]);
 
   useEffect(() => {
     if (!selectedCourt) return;
@@ -274,7 +294,7 @@ export default function Booking() {
 
         {/* Trust signals */}
         <div className="trust-strip mb-8">
-          <span className="trust-pill"><Banknote className="w-3.5 h-3.5 text-[var(--brand)]" /> <strong>{COURT_PRICE_LABEL}</strong></span>
+          <span className="trust-pill"><Banknote className="w-3.5 h-3.5 text-[var(--brand)]" /> <strong>{courtPriceLabel}</strong></span>
           <span className="trust-pill"><MapPin className="w-3.5 h-3.5 text-[var(--brand)]" /> {COURT_LOCATION}</span>
           <span className="trust-pill"><ShieldCheck className="w-3.5 h-3.5 text-[var(--success)]" /> Confirmação via WhatsApp</span>
           <a href={waHref} target="_blank" rel="noopener noreferrer" className="trust-pill hover:border-[#25D366]/50 hover:text-[#25D366] transition-colors">
@@ -606,6 +626,17 @@ export default function Booking() {
                 Pague o <strong className="text-white">calção de 30%</strong> via PIX (copia-e-cola abaixo). Depois envie o <strong className="text-white">comprovante em imagem</strong>.
                 Só o admin confirma — mensagem de texto sozinha <em>não</em> libera a quadra.
               </p>
+              {waStatus && waStatus !== "CONECTADO" && (
+                <div
+                  data-testid="booking-wa-pending-notice"
+                  className="mt-4 text-left text-sm border border-[var(--warning)]/40 bg-[var(--warning)]/10 text-[var(--warning)] px-3 py-2.5"
+                  role="status"
+                >
+                  <strong className="text-white">Confirmação manual / WhatsApp pendente.</strong>{" "}
+                  O bot está <span className="uppercase tracking-wide">{waStatus}</span> — sua reserva já está salva;
+                  a mensagem automática pode atrasar até o admin conectar o WhatsApp. Acompanhe também em Minhas reservas.
+                </div>
+              )}
 
               <div className="grid md:grid-cols-[200px_1fr] gap-6 md:gap-8 mt-6 items-start">
                 <div className="w-[160px] h-[160px] sm:w-[200px] sm:h-[200px] mx-auto md:mx-0 glass grid place-items-center relative" aria-label="QR Code PIX simulado">
@@ -616,7 +647,7 @@ export default function Booking() {
                 <div>
                   <div className="text-[10px] uppercase tracking-[0.3em] text-white/40">Valor do calção (30%)</div>
                   <div className="font-heading text-4xl sm:text-5xl text-[var(--brand)]">{fmtBRL(booking.deposit)}</div>
-                  <div className="text-xs text-white/50 mt-1">Restante na quadra · {COURT_PRICE_LABEL}</div>
+                  <div className="text-xs text-white/50 mt-1">Restante na quadra · {courtPriceLabel}</div>
                   {booking.payment?.expires_at && (
                     <div className="text-xs text-white/45 mt-2">
                       PIX válido até {new Date(booking.payment.expires_at).toLocaleString("pt-BR")} — após isso a reserva expira.
@@ -682,6 +713,17 @@ export default function Booking() {
                   Status: <strong className="text-white">Informado</strong>. A equipe valida o comprovante e só então marca como <strong className="text-white">Confirmado</strong>. Você receberá{" "}
                   <span className="text-[var(--brand)]">WhatsApp</span> na confirmação.
                 </p>
+                {waStatus && waStatus !== "CONECTADO" && (
+                  <div
+                    data-testid="booking-wa-pending-notice"
+                    className="mt-4 text-sm border border-[var(--warning)]/40 bg-[var(--warning)]/10 text-[var(--warning)] px-3 py-2.5 text-left"
+                    role="status"
+                  >
+                    <strong className="text-white">Confirmação manual / WhatsApp pendente.</strong>{" "}
+                    Canal WhatsApp: <span className="uppercase tracking-wide">{waStatus}</span>.
+                    Reserva e comprovante já registrados — a confirmação segue manual pelo admin até o bot reconectar.
+                  </div>
+                )}
                 <div className="mt-4 text-sm text-white/50 glass inline-block px-4 py-2">
                   {booking.your_team_name} <span className="text-[var(--brand)]">×</span> {booking.opponent_team_name} · {booking.court_name} · {booking.start_time}
                 </div>

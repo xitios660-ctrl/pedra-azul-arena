@@ -20,10 +20,11 @@ services:
         sync: false
       - key: WHATSAPP_AUTO_START
         value: "true"
+      # Legacy auto-secret. start.sh unifies with INTERNAL_API_TOKEN (INTERNAL wins if both set).
       - key: WHATSAPP_INTERNAL_TOKEN
         generateValue: true
-      # Preferred shared secret for FastAPI ↔ WhatsApp sidecar (X-Internal-Token).
-      # Generate locally: openssl rand -hex 32 — set the same value in the dashboard.
+      # Preferred shared secret for FastAPI ↔ WhatsApp (X-Internal-Token).
+      # openssl rand -hex 32 — set in dashboard; start.sh mirrors into WHATSAPP_INTERNAL_TOKEN.
       - key: INTERNAL_API_TOKEN
         sync: false
       - key: WHATSAPP_ADMIN_JID

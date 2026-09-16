@@ -71,7 +71,8 @@ ENV PYTHONPATH=/app/backend \
     WHATSAPP_SERVICE_URL=http://127.0.0.1:3001 \
     WHATSAPP_AUTO_START=true
 # INTERNAL_API_TOKEN / WHATSAPP_INTERNAL_TOKEN come from the host/Render at runtime.
-# start.sh re-exports and mirrors them into the Node WhatsApp sidecar process.
+# start.sh unifies them (prefer INTERNAL_API_TOKEN) so FastAPI + Node share one secret.
+# Also inherits: MONGO_URL, DB_NAME, JWT_SECRET, CORS_ORIGINS, WHATSAPP_ADMIN_JID, PORT.
 
 EXPOSE 8000
 

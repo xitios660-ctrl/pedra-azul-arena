@@ -11,19 +11,14 @@ export WHATSAPP_SERVICE_URL="${WHATSAPP_SERVICE_URL:-http://127.0.0.1:${WHATSAPP
 export API_INTERNAL_URL="${API_INTERNAL_URL:-http://127.0.0.1:${PORT}}"
 
 # Shared secret for FastAPI ↔ WhatsApp (X-Internal-Token).
-# Prefer INTERNAL_API_TOKEN; WHATSAPP_INTERNAL_TOKEN remains legacy alias.
-# Re-export so the Node sidecar child always inherits them from the container env.
+# Prefer INTERNAL_API_TOKEN; WHATSAPP_INTERNAL_TOKEN is legacy alias.
+# Always unify to ONE value so FastAPI bridge, /api/internal, and Node sidecar match
+# even when Render sets both to different generateValue / dashboard secrets.
 if [ -n "${INTERNAL_API_TOKEN:-}" ]; then
   export INTERNAL_API_TOKEN
-fi
-if [ -n "${WHATSAPP_INTERNAL_TOKEN:-}" ]; then
-  export WHATSAPP_INTERNAL_TOKEN
-fi
-# If only one is set, mirror so both Node and Python see a consistent pair.
-if [ -n "${INTERNAL_API_TOKEN:-}" ] && [ -z "${WHATSAPP_INTERNAL_TOKEN:-}" ]; then
   export WHATSAPP_INTERNAL_TOKEN="$INTERNAL_API_TOKEN"
-fi
-if [ -z "${INTERNAL_API_TOKEN:-}" ] && [ -n "${WHATSAPP_INTERNAL_TOKEN:-}" ]; then
+elif [ -n "${WHATSAPP_INTERNAL_TOKEN:-}" ]; then
+  export WHATSAPP_INTERNAL_TOKEN
   export INTERNAL_API_TOKEN="$WHATSAPP_INTERNAL_TOKEN"
 fi
 
