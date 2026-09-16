@@ -7,7 +7,8 @@ import { ADMIN } from "@/constants/testIds";
 import {
   TrendingUp, CheckCircle2, Hourglass, Activity, DollarSign, BarChart3, Save,
   Eye, MessageCircle, FileCheck, Wifi, WifiOff, QrCode, RefreshCw, LogOut, Loader2,
-  Calendar, Clock, Ticket, X, Settings, AlertCircle, Download, Search
+  Calendar, Clock, Ticket, X, Settings, AlertCircle, Download, Search,
+  UserCheck, StickyNote, ChevronDown, ChevronUp
 } from "lucide-react";
 import { isWhatsAppPlaceholder, isPixKeyPlaceholder, OPEN_DAY_LABELS } from "@/lib/siteConfig";
 import AdminCalendar from "@/components/AdminCalendar";
@@ -37,6 +38,32 @@ function bookingStartIsPast(b) {
   const [hh, mm] = String(b.start_time).split(":").map((x) => parseInt(x, 10) || 0);
   const start = new Date(`${b.date}T${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}:00`);
   return !Number.isNaN(start.getTime()) && start.getTime() <= Date.now();
+}
+
+/** YYYY-MM-DD in America/Sao_Paulo (admin check-in day boundary). */
+function todayYmdSaoPaulo() {
+  try {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/Sao_Paulo",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date());
+  } catch {
+    const n = new Date();
+    return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`;
+  }
+}
+
+function bookingIsToday(b) {
+  return b?.date === todayYmdSaoPaulo();
+}
+
+function bookingCheckInEligible(b) {
+  if (!bookingIsToday(b)) return false;
+  if (b.status === "confirmed") return true;
+  if ((b.payment?.status || "") === "paid") return true;
+  return false;
 }
 
 export default function AdminDashboard() {
@@ -93,6 +120,32 @@ export default function AdminDashboard() {
       window.alert(e.response?.data?.detail || e.message || "Não foi possível marcar no-show");
     }
   };
+  const markCheckIn = async (id) => {
+    try {
+      await api.post(`/admin/bookings/${id}/check-in`);
+      refresh();
+    } catch (e) {
+      window.alert(e.response?.data?.detail || e.message || "Não foi possível registrar check-in");
+    }
+  };
+  const undoCheckIn = async (id) => {
+    try {
+      await api.post(`/admin/bookings/${id}/check-in/undo`);
+      refresh();
+    } catch (e) {
+      window.alert(e.response?.data?.detail || e.message || "Não foi possível desfazer check-in");
+    }
+  };
+  const saveNotes = async (id, notes) => {
+    try {
+      await api.patch(`/admin/bookings/${id}/notes`, { notes: notes || "" });
+      refresh();
+      return true;
+    } catch (e) {
+      window.alert(e.response?.data?.detail || e.message || "Não foi possível salvar notas");
+      return false;
+    }
+  };
 
   return (
     <PageShell hideWhatsApp>
@@ -139,6 +192,9 @@ export default function AdminDashboard() {
             onCancel={cancelBooking}
             onReject={rejectBooking}
             onNoShow={markNoShow}
+            onCheckIn={markCheckIn}
+            onUndoCheckIn={undoCheckIn}
+            onSaveNotes={saveNotes}
             onReschedule={(b) => setRescheduleTarget(b)} />
         )}
         {activeTab === "calendar" && <AdminCalendar />}
@@ -593,6 +649,7 @@ function DashboardView({ stats, bookings = [], onConfirm, onReject }) {
         <KPI testId={ADMIN.kpiConfirmed} icon={<CheckCircle2 className="w-4 h-4 text-[var(--success)]" />} label="Confirmadas (total)" value={stats.confirmed_bookings} accent="var(--success)" />
         <KPI testId={ADMIN.kpiAwaiting} icon={<Hourglass className="w-4 h-4 text-[var(--brand)]" />} label="Informados (fila)" value={stats.awaiting_admin_bookings || awaiting.length || 0} accent="var(--brand)" />
         <KPI testId={ADMIN.kpiNoShow} icon={<AlertCircle className="w-4 h-4 text-[var(--warning)]" />} label="No-shows (total)" value={stats.no_show_bookings || 0} accent="var(--warning)" />
+        <KPI testId={ADMIN.kpiCheckedIn} icon={<UserCheck className="w-4 h-4 text-[var(--success)]" />} label="Chegaram hoje" value={stats.checked_in_today_count || 0} accent="var(--success)" />
       </div>
 
       <div className="grid lg:grid-cols-2 gap-4 mb-8">
@@ -673,7 +730,7 @@ function DashboardView({ stats, bookings = [], onConfirm, onReject }) {
   );
 }
 
-function BookingsAdmin({ bookings, onConfirm, onCancel, onReject, onNoShow, onReschedule }) {
+function BookingsAdmin({ bookings, onConfirm, onCancel, onReject, onNoShow, onCheckIn, onUndoCheckIn, onSaveNotes, onReschedule }) {
   const awaitingCount = bookings.filter((b) => b.status === "awaiting_admin").length;
   const [filter, setFilter] = useState("all");
   const [dateFrom, setDateFrom] = useState("");
@@ -860,7 +917,7 @@ function BookingsAdmin({ bookings, onConfirm, onCancel, onReject, onNoShow, onRe
             )}
           </div>
         ) : filtered.map((b) => (
-          <BookingRow key={b.id} b={b} onConfirm={onConfirm} onCancel={onCancel} onReject={onReject} onNoShow={onNoShow} onReschedule={onReschedule} />
+          <BookingRow key={b.id} b={b} onConfirm={onConfirm} onCancel={onCancel} onReject={onReject} onNoShow={onNoShow} onCheckIn={onCheckIn} onUndoCheckIn={onUndoCheckIn} onSaveNotes={onSaveNotes} onReschedule={onReschedule} />
         ))}
       </div>
     </div>
@@ -918,84 +975,153 @@ function AwaitingPixQueue({ bookings, onConfirm, onReject }) {
   );
 }
 
-function BookingRow({ b, onConfirm, onCancel, onReject, onNoShow, onReschedule }) {
+function BookingRow({ b, onConfirm, onCancel, onReject, onNoShow, onCheckIn, onUndoCheckIn, onSaveNotes, onReschedule }) {
+  const [open, setOpen] = useState(false);
+  const [notes, setNotes] = useState(b.admin_notes || "");
+  const [savingNotes, setSavingNotes] = useState(false);
+  useEffect(() => {
+    setNotes(b.admin_notes || "");
+  }, [b.admin_notes, b.id]);
+
+  const checkedIn = Boolean(b.checked_in_at);
+  const canCheckIn = bookingCheckInEligible(b);
+
+  const saveNotes = async () => {
+    if (!onSaveNotes) return;
+    setSavingNotes(true);
+    try {
+      const ok = await onSaveNotes(b.id, notes.slice(0, 500));
+      if (ok) setOpen(true);
+    } finally {
+      setSavingNotes(false);
+    }
+  };
+
   return (
-    <motion.div data-testid={ADMIN.bookingRow(b.id)} initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-      className="min-w-[1100px] grid grid-cols-[160px_220px_1fr_100px_140px_120px_220px] px-4 py-3 items-center border-b border-white/5 hover:bg-white/[0.03] text-sm">
-      <div>
-        <div>{new Date(b.date+"T00:00:00").toLocaleDateString("pt-BR")}</div>
-        <div className="font-heading text-xl text-[var(--brand)]">{b.start_time}</div>
-      </div>
-      <div>
-        <div>{b.customer_name}</div>
-        <div className="text-xs text-white/40">{b.court_name}</div>
-      </div>
-      <div className="font-heading uppercase tracking-wide text-sm">
-        <RenderCrest c={b.your_team_crest} /> {b.your_team_name} <span className="text-[var(--brand)]">×</span> {b.opponent_team_name} <RenderCrest c={b.opponent_team_crest} />
-      </div>
-      <div className="font-mono text-xs">{b.cpf_masked}</div>
-      <div className="font-mono text-xs">+{b.whatsapp}</div>
-      <div>
-        <span className="text-[10px] uppercase tracking-[0.3em] px-2 py-1 border whitespace-nowrap"
-          style={{ color: STATUS_COLORS[b.status], borderColor: STATUS_COLORS[b.status] }}>
-          {STATUS_LABEL[b.status]}
-        </span>
-        {b.whatsapp_sent && (
-          <div className="text-[9px] mt-1 uppercase tracking-[0.2em] text-[var(--success)] flex items-center gap-1">
-            <MessageCircle className="w-2 h-2" /> WA enviado
+    <div data-testid={ADMIN.bookingRow(b.id)} className="min-w-[1100px] border-b border-white/5 hover:bg-white/[0.03] text-sm">
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+        className="grid grid-cols-[160px_220px_1fr_100px_140px_120px_220px] px-4 py-3 items-center">
+        <div>
+          <div>{new Date(b.date+"T00:00:00").toLocaleDateString("pt-BR")}</div>
+          <div className="font-heading text-xl text-[var(--brand)]">{b.start_time}</div>
+          {checkedIn && (
+            <div className="mt-1 text-[9px] uppercase tracking-[0.2em] text-[var(--success)] flex items-center gap-1">
+              <UserCheck className="w-2.5 h-2.5" /> Chegou
+            </div>
+          )}
+        </div>
+        <div>
+          <div>{b.customer_name}</div>
+          <div className="text-xs text-white/40">{b.court_name}</div>
+        </div>
+        <div className="font-heading uppercase tracking-wide text-sm">
+          <RenderCrest c={b.your_team_crest} /> {b.your_team_name} <span className="text-[var(--brand)]">×</span> {b.opponent_team_name} <RenderCrest c={b.opponent_team_crest} />
+        </div>
+        <div className="font-mono text-xs">{b.cpf_masked}</div>
+        <div className="font-mono text-xs">+{b.whatsapp}</div>
+        <div>
+          <span className="text-[10px] uppercase tracking-[0.3em] px-2 py-1 border whitespace-nowrap"
+            style={{ color: STATUS_COLORS[b.status], borderColor: STATUS_COLORS[b.status] }}>
+            {STATUS_LABEL[b.status]}
+          </span>
+          {b.whatsapp_sent && (
+            <div className="text-[9px] mt-1 uppercase tracking-[0.2em] text-[var(--success)] flex items-center gap-1">
+              <MessageCircle className="w-2 h-2" /> WA enviado
+            </div>
+          )}
+        </div>
+        <div className="flex flex-wrap gap-1">
+          {b.payment?.comprovante_url && (
+            <a data-testid={ADMIN.viewComprovante(b.id)}
+              href={`${process.env.REACT_APP_BACKEND_URL}${b.payment.comprovante_url}`}
+              target="_blank" rel="noopener noreferrer"
+              className="text-[10px] uppercase tracking-[0.2em] px-2 py-1 border border-[var(--brand)] text-[var(--brand)] hover:bg-[var(--brand)]/15 flex items-center gap-1">
+              <Eye className="w-3 h-3" /> Comprovante
+            </a>
+          )}
+          {(b.status === "awaiting_admin" || b.status === "pending") && (
+            <button data-testid={ADMIN.confirmBooking(b.id)} onClick={() => onConfirm(b.id)}
+              className="text-[10px] uppercase tracking-[0.2em] px-2 py-1 border border-[var(--success)] text-[var(--success)] hover:bg-[var(--success)]/15 flex items-center gap-1">
+              <CheckCircle2 className="w-3 h-3" /> Confirmar
+            </button>
+          )}
+          {b.status === "awaiting_admin" && onReject && (
+            <button data-testid={ADMIN.rejectBooking(b.id)} onClick={() => onReject(b.id)}
+              className="text-[10px] uppercase tracking-[0.2em] px-2 py-1 border border-[var(--warning)] text-[var(--warning)] hover:bg-[var(--warning)]/15 flex items-center gap-1">
+              <FileCheck className="w-3 h-3" /> Recusar PIX
+            </button>
+          )}
+          {canCheckIn && !checkedIn && onCheckIn && (
+            <button data-testid={ADMIN.checkInBooking(b.id)} onClick={() => onCheckIn(b.id)}
+              className="text-[10px] uppercase tracking-[0.2em] px-2 py-1 border border-[var(--success)] text-[var(--success)] hover:bg-[var(--success)]/15 flex items-center gap-1">
+              <UserCheck className="w-3 h-3" /> Chegou
+            </button>
+          )}
+          {checkedIn && onUndoCheckIn && (
+            <button data-testid={ADMIN.undoCheckInBooking(b.id)} onClick={() => onUndoCheckIn(b.id)}
+              className="text-[10px] uppercase tracking-[0.2em] px-2 py-1 border border-white/30 text-white/60 hover:bg-white/10 flex items-center gap-1">
+              Desfazer chegou
+            </button>
+          )}
+          {b.status !== "cancelled" && b.status !== "expired" && b.status !== "no_show" && onReschedule && (
+            <button data-testid={ADMIN.rescheduleBooking(b.id)} onClick={() => onReschedule(b)}
+              className="text-[10px] uppercase tracking-[0.2em] px-2 py-1 border border-[var(--brand)]/60 text-[var(--brand)] hover:bg-[var(--brand)]/15 flex items-center gap-1">
+              <RefreshCw className="w-3 h-3" /> Reagendar
+            </button>
+          )}
+          {b.status === "confirmed" && bookingStartIsPast(b) && onNoShow && (
+            <button data-testid={ADMIN.noShowBooking(b.id)} onClick={() => onNoShow(b.id)}
+              className="text-[10px] uppercase tracking-[0.2em] px-2 py-1 border border-[var(--warning)]/70 text-[var(--warning)] hover:bg-[var(--warning)]/15 flex items-center gap-1">
+              <AlertCircle className="w-3 h-3" /> No-show
+            </button>
+          )}
+          {b.status !== "cancelled" && b.status !== "expired" && b.status !== "no_show" && b.status !== "awaiting_admin" && (
+            <button data-testid={ADMIN.cancelBooking(b.id)} onClick={() => onCancel(b.id)}
+              className="text-[10px] uppercase tracking-[0.2em] px-2 py-1 border border-[var(--danger)]/60 text-[var(--danger)] hover:bg-[var(--danger)]/15">
+              Cancelar
+            </button>
+          )}
+          {b.status === "awaiting_admin" && (
+            <button data-testid={ADMIN.cancelBooking(b.id)} onClick={() => onCancel(b.id)}
+              className="text-[10px] uppercase tracking-[0.2em] px-2 py-1 border border-[var(--danger)]/40 text-white/40 hover:text-[var(--danger)] hover:border-[var(--danger)]/60">
+              Cancelar
+            </button>
+          )}
+          {onSaveNotes && (
+            <button type="button" data-testid={ADMIN.notesBooking(b.id)} onClick={() => setOpen((v) => !v)}
+              className="text-[10px] uppercase tracking-[0.2em] px-2 py-1 border border-white/25 text-white/70 hover:bg-white/10 flex items-center gap-1">
+              <StickyNote className="w-3 h-3" /> Notas
+              {open ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+            </button>
+          )}
+        </div>
+      </motion.div>
+      {open && onSaveNotes && (
+        <div className="px-4 pb-4 pt-1 bg-black/25 border-t border-white/5">
+          <label className="text-[10px] uppercase tracking-[0.3em] text-white/40 flex items-center gap-2 mb-2">
+            <StickyNote className="w-3 h-3" /> Notas internas (só admin)
+          </label>
+          <textarea
+            value={notes}
+            maxLength={500}
+            rows={3}
+            onChange={(e) => setNotes(e.target.value.slice(0, 500))}
+            placeholder="Ex.: cliente pediu bola extra, atraso…"
+            className="w-full bg-black/40 border border-white/15 px-3 py-2 text-sm text-white placeholder:text-white/30 focus:border-[var(--brand)] focus:outline-none resize-y min-h-[72px]"
+          />
+          <div className="mt-2 flex items-center justify-between gap-3">
+            <span className="text-[10px] text-white/35">{(notes || "").length}/500</span>
+            <button type="button" data-testid={ADMIN.notesSave(b.id)} onClick={saveNotes} disabled={savingNotes}
+              className="text-[10px] uppercase tracking-[0.2em] px-3 py-1.5 border border-[var(--brand)] text-[var(--brand)] hover:bg-[var(--brand)]/15 disabled:opacity-50 flex items-center gap-1">
+              {savingNotes ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+              Salvar notas
+            </button>
           </div>
-        )}
-      </div>
-      <div className="flex flex-wrap gap-1">
-        {b.payment?.comprovante_url && (
-          <a data-testid={ADMIN.viewComprovante(b.id)}
-            href={`${process.env.REACT_APP_BACKEND_URL}${b.payment.comprovante_url}`}
-            target="_blank" rel="noopener noreferrer"
-            className="text-[10px] uppercase tracking-[0.2em] px-2 py-1 border border-[var(--brand)] text-[var(--brand)] hover:bg-[var(--brand)]/15 flex items-center gap-1">
-            <Eye className="w-3 h-3" /> Comprovante
-          </a>
-        )}
-        {(b.status === "awaiting_admin" || b.status === "pending") && (
-          <button data-testid={ADMIN.confirmBooking(b.id)} onClick={() => onConfirm(b.id)}
-            className="text-[10px] uppercase tracking-[0.2em] px-2 py-1 border border-[var(--success)] text-[var(--success)] hover:bg-[var(--success)]/15 flex items-center gap-1">
-            <CheckCircle2 className="w-3 h-3" /> Confirmar
-          </button>
-        )}
-        {b.status === "awaiting_admin" && onReject && (
-          <button data-testid={ADMIN.rejectBooking(b.id)} onClick={() => onReject(b.id)}
-            className="text-[10px] uppercase tracking-[0.2em] px-2 py-1 border border-[var(--warning)] text-[var(--warning)] hover:bg-[var(--warning)]/15 flex items-center gap-1">
-            <FileCheck className="w-3 h-3" /> Recusar PIX
-          </button>
-        )}
-        {b.status !== "cancelled" && b.status !== "expired" && b.status !== "no_show" && onReschedule && (
-          <button data-testid={ADMIN.rescheduleBooking(b.id)} onClick={() => onReschedule(b)}
-            className="text-[10px] uppercase tracking-[0.2em] px-2 py-1 border border-[var(--brand)]/60 text-[var(--brand)] hover:bg-[var(--brand)]/15 flex items-center gap-1">
-            <RefreshCw className="w-3 h-3" /> Reagendar
-          </button>
-        )}
-        {b.status === "confirmed" && bookingStartIsPast(b) && onNoShow && (
-          <button data-testid={ADMIN.noShowBooking(b.id)} onClick={() => onNoShow(b.id)}
-            className="text-[10px] uppercase tracking-[0.2em] px-2 py-1 border border-[var(--warning)]/70 text-[var(--warning)] hover:bg-[var(--warning)]/15 flex items-center gap-1">
-            <AlertCircle className="w-3 h-3" /> No-show
-          </button>
-        )}
-        {b.status !== "cancelled" && b.status !== "expired" && b.status !== "no_show" && b.status !== "awaiting_admin" && (
-          <button data-testid={ADMIN.cancelBooking(b.id)} onClick={() => onCancel(b.id)}
-            className="text-[10px] uppercase tracking-[0.2em] px-2 py-1 border border-[var(--danger)]/60 text-[var(--danger)] hover:bg-[var(--danger)]/15">
-            Cancelar
-          </button>
-        )}
-        {b.status === "awaiting_admin" && (
-          <button data-testid={ADMIN.cancelBooking(b.id)} onClick={() => onCancel(b.id)}
-            className="text-[10px] uppercase tracking-[0.2em] px-2 py-1 border border-[var(--danger)]/40 text-white/40 hover:text-[var(--danger)] hover:border-[var(--danger)]/60">
-            Cancelar
-          </button>
-        )}
-      </div>
-    </motion.div>
+        </div>
+      )}
+    </div>
   );
 }
-
 function RenderCrest({ c }) {
   if (typeof c === "string" && c.startsWith("http"))
     return <img src={c} alt="" className="inline w-5 h-5 object-cover align-middle border border-white/15" />;

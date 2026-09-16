@@ -340,7 +340,7 @@ async def _attach_comprovante(booking_id: str, url: str, gridfs_id: str | None =
         booking_id[:8],
         bool(gridfs_id),
     )
-    return updated
+    return _public_booking(updated)
 
 
 def _slot_start_local(booking: dict) -> datetime:
@@ -496,7 +496,7 @@ async def create_booking(payload: BookingCreate, request: Request):
     )
     # Best-effort admin WA alert — never fail the booking
     await admin_alerts.notify_admin_new_booking(db, booking)
-    return booking
+    return _public_booking(booking)
 
 
 @api.post("/bookings/{booking_id}/comprovante")
@@ -521,7 +521,7 @@ async def get_booking(booking_id: str):
     b = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
     if not b:
         raise HTTPException(status_code=404, detail="Reserva não encontrada")
-    return b
+    return _public_booking(b)
 
 
 @api.post("/bookings/lookup")
@@ -533,7 +533,11 @@ async def lookup_by_cpf(payload: LookupIn):
     cpf_d = only_digits(payload.cpf)
     items = await db.bookings.find({"cpf": cpf_d}, {"_id": 0}).sort("created_at", -1).to_list(200)
     customer_name = items[0]["customer_name"] if items else None
-    return {"cpf_masked": mask_cpf(payload.cpf), "customer_name": customer_name, "bookings": items}
+    return {
+        "cpf_masked": mask_cpf(payload.cpf),
+        "customer_name": customer_name,
+        "bookings": _public_bookings(items),
+    }
 
 
 @api.post("/bookings/{booking_id}/cancel")
@@ -619,7 +623,7 @@ async def reschedule_booking(booking_id: str, payload: CustomerRescheduleIn):
         wa_ok,
         (updated.get("payment") or {}).get("status"),
     )
-    return {**updated, "whatsapp_notified": wa_ok}
+    return {**_public_booking(updated), "whatsapp_notified": wa_ok}
 
 
 
@@ -706,6 +710,22 @@ async def get_tournament(tid: str):
 # =============================================================================
 # ADMIN
 # =============================================================================
+
+_ADMIN_ONLY_BOOKING_FIELDS = ("admin_notes", "checked_in_at", "checked_in_by")
+
+
+def _public_booking(b: Optional[dict]) -> Optional[dict]:
+    """Strip admin-only fields from customer-facing booking payloads."""
+    if not b:
+        return b
+    out = {k: v for k, v in b.items() if k not in _ADMIN_ONLY_BOOKING_FIELDS and k != "_id"}
+    return out
+
+
+def _public_bookings(items: list) -> list:
+    return [_public_booking(b) for b in items]
+
+
 def _build_whatsapp_message(b: dict) -> str:
     date_br = "/".join(reversed(b["date"].split("-")))
     return (
@@ -737,6 +757,10 @@ async def admin_dashboard(admin: dict = Depends(require_admin)):
     pending = [b for b in bookings if b.get("status") == "pending"]
     awaiting = [b for b in bookings if b.get("status") == "awaiting_admin"]
     no_shows = [b for b in bookings if b.get("status") == "no_show"]
+    checked_in_today = [
+        b for b in bookings
+        if b.get("date") == today and b.get("checked_in_at")
+    ]
     active = bsvc.ACTIVE_STATUSES
 
     revenue = sum(float(b.get("deposit") or 0) for b in confirmed)
@@ -815,6 +839,7 @@ async def admin_dashboard(admin: dict = Depends(require_admin)):
         "pending_bookings": len(pending),
         "awaiting_admin_bookings": len(awaiting),
         "no_show_bookings": len(no_shows),
+        "checked_in_today_count": len(checked_in_today),
         "revenue_deposits": revenue,
         "revenue_full": full_value,
         "occupancy_today_pct": occupancy_today,
@@ -829,6 +854,9 @@ async def admin_dashboard(admin: dict = Depends(require_admin)):
                 "customer_name": b.get("customer_name"),
                 "status": b.get("status"),
                 "deposit": b.get("deposit"),
+                "checked_in_at": b.get("checked_in_at"),
+                "checked_in": bool(b.get("checked_in_at")),
+                "admin_notes": b.get("admin_notes") or "",
             }
             for b in sorted(today_bookings, key=lambda x: x.get("start_time") or "")
         ],
@@ -1086,6 +1114,107 @@ async def admin_mark_no_show(booking_id: str, admin: dict = Depends(require_admi
     await daily_metrics.note_no_show(db)
     logger.info("event=booking_no_show source=admin booking_id=%s", booking_id[:8])
     return {"ok": True, "status": "no_show", "booking": updated}
+
+
+
+
+class AdminNotesIn(BaseModel):
+    notes: str = Field(default="", max_length=500)
+
+
+@api.patch("/admin/bookings/{booking_id}/notes")
+async def admin_update_booking_notes(
+    booking_id: str,
+    payload: AdminNotesIn,
+    admin: dict = Depends(require_admin),
+):
+    """Internal admin notes — never exposed on public MyBookings / lookup."""
+    b = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    if not b:
+        raise HTTPException(status_code=404, detail="Reserva não encontrada")
+    notes = (payload.notes or "").strip()
+    if len(notes) > 500:
+        raise HTTPException(status_code=400, detail="Notas: máximo 500 caracteres")
+    await db.bookings.update_one(
+        {"id": booking_id},
+        {"$set": {
+            "admin_notes": notes,
+            "admin_notes_updated_at": _now_iso(),
+            "admin_notes_updated_by": admin.get("email") or "admin",
+        }},
+    )
+    updated = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    logger.info("event=booking_admin_notes booking_id=%s len=%s", booking_id[:8], len(notes))
+    return {"ok": True, "admin_notes": notes, "booking": updated}
+
+
+def _check_in_eligible(b: dict, today: str) -> tuple[bool, str]:
+    """Return (ok, error_detail). Only today + confirmed/paid."""
+    if (b.get("date") or "") != today:
+        return False, "Check-in só para reservas de hoje"
+    status = b.get("status")
+    pay = (b.get("payment") or {}).get("status")
+    if status == "confirmed" or pay == "paid":
+        return True, ""
+    return False, "Só reservas confirmadas/pagas podem fazer check-in"
+
+
+@api.post("/admin/bookings/{booking_id}/check-in")
+async def admin_check_in_booking(booking_id: str, admin: dict = Depends(require_admin)):
+    """Mark customer arrived — today only, confirmed/paid."""
+    tz = ZoneInfo("America/Sao_Paulo")
+    today = datetime.now(tz).strftime("%Y-%m-%d")
+    b = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    if not b:
+        raise HTTPException(status_code=404, detail="Reserva não encontrada")
+    if b.get("checked_in_at"):
+        return {
+            "ok": True,
+            "checked_in": True,
+            "checked_in_at": b.get("checked_in_at"),
+            "booking": b,
+        }
+    ok, reason = _check_in_eligible(b, today)
+    if not ok:
+        raise HTTPException(status_code=400, detail=reason)
+    now = _now_iso()
+    res = await db.bookings.update_one(
+        {"id": booking_id, "checked_in_at": {"$in": [None, ""]}},
+        {"$set": {
+            "checked_in_at": now,
+            "checked_in_by": admin.get("email") or "admin",
+        }},
+    )
+    updated = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    if res.modified_count != 1 and not (updated and updated.get("checked_in_at")):
+        raise HTTPException(status_code=409, detail="Não foi possível registrar check-in")
+    logger.info("event=booking_check_in booking_id=%s", booking_id[:8])
+    return {
+        "ok": True,
+        "checked_in": True,
+        "checked_in_at": updated.get("checked_in_at"),
+        "booking": updated,
+    }
+
+
+@api.post("/admin/bookings/{booking_id}/check-in/undo")
+async def admin_undo_check_in_booking(booking_id: str, admin: dict = Depends(require_admin)):
+    """Clear check-in flag (optional undo)."""
+    b = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    if not b:
+        raise HTTPException(status_code=404, detail="Reserva não encontrada")
+    await db.bookings.update_one(
+        {"id": booking_id},
+        {"$set": {"checked_in_at": None, "checked_in_by": None}},
+    )
+    updated = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    logger.info("event=booking_check_in_undo booking_id=%s", booking_id[:8])
+    return {
+        "ok": True,
+        "checked_in": False,
+        "checked_in_at": None,
+        "booking": updated,
+    }
 
 
 class AdminRescheduleIn(BaseModel):

@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import api from "@/lib/api";
 import {
   Calendar as CalIcon, ChevronLeft, ChevronRight, Lock, Unlock,
-  Plus, X, Ban
+  Plus, X, Ban, UserCheck
 } from "lucide-react";
 
 const SLOT_STYLE = {
@@ -25,6 +25,19 @@ function ymdAdd(ymd, days) {
 function todayYmd() {
   const n = new Date();
   return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`;
+}
+
+function todayYmdSaoPaulo() {
+  try {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/Sao_Paulo",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date());
+  } catch {
+    return todayYmd();
+  }
 }
 
 function formatBr(ymd) {
@@ -146,6 +159,30 @@ export default function AdminCalendar() {
     await api.post(`/admin/bookings/${id}/cancel`);
     setDialog(null);
     load();
+  };
+
+  const doCheckIn = async () => {
+    const id = dialog.slot?.booking_id;
+    if (!id) return;
+    try {
+      await api.post(`/admin/bookings/${id}/check-in`);
+      setDialog(null);
+      load();
+    } catch (ex) {
+      alert(ex.response?.data?.detail || ex.message);
+    }
+  };
+
+  const doUndoCheckIn = async () => {
+    const id = dialog.slot?.booking_id;
+    if (!id) return;
+    try {
+      await api.post(`/admin/bookings/${id}/check-in/undo`);
+      setDialog(null);
+      load();
+    } catch (ex) {
+      alert(ex.response?.data?.detail || ex.message);
+    }
   };
 
   const [createForm, setCreateForm] = useState({ customer_name: "", whatsapp: "" });
@@ -529,10 +566,13 @@ export default function AdminCalendar() {
                       onClick={() => openSlot(day, slot)}
                       className={`text-left px-2 py-2 border ${st.bg} ${st.border} ${st.color} disabled:opacity-40 disabled:cursor-not-allowed hover:brightness-110 transition min-h-[52px]`}
                     >
-                      <div className="font-heading text-lg leading-none">{slot.time}</div>
+                      <div className="font-heading text-lg leading-none flex items-center gap-1">
+                        {slot.time}
+                        {slot.checked_in && <UserCheck className="w-3 h-3 text-[var(--success)]" aria-label="Chegou" />}
+                      </div>
                       <div className="text-[9px] uppercase tracking-[0.15em] mt-1 truncate">
                         {slot.status === "reserved"
-                          ? (slot.customer_name || "Reservado")
+                          ? (slot.checked_in ? "Chegou · " : "") + (slot.customer_name || "Reservado")
                           : st.label}
                       </div>
                     </button>
@@ -581,9 +621,24 @@ export default function AdminCalendar() {
                   </button>
                 )}
                 {dialog.slot.status === "reserved" && (
-                  <button type="button" onClick={doCancelBooking} className="btn-ghost justify-center !text-sm text-[var(--danger)] border-[var(--danger)]/50">
-                    <Ban className="w-4 h-4" /> Cancelar reserva
-                  </button>
+                  <>
+                    {dialog.date === todayYmdSaoPaulo()
+                      && (dialog.slot.booking_status === "confirmed" || dialog.slot.checked_in)
+                      && (
+                      dialog.slot.checked_in ? (
+                        <button type="button" onClick={doUndoCheckIn} className="btn-ghost justify-center !text-sm">
+                          <UserCheck className="w-4 h-4" /> Desfazer chegou
+                        </button>
+                      ) : (
+                        <button type="button" data-testid="admin-calendar-checkin" onClick={doCheckIn} className="btn-neon justify-center !text-sm">
+                          <UserCheck className="w-4 h-4" /> Chegou
+                        </button>
+                      )
+                    )}
+                    <button type="button" onClick={doCancelBooking} className="btn-ghost justify-center !text-sm text-[var(--danger)] border-[var(--danger)]/50">
+                      <Ban className="w-4 h-4" /> Cancelar reserva
+                    </button>
+                  </>
                 )}
                 <button type="button" onClick={() => setDialog(null)} className="btn-ghost justify-center !text-sm mt-2">
                   Fechar

@@ -143,6 +143,8 @@ async def build_availability(
                 "booking_status": b["status"] if b else None,
                 "booking_id": b["id"] if b else None,
                 "customer_name": b.get("customer_name") if b else None,
+                "checked_in_at": b.get("checked_in_at") if b else None,
+                "checked_in": bool(b.get("checked_in_at")) if b else False,
                 "price": price,
             }
         )
@@ -273,6 +275,8 @@ async def create_booking_atomic(
         "whatsapp_sent_at": None,
         "reminder_sent": False,
         "reminder_sent_at": None,
+        "admin_notes": "",
+        "checked_in_at": None,
         "created_at": now_iso(),
         "slot_key": slot_key(court_id, date, start_time),
     }

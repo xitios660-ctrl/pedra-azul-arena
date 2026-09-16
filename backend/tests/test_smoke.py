@@ -1411,3 +1411,235 @@ def test_weekend_hours_unit_time_slots_from():
     # -1 also means unset
     plain2 = {**settings, "weekend_open_hour": -1, "weekend_close_hour": -1}
     assert sset.hours_for_date(plain2, "2026-09-19") == (8, 23)
+
+
+def test_admin_notes_auth_and_public_strip(admin_session, s):
+    """Cycle 22: notes require admin; not exposed on public lookup/get."""
+    # Create confirmed booking via admin calendar
+    r = None
+    for day_off in (30, 31, 32):
+        day = (datetime.now(TZ) + timedelta(days=day_off)).strftime("%Y-%m-%d")
+        for start in ("10:00", "11:00", "12:00"):
+            r = admin_session.post(
+                f"{API}/admin/calendar/bookings",
+                json={
+                    "date": day,
+                    "start_time": start,
+                    "customer_name": "Notes Customer",
+                    "whatsapp": "5511999001122",
+                    "status": "confirmed",
+                },
+                timeout=15,
+            )
+            if r.status_code in (200, 201):
+                break
+        if r is not None and r.status_code in (200, 201):
+            break
+    assert r is not None and r.status_code in (200, 201), getattr(r, "text", "")
+    bid = r.json()["id"]
+
+    # Unauthenticated → 401/403
+    anon = s.patch(f"{API}/admin/bookings/{bid}/notes", json={"notes": "segredo"}, headers=_xff(), timeout=10)
+    assert anon.status_code in (401, 403), anon.text
+
+    # Admin can write
+    ok = admin_session.patch(f"{API}/admin/bookings/{bid}/notes", json={"notes": "Cliente VIP — portão lateral"}, timeout=10)
+    assert ok.status_code == 200, ok.text
+    assert ok.json().get("admin_notes") == "Cliente VIP — portão lateral"
+    assert ok.json().get("booking", {}).get("admin_notes") == "Cliente VIP — portão lateral"
+
+    # Admin list includes notes
+    listed = admin_session.get(f"{API}/admin/bookings", timeout=15)
+    assert listed.status_code == 200
+    hit = next((b for b in listed.json() if b.get("id") == bid), None)
+    assert hit is not None
+    assert hit.get("admin_notes") == "Cliente VIP — portão lateral"
+
+    # Public get strips notes
+    pub = s.get(f"{API}/bookings/{bid}", headers=_xff(), timeout=10)
+    assert pub.status_code == 200, pub.text
+    assert "admin_notes" not in pub.json()
+    assert "checked_in_at" not in pub.json()
+
+    # Overlong notes rejected
+    too_long = "x" * 501
+    bad = admin_session.patch(f"{API}/admin/bookings/{bid}/notes", json={"notes": too_long}, timeout=10)
+    assert bad.status_code in (400, 422), bad.text
+
+    # cleanup
+    admin_session.post(f"{API}/admin/bookings/{bid}/cancel", timeout=10)
+
+
+def test_admin_check_in_rules(admin_session, s):
+    """Cycle 22: check-in only today + confirmed/paid; undo; dashboard KPI."""
+    from pymongo import MongoClient
+
+    # Future confirmed → 400 (not today)
+    r = None
+    for day_off in (33, 34, 35):
+        day = (datetime.now(TZ) + timedelta(days=day_off)).strftime("%Y-%m-%d")
+        for start in ("13:00", "14:00", "15:00"):
+            r = admin_session.post(
+                f"{API}/admin/calendar/bookings",
+                json={
+                    "date": day,
+                    "start_time": start,
+                    "customer_name": "CheckIn Future",
+                    "whatsapp": "5511999002233",
+                    "status": "confirmed",
+                },
+                timeout=15,
+            )
+            if r.status_code in (200, 201):
+                break
+        if r is not None and r.status_code in (200, 201):
+            break
+    assert r is not None and r.status_code in (200, 201), getattr(r, "text", "")
+    bid_future = r.json()["id"]
+    nf = admin_session.post(f"{API}/admin/bookings/{bid_future}/check-in", timeout=10)
+    assert nf.status_code == 400, nf.text
+    assert "hoje" in (nf.json().get("detail") or "").lower()
+
+    # Pending today → 400
+    today = datetime.now(TZ).strftime("%Y-%m-%d")
+    rp = None
+    for start in ("16:00", "17:00", "18:00", "19:00", "20:00"):
+        rp = admin_session.post(
+            f"{API}/admin/calendar/bookings",
+            json={
+                "date": today,
+                "start_time": start,
+                "customer_name": "CheckIn Pending",
+                "whatsapp": "5511999004455",
+                "status": "pending",
+            },
+            timeout=15,
+        )
+        if rp.status_code in (200, 201):
+            break
+    # If today slots full, create future then backdate to today as pending
+    bid_pending = None
+    if rp is not None and rp.status_code in (200, 201):
+        bid_pending = rp.json()["id"]
+    else:
+        rf = None
+        for day_off in (36, 37):
+            day = (datetime.now(TZ) + timedelta(days=day_off)).strftime("%Y-%m-%d")
+            for start in ("10:00", "11:00"):
+                rf = admin_session.post(
+                    f"{API}/admin/calendar/bookings",
+                    json={
+                        "date": day,
+                        "start_time": start,
+                        "customer_name": "CheckIn Pending",
+                        "whatsapp": "5511999004455",
+                        "status": "pending",
+                    },
+                    timeout=15,
+                )
+                if rf.status_code in (200, 201):
+                    break
+            if rf is not None and rf.status_code in (200, 201):
+                break
+        assert rf is not None and rf.status_code in (200, 201), getattr(rf, "text", "")
+        bid_pending = rf.json()["id"]
+        mongo_url = os.environ.get("MONGO_URL", "mongodb://127.0.0.1:27017")
+        db_name = os.environ.get("DB_NAME", "arena_futsal")
+        client = MongoClient(mongo_url, serverSelectionTimeoutMS=3000)
+        # find free-ish slot key; just force date=today
+        client[db_name].bookings.update_one(
+            {"id": bid_pending},
+            {"$set": {"date": today, "start_time": "21:00", "slot_key": f"court-1|{today}|21:00"}},
+        )
+
+    np_ = admin_session.post(f"{API}/admin/bookings/{bid_pending}/check-in", timeout=10)
+    assert np_.status_code == 400, np_.text
+
+    # Confirmed today → OK
+    rc = None
+    for start in ("09:00", "10:00", "11:00", "12:00", "22:00"):
+        rc = admin_session.post(
+            f"{API}/admin/calendar/bookings",
+            json={
+                "date": today,
+                "start_time": start,
+                "customer_name": "CheckIn Today",
+                "whatsapp": "5511999006677",
+                "status": "confirmed",
+            },
+            timeout=15,
+        )
+        if rc.status_code in (200, 201):
+            break
+    bid_today = None
+    if rc is not None and rc.status_code in (200, 201):
+        bid_today = rc.json()["id"]
+    else:
+        # backdate a future confirmed
+        rf2 = None
+        for day_off in (38, 39):
+            day = (datetime.now(TZ) + timedelta(days=day_off)).strftime("%Y-%m-%d")
+            for start in ("12:00", "13:00"):
+                rf2 = admin_session.post(
+                    f"{API}/admin/calendar/bookings",
+                    json={
+                        "date": day,
+                        "start_time": start,
+                        "customer_name": "CheckIn Today",
+                        "whatsapp": "5511999006677",
+                        "status": "confirmed",
+                    },
+                    timeout=15,
+                )
+                if rf2.status_code in (200, 201):
+                    break
+            if rf2 is not None and rf2.status_code in (200, 201):
+                break
+        assert rf2 is not None and rf2.status_code in (200, 201), getattr(rf2, "text", "")
+        bid_today = rf2.json()["id"]
+        mongo_url = os.environ.get("MONGO_URL", "mongodb://127.0.0.1:27017")
+        db_name = os.environ.get("DB_NAME", "arena_futsal")
+        client = MongoClient(mongo_url, serverSelectionTimeoutMS=3000)
+        client[db_name].bookings.update_one(
+            {"id": bid_today},
+            {"$set": {"date": today, "start_time": "08:00", "slot_key": f"court-1|{today}|08:00"}},
+        )
+
+    ok = admin_session.post(f"{API}/admin/bookings/{bid_today}/check-in", timeout=10)
+    assert ok.status_code == 200, ok.text
+    assert ok.json().get("checked_in") is True
+    assert ok.json().get("checked_in_at")
+    assert ok.json().get("booking", {}).get("checked_in_at")
+
+    # Idempotent
+    ok2 = admin_session.post(f"{API}/admin/bookings/{bid_today}/check-in", timeout=10)
+    assert ok2.status_code == 200, ok2.text
+    assert ok2.json().get("checked_in") is True
+
+    # Unauthenticated check-in blocked
+    anon = s.post(f"{API}/admin/bookings/{bid_today}/check-in", headers=_xff(), timeout=10)
+    assert anon.status_code in (401, 403), anon.text
+
+    # Dashboard KPI
+    dash = admin_session.get(f"{API}/admin/dashboard", timeout=15)
+    assert dash.status_code == 200
+    assert "checked_in_today_count" in dash.json()
+    assert int(dash.json()["checked_in_today_count"]) >= 1
+
+    # Undo
+    undo = admin_session.post(f"{API}/admin/bookings/{bid_today}/check-in/undo", timeout=10)
+    assert undo.status_code == 200, undo.text
+    assert undo.json().get("checked_in") is False
+    assert undo.json().get("booking", {}).get("checked_in_at") in (None, "")
+
+    # Public still strips
+    pub = s.get(f"{API}/bookings/{bid_today}", headers=_xff(), timeout=10)
+    assert pub.status_code == 200
+    assert "checked_in_at" not in pub.json()
+    assert "admin_notes" not in pub.json()
+
+    # cleanup
+    admin_session.post(f"{API}/admin/bookings/{bid_future}/cancel", timeout=10)
+    if bid_pending:
+        admin_session.post(f"{API}/admin/bookings/{bid_pending}/cancel", timeout=10)
+    admin_session.post(f"{API}/admin/bookings/{bid_today}/cancel", timeout=10)
