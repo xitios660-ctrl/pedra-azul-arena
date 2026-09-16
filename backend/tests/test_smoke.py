@@ -1,4 +1,4 @@
-"""Cycle 6 smoke / regression tests — hit local or BASE_URL API.
+"""Cycle 7 smoke / regression tests — hit local or BASE_URL API.
 
 Run:
   BASE_URL=http://127.0.0.1:8000 python -m pytest backend/tests/test_smoke.py -q
@@ -295,3 +295,43 @@ def test_internal_routes_require_token_when_set(s):
         timeout=10,
     )
     assert r2.status_code == 200, r2.text
+
+
+
+def test_admin_dashboard_kpis(admin_session):
+    """Cycle 7: dashboard returns real KPI fields."""
+    r = admin_session.get(f"{API}/admin/dashboard", timeout=15)
+    assert r.status_code == 200, r.text
+    data = r.json()
+    for key in (
+        "today_bookings_count",
+        "free_slots_today",
+        "total_slots_today",
+        "month_revenue_estimate",
+        "top_times",
+        "today",
+        "month",
+    ):
+        assert key in data, key
+    assert isinstance(data["today_bookings_count"], int)
+    assert isinstance(data["free_slots_today"], int)
+    assert isinstance(data["month_revenue_estimate"], (int, float))
+    assert isinstance(data["top_times"], list)
+    # next_upcoming may be null
+    assert "next_upcoming" in data
+    assert data["total_slots_today"] >= data["free_slots_today"] >= 0
+
+
+def test_admin_calendar_month(admin_session):
+    """Cycle 7: month range with density summary."""
+    start = datetime.now(TZ).strftime("%Y-%m-01")
+    r = admin_session.get(f"{API}/admin/calendar", params={"start": start, "days": 31}, timeout=30)
+    assert r.status_code == 200, r.text
+    data = r.json()
+    days = data.get("days") or []
+    assert len(days) >= 28, len(days)
+    assert len(days) <= 42
+    dens = days[0].get("density")
+    assert dens is not None
+    for k in ("occupied", "blocked", "free", "unavailable", "total_bookable"):
+        assert k in dens

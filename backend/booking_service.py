@@ -292,15 +292,28 @@ async def expire_stale_pending(db) -> int:
 
 
 async def calendar_range(db, start_date: str, days: int = 7) -> dict[str, Any]:
-    """Day or week view for the single court."""
+    """Day / week / month view for the single court (max 42 days for month grid)."""
     from datetime import timedelta
 
     start = datetime.strptime(start_date, "%Y-%m-%d")
     days_out = []
     court = None
-    for i in range(max(1, min(days, 14))):
+    n_days = max(1, min(int(days), 42))
+    for i in range(n_days):
         d = (start + timedelta(days=i)).strftime("%Y-%m-%d")
         avail = await build_availability(db, COURT_ID, d)
+        # Density summary for month heatmap (occupied / blocked / free)
+        counts = {"reserved": 0, "blocked": 0, "available": 0, "unavailable": 0}
+        for s in avail.get("slots") or []:
+            st = s.get("status") or "unavailable"
+            counts[st] = counts.get(st, 0) + 1
+        avail["density"] = {
+            "occupied": counts["reserved"],
+            "blocked": counts["blocked"],
+            "free": counts["available"],
+            "unavailable": counts["unavailable"],
+            "total_bookable": counts["reserved"] + counts["blocked"] + counts["available"],
+        }
         court = avail["court"]
         days_out.append(avail)
     return {"court": court or COURT, "start_date": start_date, "days": days_out}

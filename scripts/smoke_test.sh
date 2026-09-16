@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pedra Azul — local/API smoke tests (Cycle 6)
+# Pedra Azul — local/API smoke tests (Cycle 7)
 # Usage:
 #   BASE_URL=http://127.0.0.1:8000 ./scripts/smoke_test.sh
 set -euo pipefail

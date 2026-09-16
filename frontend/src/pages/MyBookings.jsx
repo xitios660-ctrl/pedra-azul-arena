@@ -13,13 +13,14 @@ import {
   IdCard, Search, Calendar, Clock, CheckCircle2, XCircle, Hourglass, Upload,
   FileCheck, Loader2, MessageCircle, Ticket,
 } from "lucide-react";
+import { pixBadgeFor } from "@/lib/paymentStatus";
 
-const STATUS = {
-  pending: { label: "Aguardando PIX", color: "var(--warning)", icon: Hourglass },
-  awaiting_admin: { label: "Comprovante informado", color: "var(--brand)", icon: MessageCircle },
-  confirmed: { label: "Confirmado", color: "var(--success)", icon: CheckCircle2 },
-  cancelled: { label: "Cancelado", color: "var(--danger)", icon: XCircle },
-  expired: { label: "Expirado", color: "var(--text-3)", icon: XCircle },
+const STATUS_ICON = {
+  pending: Hourglass,
+  awaiting_admin: MessageCircle,
+  confirmed: CheckCircle2,
+  cancelled: XCircle,
+  expired: XCircle,
 };
 
 function fmtBRL(n) { return (n || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }); }
@@ -159,7 +160,8 @@ export default function MyBookings() {
 }
 
 function BookingCard({ b, cpf, idx, onChanged }) {
-  const S = STATUS[b.status] || STATUS.pending; const Icon = S.icon;
+  const badge = pixBadgeFor(b);
+  const Icon = STATUS_ICON[b.status] || STATUS_ICON.pending;
   const fileRef = useRef(null);
   const [uploading, setUploading] = useState(false);
   const [err, setErr] = useState("");
@@ -197,14 +199,23 @@ function BookingCard({ b, cpf, idx, onChanged }) {
       whileHover={{ y: -2 }}
       className="glass p-5 relative overflow-hidden"
     >
-      <div className="absolute top-0 right-0 w-40 h-40 rounded-full blur-3xl opacity-10" style={{ background: S.color }} />
+      <div className="absolute top-0 right-0 w-40 h-40 rounded-full blur-3xl opacity-10" style={{ background: badge.color }} />
       <div className="flex items-center justify-between gap-2">
         <div className="text-[10px] uppercase tracking-[0.35em] text-white/40 truncate">// {b.court_name}</div>
-        <span className="text-[10px] uppercase tracking-[0.3em] px-2 py-1 border flex items-center gap-1 shrink-0"
-          style={{ color: S.color, borderColor: S.color }}>
-          <Icon className="w-3 h-3" /> {S.label}
+        <span
+          data-testid={`mybook-pix-badge-${b.id}`}
+          data-pix-tone={badge.tone}
+          className="text-[10px] uppercase tracking-[0.3em] px-2 py-1 border flex items-center gap-1 shrink-0"
+          style={{ color: badge.color, borderColor: badge.color }}
+          title={badge.hint}
+        >
+          <Icon className="w-3 h-3" /> {badge.label}
         </span>
       </div>
+      <p className="text-[11px] text-white/45 mt-2" data-testid={`mybook-pix-hint-${b.id}`}>
+        {badge.hint}
+        {b.payment?.status ? ` · pagamento: ${b.payment.status}` : ""}
+      </p>
       <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-4 mt-4">
         <div className="text-center">
           {renderCrest(b.your_team_crest)}
@@ -246,7 +257,20 @@ function BookingCard({ b, cpf, idx, onChanged }) {
 
       {b.status === "awaiting_admin" && (
         <div className="mt-5 border-t border-white/10 pt-4 text-xs text-white/60 flex items-start gap-2">
-          <FileCheck className="w-3 h-3 text-[var(--success)] mt-0.5 shrink-0" /> Status Informado. Aguardando validação do admin — só então fica Confirmado (WhatsApp).
+          <FileCheck className="w-3 h-3 text-[var(--brand)] mt-0.5 shrink-0" />
+          PIX informado — aguardando o admin validar o comprovante. Só depois fica Confirmado (WhatsApp).
+        </div>
+      )}
+      {b.status === "confirmed" && (
+        <div className="mt-5 border-t border-white/10 pt-4 text-xs text-white/60 flex items-start gap-2">
+          <CheckCircle2 className="w-3 h-3 text-[var(--success)] mt-0.5 shrink-0" />
+          PIX confirmado. Reserva ativa — chegue 10 min antes.
+        </div>
+      )}
+      {b.status === "expired" && (
+        <div className="mt-5 border-t border-white/10 pt-4 text-xs text-white/50 flex items-start gap-2">
+          <XCircle className="w-3 h-3 mt-0.5 shrink-0" />
+          PIX expirado. Faça uma nova reserva se ainda precisar do horário.
         </div>
       )}
 

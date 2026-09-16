@@ -5,7 +5,8 @@ import api, { API_BASE } from "@/lib/api";
 import { ADMIN } from "@/constants/testIds";
 import {
   TrendingUp, CheckCircle2, Hourglass, Activity, DollarSign, BarChart3, Save,
-  Eye, MessageCircle, FileCheck, Wifi, WifiOff, QrCode, RefreshCw, LogOut, Loader2
+  Eye, MessageCircle, FileCheck, Wifi, WifiOff, QrCode, RefreshCw, LogOut, Loader2,
+  Calendar, Clock, Ticket
 } from "lucide-react";
 import AdminCalendar from "@/components/AdminCalendar";
 
@@ -408,15 +409,50 @@ function KPI({ icon, label, value, accent = "var(--brand)", testId }) {
 }
 
 function DashboardView({ stats, bookings = [], onConfirm, onReject }) {
-  const maxRev = Math.max(1, ...stats.revenue_series.map(d => d.revenue));
+  const maxRev = Math.max(1, ...(stats.revenue_series || []).map(d => d.revenue));
   const awaiting = (bookings || []).filter((b) => b.status === "awaiting_admin");
+  const next = stats.next_upcoming;
+  const topTimes = stats.top_times || [];
   return (
     <>
-      <div className="grid md:grid-cols-4 gap-4 mb-8">
-        <KPI testId={ADMIN.kpiRevenue} icon={<DollarSign className="w-4 h-4 text-[var(--brand)]" />} label="Receita PIX (calção)" value={fmtBRL(stats.revenue_deposits)} />
-        <KPI testId={ADMIN.kpiOccupancy} icon={<TrendingUp className="w-4 h-4 text-[var(--success)]" />} label="Ocupação Hoje" value={`${stats.occupancy_today_pct}%`} accent="var(--success)" />
-        <KPI testId={ADMIN.kpiConfirmed} icon={<CheckCircle2 className="w-4 h-4 text-[var(--success)]" />} label="Confirmadas" value={stats.confirmed_bookings} accent="var(--success)" />
+      <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4 mb-8">
+        <KPI testId={ADMIN.kpiTodayBookings} icon={<Ticket className="w-4 h-4 text-[var(--brand)]" />} label="Reservas hoje" value={stats.today_bookings_count ?? 0} />
+        <KPI testId={ADMIN.kpiFreeSlots} icon={<Clock className="w-4 h-4 text-[var(--success)]" />} label="Livres hoje" value={`${stats.free_slots_today ?? "—"}/${stats.total_slots_today ?? "—"}`} accent="var(--success)" />
+        <KPI testId={ADMIN.kpiMonthRevenue} icon={<DollarSign className="w-4 h-4 text-[var(--brand)]" />} label={`Receita mês (${stats.month || "—"})`} value={fmtBRL(stats.month_revenue_estimate)} />
+        <KPI testId={ADMIN.kpiOccupancy} icon={<TrendingUp className="w-4 h-4 text-[var(--success)]" />} label="Ocupação hoje" value={`${stats.occupancy_today_pct}%`} accent="var(--success)" />
+        <KPI testId={ADMIN.kpiConfirmed} icon={<CheckCircle2 className="w-4 h-4 text-[var(--success)]" />} label="Confirmadas (total)" value={stats.confirmed_bookings} accent="var(--success)" />
         <KPI testId={ADMIN.kpiAwaiting} icon={<Hourglass className="w-4 h-4 text-[var(--brand)]" />} label="Informados (fila)" value={stats.awaiting_admin_bookings || awaiting.length || 0} accent="var(--brand)" />
+      </div>
+
+      <div className="grid lg:grid-cols-2 gap-4 mb-8">
+        <div data-testid={ADMIN.kpiNextUpcoming} className="glass p-5">
+          <div className="text-[11px] uppercase tracking-[0.35em] text-[var(--brand)] flex items-center gap-2 mb-3">
+            <Calendar className="w-4 h-4" /> Próxima reserva
+          </div>
+          {!next ? (
+            <p className="text-white/50 text-sm">Nenhuma reserva futura ativa.</p>
+          ) : (
+            <div>
+              <div className="font-heading text-3xl uppercase italic text-white">
+                {next.date?.slice(8, 10)}/{next.date?.slice(5, 7)} · {next.start_time}
+              </div>
+              <div className="text-white/70 mt-1">{next.customer_name || "—"}</div>
+              <div className="text-[10px] uppercase tracking-[0.25em] mt-2" style={{ color: STATUS_COLORS[next.status] || "var(--brand)" }}>
+                {STATUS_LABEL[next.status] || next.status}
+                {next.deposit != null ? ` · ${fmtBRL(next.deposit)}` : ""}
+              </div>
+            </div>
+          )}
+        </div>
+        <div className="glass p-5">
+          <div className="text-[11px] uppercase tracking-[0.35em] text-[var(--brand)] flex items-center gap-2 mb-3">
+            <DollarSign className="w-4 h-4" /> Receita PIX acumulada
+          </div>
+          <div className="font-heading text-4xl text-[var(--brand)]" data-testid={ADMIN.kpiRevenue}>
+            {fmtBRL(stats.revenue_deposits)}
+          </div>
+          <p className="text-white/40 text-xs mt-2">Soma de calções confirmados (histórico).</p>
+        </div>
       </div>
 
       <AwaitingPixQueue
@@ -432,7 +468,7 @@ function DashboardView({ stats, bookings = [], onConfirm, onReject }) {
             <BarChart3 className="w-4 h-4" /> Receita (últimos 7 dias)
           </div>
           <div className="flex items-end gap-3 h-48">
-            {stats.revenue_series.map((d) => (
+            {(stats.revenue_series || []).map((d) => (
               <div key={d.date} className="flex-1 flex flex-col items-center gap-2 group">
                 <div className="text-[10px] text-white/50 group-hover:text-[var(--brand)]">{fmtBRL(d.revenue)}</div>
                 <div className="w-full bg-gradient-to-t from-[var(--brand)]/30 to-[var(--brand)] border-t border-[var(--brand)] transition-all"
@@ -442,14 +478,14 @@ function DashboardView({ stats, bookings = [], onConfirm, onReject }) {
             ))}
           </div>
         </div>
-        <div className="glass p-6">
+        <div className="glass p-6" data-testid={ADMIN.kpiTopHours}>
           <div className="text-[11px] uppercase tracking-[0.35em] text-[var(--brand)] mb-4 flex items-center gap-2">
             <Activity className="w-4 h-4" /> Horários mais alugados
           </div>
-          {stats.top_times.length === 0 ? (
+          {topTimes.length === 0 ? (
             <div className="text-white/40 text-sm">Sem dados ainda.</div>
-          ) : stats.top_times.map((t) => {
-            const max = stats.top_times[0].count;
+          ) : topTimes.map((t) => {
+            const max = topTimes[0].count;
             return (
               <div key={t.time} className="flex items-center gap-3 mb-3">
                 <div className="font-heading text-2xl w-16">{t.time}</div>

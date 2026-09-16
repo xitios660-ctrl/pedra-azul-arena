@@ -508,30 +508,89 @@ def _build_whatsapp_message(b: dict) -> str:
 
 @api.get("/admin/dashboard")
 async def admin_dashboard(admin: dict = Depends(require_admin)):
-    bookings = await db.bookings.find({}, {"_id": 0}).to_list(2000)
-    confirmed = [b for b in bookings if b["status"] == "confirmed"]
-    pending = [b for b in bookings if b["status"] == "pending"]
-    awaiting = [b for b in bookings if b["status"] == "awaiting_admin"]
-    revenue = sum(b.get("deposit", 0) for b in confirmed)
-    full_value = sum(b.get("total", 0) for b in confirmed)
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    today_confirmed = [b for b in confirmed if b["date"] == today]
-    runtime = await bsvc.get_runtime(db)
-    total_slots_today = 1 * len(runtime["time_slots"])
-    occupancy_today = round((len(today_confirmed) / total_slots_today) * 100, 1) if total_slots_today else 0
-
+    """KPIs from real bookings — America/Sao_Paulo calendar day."""
     from collections import Counter
-    time_counter = Counter(b["start_time"] for b in confirmed)
+
+    tz = ZoneInfo("America/Sao_Paulo")
+    now_local = datetime.now(tz)
+    today = now_local.strftime("%Y-%m-%d")
+    month_prefix = today[:7]  # YYYY-MM
+    now_hm = now_local.strftime("%H:%M")
+
+    bookings = await db.bookings.find({}, {"_id": 0}).to_list(5000)
+    confirmed = [b for b in bookings if b.get("status") == "confirmed"]
+    pending = [b for b in bookings if b.get("status") == "pending"]
+    awaiting = [b for b in bookings if b.get("status") == "awaiting_admin"]
+    active = bsvc.ACTIVE_STATUSES
+
+    revenue = sum(float(b.get("deposit") or 0) for b in confirmed)
+    full_value = sum(float(b.get("total") or 0) for b in confirmed)
+
+    # Today: all active bookings on the single court
+    today_bookings = [
+        b for b in bookings
+        if b.get("date") == today and b.get("status") in active
+    ]
+    today_confirmed = [b for b in today_bookings if b.get("status") == "confirmed"]
+
+    runtime = await bsvc.get_runtime(db)
+    time_slots = runtime["time_slots"]
+    total_slots_today = len(time_slots)
+    taken_today = {b.get("start_time") for b in today_bookings}
+    blocked_today = await bsvc.get_blocked_times(db, bsvc.COURT_ID, today)
+    # Free = future bookable slots not taken/blocked
+    free_slots_today = 0
+    for t in time_slots:
+        if t in taken_today or t in blocked_today:
+            continue
+        if bsvc.is_past_slot(today, t, now_local):
+            continue
+        free_slots_today += 1
+
+    occ_num = len(today_confirmed)
+    occupancy_today = round((occ_num / total_slots_today) * 100, 1) if total_slots_today else 0.0
+
+    # Next upcoming (any active, today or future, after now if today)
+    def _upcoming_key(b):
+        return (b.get("date") or "", b.get("start_time") or "")
+
+    upcoming_candidates = []
+    for b in bookings:
+        if b.get("status") not in active:
+            continue
+        d, t = b.get("date") or "", b.get("start_time") or ""
+        if not d or not t:
+            continue
+        if d > today or (d == today and t > now_hm):
+            upcoming_candidates.append(b)
+    upcoming_candidates.sort(key=_upcoming_key)
+    next_b = upcoming_candidates[0] if upcoming_candidates else None
+    next_upcoming = None
+    if next_b:
+        next_upcoming = {
+            "id": next_b.get("id"),
+            "date": next_b.get("date"),
+            "start_time": next_b.get("start_time"),
+            "customer_name": next_b.get("customer_name"),
+            "status": next_b.get("status"),
+            "court_name": next_b.get("court_name"),
+            "deposit": next_b.get("deposit"),
+        }
+
+    # Month revenue estimate = sum of deposits for confirmed in current month
+    month_confirmed = [b for b in confirmed if (b.get("date") or "").startswith(month_prefix)]
+    month_revenue_estimate = sum(float(b.get("deposit") or 0) for b in month_confirmed)
+
+    time_counter = Counter(b["start_time"] for b in confirmed if b.get("start_time"))
     top_times = [{"time": t, "count": c} for t, c in time_counter.most_common(5)]
 
     daily = {}
-    now = datetime.now(timezone.utc).date()
     for i in range(6, -1, -1):
-        d = (now - timedelta(days=i)).isoformat()
-        daily[d] = 0
+        d = (now_local.date() - timedelta(days=i)).isoformat()
+        daily[d] = 0.0
     for b in confirmed:
-        if b["date"] in daily:
-            daily[b["date"]] += b.get("deposit", 0)
+        if b.get("date") in daily:
+            daily[b["date"]] += float(b.get("deposit") or 0)
     revenue_series = [{"date": d, "revenue": v} for d, v in daily.items()]
 
     return {
@@ -544,6 +603,24 @@ async def admin_dashboard(admin: dict = Depends(require_admin)):
         "occupancy_today_pct": occupancy_today,
         "top_times": top_times,
         "revenue_series": revenue_series,
+        # Cycle 7 KPIs (real data)
+        "today_bookings_count": len(today_bookings),
+        "today_bookings": [
+            {
+                "id": b.get("id"),
+                "start_time": b.get("start_time"),
+                "customer_name": b.get("customer_name"),
+                "status": b.get("status"),
+                "deposit": b.get("deposit"),
+            }
+            for b in sorted(today_bookings, key=lambda x: x.get("start_time") or "")
+        ],
+        "next_upcoming": next_upcoming,
+        "free_slots_today": free_slots_today,
+        "total_slots_today": total_slots_today,
+        "month_revenue_estimate": month_revenue_estimate,
+        "month": month_prefix,
+        "today": today,
     }
 
 
@@ -928,7 +1005,13 @@ async def admin_calendar(
     tz = ZoneInfo("America/Sao_Paulo")
     if not start:
         start = datetime.now(tz).strftime("%Y-%m-%d")
-    days = 1 if days <= 1 else (7 if days <= 7 else min(days, 14))
+    # day=1, week=7, month≈28–42 (calendar grid padded)
+    if days <= 1:
+        days = 1
+    elif days <= 7:
+        days = 7
+    else:
+        days = min(max(days, 8), 42)
     return await bsvc.calendar_range(db, start, days=days)
 
 

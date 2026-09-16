@@ -70,6 +70,8 @@ ENV PYTHONPATH=/app/backend \
     WHATSAPP_PORT=3001 \
     WHATSAPP_SERVICE_URL=http://127.0.0.1:3001 \
     WHATSAPP_AUTO_START=true
+# INTERNAL_API_TOKEN / WHATSAPP_INTERNAL_TOKEN come from the host/Render at runtime.
+# start.sh re-exports and mirrors them into the Node WhatsApp sidecar process.
 
 EXPOSE 8000
 
