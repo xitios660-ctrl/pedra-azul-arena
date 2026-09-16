@@ -24,7 +24,7 @@ export default function WhatsAppFab({ prefill } = {}) {
       aria-label={label}
       title={label}
       data-testid="whatsapp-fab"
-      className="whatsapp-fab fixed z-[70] right-5 md:right-8 flex items-center justify-center w-14 h-14 md:w-16 md:h-16 rounded-full text-white shadow-lg"
+      className="no-print whatsapp-fab fixed z-[70] right-5 md:right-8 flex items-center justify-center w-14 h-14 md:w-16 md:h-16 rounded-full text-white shadow-lg"
       style={{
         background: "linear-gradient(145deg, #25D366 0%, #128C7E 100%)",
         boxShadow: "0 0 0 0 rgba(37, 211, 102, 0.55), 0 8px 28px rgba(0,0,0,0.45)",

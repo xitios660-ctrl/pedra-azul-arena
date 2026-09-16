@@ -24,7 +24,7 @@ export default function Footer() {
     wc !== null && wc !== undefined && Number(wc) !== -1;
 
   return (
-    <footer className="border-t border-white/5 mt-24 py-10 bg-black/60">
+    <footer className="no-print border-t border-white/5 mt-24 py-10 bg-black/60">
       {/* WhatsApp / contact reinforcement band */}
       <div className="max-w-7xl mx-auto px-6 md:px-10 mb-10">
         <div className="glass p-6 md:p-8 flex flex-col md:flex-row md:items-center md:justify-between gap-6 border-[var(--brand)]/20">

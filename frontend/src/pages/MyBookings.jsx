@@ -12,10 +12,11 @@ import {
 import { useSiteSettings } from "@/lib/SiteSettings";
 import {
   IdCard, Search, Calendar, Clock, CheckCircle2, XCircle, Hourglass, Upload,
-  FileCheck, Loader2, MessageCircle, Ticket, RefreshCw,
+  FileCheck, Loader2, MessageCircle, Ticket, RefreshCw, Receipt, ChevronDown, ChevronUp,
 } from "lucide-react";
 import { pixBadgeFor } from "@/lib/paymentStatus";
 import RescheduleModal from "@/components/RescheduleModal";
+import BookingReceipt from "@/components/BookingReceipt";
 
 const STATUS_ICON = {
   pending: Hourglass,
@@ -177,6 +178,7 @@ function BookingCard({ b, cpf, idx, onChanged }) {
   const [uploading, setUploading] = useState(false);
   const [err, setErr] = useState("");
   const [showReschedule, setShowReschedule] = useState(false);
+  const [showReceipt, setShowReceipt] = useState(false);
 
   const uploadComprovante = async (file) => {
     if (!file) return;
@@ -288,20 +290,37 @@ function BookingCard({ b, cpf, idx, onChanged }) {
         </div>
       )}
 
-      {isActive && (
-        <div className="mt-4 flex flex-wrap gap-3 items-center">
-          <button
-            data-testid={MYB.rescheduleBooking(b.id)}
-            type="button"
-            onClick={() => setShowReschedule(true)}
-            className="text-xs text-[var(--brand)] hover:underline inline-flex items-center gap-1"
-          >
-            <RefreshCw className="w-3 h-3" /> Reagendar
-          </button>
-          <button data-testid={MYB.cancelBooking(b.id)} onClick={cancel}
-            className="text-xs text-white/40 hover:text-[var(--danger)] transition-colors">
-            Cancelar reserva
-          </button>
+      <div className="mt-4 flex flex-wrap gap-3 items-center">
+        <button
+          data-testid={MYB.receiptBooking(b.id)}
+          type="button"
+          onClick={() => setShowReceipt((v) => !v)}
+          className="text-xs text-[var(--brand)] hover:underline inline-flex items-center gap-1"
+        >
+          <Receipt className="w-3 h-3" /> {showReceipt ? "Ocultar recibo" : "Ver recibo"}
+          {showReceipt ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+        </button>
+        {isActive && (
+          <>
+            <button
+              data-testid={MYB.rescheduleBooking(b.id)}
+              type="button"
+              onClick={() => setShowReschedule(true)}
+              className="text-xs text-[var(--brand)] hover:underline inline-flex items-center gap-1"
+            >
+              <RefreshCw className="w-3 h-3" /> Reagendar
+            </button>
+            <button data-testid={MYB.cancelBooking(b.id)} onClick={cancel}
+              className="text-xs text-white/40 hover:text-[var(--danger)] transition-colors">
+              Cancelar reserva
+            </button>
+          </>
+        )}
+      </div>
+
+      {showReceipt && (
+        <div className="mt-4 no-print-parent">
+          <BookingReceipt booking={b} compact testIdPrefix={`mybook-receipt-${b.id}`} />
         </div>
       )}
 

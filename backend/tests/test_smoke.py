@@ -2169,6 +2169,18 @@ def test_waitlist_join_cancel_notify_and_duplicate(admin_session, s):
         assert rm.status_code == 200, rm.text
     finally:
         admin_session.post(f"{API}/admin/bookings/{bid}/cancel", timeout=10)
+        # Drop leftover notified/waiting rows so re-runs can rejoin the same slot
+        try:
+            from pymongo import MongoClient
+            import os
+            dbn = os.environ.get("DB_NAME") or "arena_futsal"
+            uri = os.environ.get("MONGO_URL") or "mongodb://127.0.0.1:27017"
+            MongoClient(uri)[dbn].waitlist.delete_many({
+                "slot_key": f"court-1|{day}|{start}",
+                "phone": {"$in": ["5511988112233", "5511988445566", "5511988776655", "11988112233"]},
+            })
+        except Exception:
+            pass
 
 
 def test_waitlist_covered_times_unit():

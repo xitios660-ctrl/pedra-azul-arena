@@ -8,11 +8,12 @@ import {
   TrendingUp, CheckCircle2, Hourglass, Activity, DollarSign, BarChart3, Save,
   Eye, MessageCircle, FileCheck, Wifi, WifiOff, QrCode, RefreshCw, LogOut, Loader2,
   Calendar, Clock, Ticket, X, Settings, AlertCircle, Download, Search,
-  UserCheck, StickyNote, ChevronDown, ChevronUp
+  UserCheck, StickyNote, ChevronDown, ChevronUp, Printer
 } from "lucide-react";
 import { isWhatsAppPlaceholder, isPixKeyPlaceholder, OPEN_DAY_LABELS } from "@/lib/siteConfig";
 import AdminCalendar from "@/components/AdminCalendar";
 import RescheduleModal from "@/components/RescheduleModal";
+import BookingReceipt from "@/components/BookingReceipt";
 
 function fmtBRL(n) { return (n || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }); }
 
@@ -993,6 +994,7 @@ function AwaitingPixQueue({ bookings, onConfirm, onReject }) {
 
 function BookingRow({ b, onConfirm, onCancel, onReject, onNoShow, onCheckIn, onUndoCheckIn, onSaveNotes, onReschedule }) {
   const [open, setOpen] = useState(false);
+  const [showReceipt, setShowReceipt] = useState(false);
   const [notes, setNotes] = useState(b.admin_notes || "");
   const [savingNotes, setSavingNotes] = useState(false);
   useEffect(() => {
@@ -1103,6 +1105,10 @@ function BookingRow({ b, onConfirm, onCancel, onReject, onNoShow, onCheckIn, onU
               Cancelar
             </button>
           )}
+          <button type="button" data-testid={ADMIN.openReceipt(b.id)} onClick={() => setShowReceipt(true)}
+            className="text-[10px] uppercase tracking-[0.2em] px-2 py-1 border border-[var(--brand)]/50 text-[var(--brand)] hover:bg-[var(--brand)]/15 flex items-center gap-1">
+            <Printer className="w-3 h-3" /> Recibo
+          </button>
           {onSaveNotes && (
             <button type="button" data-testid={ADMIN.notesBooking(b.id)} onClick={() => setOpen((v) => !v)}
               className="text-[10px] uppercase tracking-[0.2em] px-2 py-1 border border-white/25 text-white/70 hover:bg-white/10 flex items-center gap-1">
@@ -1112,6 +1118,21 @@ function BookingRow({ b, onConfirm, onCancel, onReject, onNoShow, onCheckIn, onU
           )}
         </div>
       </motion.div>
+      {showReceipt && (
+        <div className="fixed inset-0 z-[80] flex items-end sm:items-center justify-center p-3 sm:p-6 bg-black/70 backdrop-blur-sm"
+          role="dialog" aria-modal="true" aria-label="Recibo da reserva">
+          <div className="absolute inset-0" onClick={() => setShowReceipt(false)} aria-hidden />
+          <div className="relative z-[1] w-full max-w-lg max-h-[92vh] overflow-y-auto">
+            <div className="flex justify-end mb-2 no-print">
+              <button type="button" onClick={() => setShowReceipt(false)}
+                className="text-[10px] uppercase tracking-[0.2em] px-3 py-1.5 border border-white/25 text-white/70 hover:bg-white/10 flex items-center gap-1">
+                <X className="w-3 h-3" /> Fechar
+              </button>
+            </div>
+            <BookingReceipt booking={b} variant="admin" testIdPrefix={`admin-receipt-card-${b.id}`} />
+          </div>
+        </div>
+      )}
       {open && onSaveNotes && (
         <div className="px-4 pb-4 pt-1 bg-black/25 border-t border-white/5">
           <label className="text-[10px] uppercase tracking-[0.3em] text-white/40 flex items-center gap-2 mb-2">

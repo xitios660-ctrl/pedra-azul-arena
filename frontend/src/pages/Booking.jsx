@@ -19,6 +19,7 @@ import { useSiteSettings } from "@/lib/SiteSettings";
 import { pixPipelineLabel } from "@/lib/paymentStatus";
 import { useMotionSystem, easings } from "@/lib/motion";
 import VictoryBurst from "@/components/motion/VictoryBurst";
+import BookingReceipt from "@/components/BookingReceipt";
 import Particles from "@/components/motion/Particles";
 import {
   Calendar as CalendarIcon, Clock, X, Check, Loader2, QrCode, Copy,
@@ -986,10 +987,10 @@ export default function Booking() {
                     Reserva e comprovante já registrados — a confirmação segue manual pelo admin até o bot reconectar.
                   </div>
                 )}
-                <div className="mt-4 text-sm text-white/50 glass inline-block px-4 py-2">
-                  {booking.your_team_name} <span className="text-[var(--brand)]">×</span> {booking.opponent_team_name} · {booking.court_name} · {booking.start_time}
+                <div className="mt-5 text-left">
+                  <BookingReceipt booking={booking} compact testIdPrefix="booking-success-receipt" />
                 </div>
-                <div className="mt-8 flex flex-col sm:flex-row items-stretch sm:items-center justify-center gap-3">
+                <div className="mt-6 flex flex-col sm:flex-row items-stretch sm:items-center justify-center gap-3 no-print">
                   <button data-testid={BOOKING.pixCloseSuccess} onClick={closeAll} className="btn-ghost justify-center">Fechar</button>
                   <button onClick={() => navigate(`/minhas-reservas?cpf=${encodeURIComponent(cpf)}`)} className="btn-neon justify-center">
                     Ver minhas reservas <ChevronRight className="w-4 h-4" />

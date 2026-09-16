@@ -567,3 +567,73 @@ a:focus:not(:focus-visible) {
 .slot-match {
   min-height: 44px;
 }
+
+/* ----- Booking receipt (screen) ----- */
+.booking-receipt {
+  background: linear-gradient(165deg, rgba(0, 229, 255, 0.08), rgba(12, 12, 18, 0.92) 45%, rgba(255, 107, 0, 0.06));
+  border: 1px solid rgba(0, 229, 255, 0.28);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.04), 0 12px 40px rgba(0, 0, 0, 0.45), 0 0 28px rgba(0, 229, 255, 0.12);
+}
+
+/* ----- Print: clean receipt, hide chrome ----- */
+@media print {
+  @page {
+    margin: 12mm;
+  }
+
+  html, body, #root {
+    background: #fff !important;
+    color: #111 !important;
+    min-height: 0 !important;
+  }
+
+  body {
+    background: #fff !important;
+    overflow: visible !important;
+  }
+
+  .no-print,
+  header,
+  footer,
+  .whatsapp-fab,
+  nav {
+    display: none !important;
+  }
+
+  main {
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  /* Hide everything not part of an active print focus, keep receipt readable */
+  body.printing-receipt * {
+    visibility: hidden !important;
+  }
+  body.printing-receipt .booking-receipt,
+  body.printing-receipt .booking-receipt * {
+    visibility: visible !important;
+  }
+  body.printing-receipt .booking-receipt {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    background: #fff !important;
+    border: 1px solid #ccc !important;
+    box-shadow: none !important;
+    color: #111 !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  body.printing-receipt .booking-receipt-glow {
+    display: none !important;
+  }
+  body.printing-receipt .booking-receipt-actions {
+    display: none !important;
+  }
+  body.printing-receipt .booking-receipt .text-\[var\(--brand\)\],
+  body.printing-receipt .booking-receipt [class*="text-[var(--brand)]"] {
+    color: #0aa !important;
+  }
+}

@@ -35,7 +35,7 @@ export default function Navbar() {
   );
 
   return (
-    <header className="fixed top-0 left-0 right-0 z-50">
+    <header className="no-print fixed top-0 left-0 right-0 z-50">
       <div className="glass-strong border-b border-white/10 backdrop-blur-xl">
         <div className="max-w-7xl mx-auto px-6 md:px-10 py-3 flex items-center justify-between">
           <Link to="/" data-testid={HOME.navLogo} className="flex items-center gap-3 group">

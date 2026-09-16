@@ -71,6 +71,7 @@ export const MYB = {
   cancelBooking: (id) => `mybook-cancel-${id}`,
   rescheduleBooking: (id) => `mybook-reschedule-${id}`,
   uploadComprovante: (id) => `mybook-upload-comprovante-${id}`,
+  receiptBooking: (id) => `mybook-receipt-${id}`,
 };
 
 export const ADMIN = {
@@ -97,6 +98,7 @@ export const ADMIN = {
   undoCheckInBooking: (id) => `admin-checkin-undo-${id}`,
   notesBooking: (id) => `admin-notes-${id}`,
   notesSave: (id) => `admin-notes-save-${id}`,
+  openReceipt: (id) => `admin-receipt-${id}`,
   awaitingQueue: "admin-awaiting-queue",
   sendWhatsapp: (id) => `admin-send-whatsapp-${id}`,
   tournamentSelect: "admin-tournament-select",
