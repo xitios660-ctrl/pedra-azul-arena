@@ -63,6 +63,8 @@ export function buildReceiptShareText(booking, settings = {}) {
   const value = fmtBRL(booking?.deposit ?? booking?.total);
   const status = receiptStatusLabel(booking);
   const address = String(settings?.address_label || booking?.address_label || "").trim();
+  const usedCredits = booking?.payment?.method === "credits" || booking?.paid_with_credits;
+  const creditsH = booking?.payment?.credits_hours || booking?.credits_hours;
 
   const lines = [
     `Olá! Segue o comprovante da minha reserva na ${SITE_NAME} ⚽`,
@@ -71,7 +73,9 @@ export function buildReceiptShareText(booking, settings = {}) {
     `Data: ${date}`,
     `Horário: ${time} (${duration})`,
     `Nome: ${name}`,
-    `Valor (calção): ${value}`,
+    usedCredits
+      ? `Pagamento: crédito de horas${creditsH ? ` (${creditsH}h)` : ""}`
+      : `Valor (calção): ${value}`,
     `Status: ${status}`,
   ];
   if (address) lines.push(`Local: ${address}`);

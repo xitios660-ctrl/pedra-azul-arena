@@ -231,6 +231,7 @@ export default function AdminDashboard() {
         {activeTab === "settings" && (
           <div className="space-y-8">
             <SiteSettingsAdmin />
+            <HourCreditsAdmin />
             <PromoCodesAdmin />
           </div>
         )}
@@ -1407,6 +1408,8 @@ const AUDIT_ACTION_LABELS = {
   settings_save: "Configurações",
   promo_create: "Cupom criado",
   promo_deactivate: "Cupom desativado",
+  credit_add: "Crédito adicionado",
+  credit_adjust: "Crédito ajustado",
   whatsapp_disconnect: "WhatsApp desconectado",
   waitlist_remove: "Lista de espera",
 };
@@ -1421,6 +1424,8 @@ const AUDIT_FILTER_CHIPS = [
   { id: "settings_save", label: "Config." },
   { id: "promo_create", label: "Cupom" },
   { id: "promo_deactivate", label: "Cupom off" },
+  { id: "credit_add", label: "Crédito +" },
+  { id: "credit_adjust", label: "Crédito ±" },
   { id: "whatsapp_disconnect", label: "WhatsApp" },
   { id: "booking_check_in", label: "Check-in" },
   { id: "booking_no_show", label: "No-show" },
@@ -1914,6 +1919,7 @@ function SiteSettingsAdmin() {
           policies_enabled: data.policies_enabled !== false,
           policy_cancel: data.policy_cancel || "",
           policy_rain: data.policy_rain || "",
+          credits_enabled: data.credits_enabled !== false,
         });
       } catch (e) {
         setErr(e.response?.data?.detail || e.message);
@@ -1963,6 +1969,7 @@ function SiteSettingsAdmin() {
         policies_enabled: form.policies_enabled !== false,
         policy_cancel: String(form.policy_cancel || "").trim().slice(0, 800),
         policy_rain: String(form.policy_rain || "").trim().slice(0, 800),
+        credits_enabled: form.credits_enabled !== false,
       };
       delete payload.amenities_text;
       delete payload.use_weekend_hours;
@@ -2055,6 +2062,15 @@ function SiteSettingsAdmin() {
           onChange={(e) => set("waitlist_enabled", e.target.checked)}
         />
         <span className="text-sm text-white/80">Lista de espera quando horário estiver ocupado (avisar no WhatsApp se liberar)</span>
+      </label>
+      <label className="flex items-center gap-3 min-h-[44px] cursor-pointer" data-testid="admin-credits-enabled">
+        <input
+          type="checkbox"
+          className="w-5 h-5 accent-[var(--brand)]"
+          checked={form.credits_enabled !== false}
+          onChange={(e) => set("credits_enabled", e.target.checked)}
+        />
+        <span className="text-sm text-white/80">Crédito de horas (pacotes pré-pagos por WhatsApp)</span>
       </label>
       <label className="flex items-center gap-3 min-h-[44px] cursor-pointer" data-testid="admin-recurring-enabled">
         <input
@@ -2252,6 +2268,179 @@ function SiteSettingsAdmin() {
     </form>
   );
 }
+
+
+function HourCreditsAdmin() {
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState("");
+  const [ok, setOk] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [search, setSearch] = useState("");
+  const [form, setForm] = useState({
+    phone: "",
+    delta_hours: "10",
+    name: "",
+    notes: "",
+  });
+
+  const load = async (phoneQ) => {
+    setLoading(true); setErr("");
+    try {
+      const params = {};
+      const q = (phoneQ != null ? phoneQ : search) || "";
+      if (String(q).trim()) params.phone = String(q).trim();
+      const { data } = await api.get("/admin/hour-credits", { params });
+      setItems(data.items || []);
+    } catch (e) {
+      setErr(e.response?.data?.detail || e.message);
+      setItems([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setBusy(true); setErr(""); setOk("");
+    try {
+      const payload = {
+        phone: String(form.phone || "").trim(),
+        delta_hours: Number(form.delta_hours),
+        name: String(form.name || "").trim() || null,
+        notes: String(form.notes || "").trim() || null,
+      };
+      const { data } = await api.post("/admin/hour-credits", payload);
+      setOk(`Saldo atualizado: ${data.phone_digits} · ${data.balance_hours}h`);
+      setForm({ phone: form.phone, delta_hours: "10", name: form.name, notes: "" });
+      await load(search);
+    } catch (e2) {
+      setErr(e2.response?.data?.detail || e2.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div data-testid="admin-hour-credits" className="glass p-5 sm:p-6 space-y-5">
+      <div>
+        <div className="text-[11px] tracking-[0.35em] uppercase text-[var(--brand)]">// Pacotes</div>
+        <h2 className="font-heading text-3xl sm:text-4xl uppercase italic">Crédito de horas</h2>
+        <p className="text-white/55 text-sm mt-1">
+          Venda pacotes por WhatsApp. Na reserva, o cliente pode pagar com saldo (1h = 1 crédito).
+        </p>
+      </div>
+
+      <form onSubmit={submit} className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3 items-end" data-testid="admin-credits-form">
+        <label className="block">
+          <div className="text-[10px] uppercase tracking-[0.25em] text-white/50 mb-1">WhatsApp</div>
+          <input
+            data-testid="admin-credits-phone"
+            className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 min-h-[44px]"
+            value={form.phone}
+            onChange={(e) => set("phone", e.target.value)}
+            placeholder="11999887766"
+            required
+          />
+        </label>
+        <label className="block">
+          <div className="text-[10px] uppercase tracking-[0.25em] text-white/50 mb-1">Ajuste (horas)</div>
+          <input
+            data-testid="admin-credits-delta"
+            type="number"
+            step="0.5"
+            className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 min-h-[44px]"
+            value={form.delta_hours}
+            onChange={(e) => set("delta_hours", e.target.value)}
+            required
+          />
+        </label>
+        <label className="block">
+          <div className="text-[10px] uppercase tracking-[0.25em] text-white/50 mb-1">Nome (opcional)</div>
+          <input
+            data-testid="admin-credits-name"
+            className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 min-h-[44px]"
+            value={form.name}
+            onChange={(e) => set("name", e.target.value)}
+            maxLength={80}
+          />
+        </label>
+        <label className="block sm:col-span-2">
+          <div className="text-[10px] uppercase tracking-[0.25em] text-white/50 mb-1">Notas (opcional)</div>
+          <input
+            data-testid="admin-credits-notes"
+            className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 min-h-[44px]"
+            value={form.notes}
+            onChange={(e) => set("notes", e.target.value)}
+            maxLength={300}
+            placeholder="Pacote 10h · pago em dinheiro"
+          />
+        </label>
+        <button type="submit" disabled={busy} data-testid="admin-credits-submit" className="btn-neon min-h-[44px] justify-center">
+          {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : "Adicionar / ajustar"}
+        </button>
+      </form>
+
+      <div className="flex flex-col sm:flex-row gap-2 items-stretch sm:items-end">
+        <label className="block flex-1">
+          <div className="text-[10px] uppercase tracking-[0.25em] text-white/50 mb-1">Buscar telefone</div>
+          <input
+            data-testid="admin-credits-search"
+            className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 min-h-[44px]"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Filtrar por WhatsApp"
+          />
+        </label>
+        <button type="button" className="btn-ghost min-h-[44px]" data-testid="admin-credits-search-btn" onClick={() => load(search)}>
+          Buscar
+        </button>
+        <button type="button" className="btn-ghost min-h-[44px]" onClick={() => { setSearch(""); load(""); }}>
+          Limpar
+        </button>
+      </div>
+
+      {err && <div className="text-[var(--danger)] text-sm" role="alert">{err}</div>}
+      {ok && <div className="text-[var(--success)] text-sm">{ok}</div>}
+
+      {loading ? (
+        <div className="text-white/50 py-6">Carregando saldos…</div>
+      ) : items.length === 0 ? (
+        <div className="text-white/50 py-6 text-center" data-testid="admin-credits-empty">Nenhum crédito ainda.</div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm min-w-[560px]">
+            <thead>
+              <tr className="text-left text-[10px] uppercase tracking-[0.2em] text-white/45 border-b border-white/10">
+                <th className="py-2 pr-3">Telefone</th>
+                <th className="py-2 pr-3">Nome</th>
+                <th className="py-2 pr-3">Saldo</th>
+                <th className="py-2 pr-3">Notas</th>
+                <th className="py-2">Atualizado</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((c) => (
+                <tr key={c.id} data-testid={`admin-credits-row-${c.phone_digits}`} className="border-b border-white/5">
+                  <td className="py-3 pr-3 font-mono text-xs">{c.phone_digits}</td>
+                  <td className="py-3 pr-3">{c.name || "—"}</td>
+                  <td className="py-3 pr-3 font-heading text-lg text-[var(--brand)]">{c.balance_hours}h</td>
+                  <td className="py-3 pr-3 text-white/50 text-xs max-w-[200px] truncate">{c.notes || "—"}</td>
+                  <td className="py-3 text-white/40 text-xs">{c.updated_at ? String(c.updated_at).slice(0, 16).replace("T", " ") : "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 
 function PromoCodesAdmin() {
   const [items, setItems] = useState([]);

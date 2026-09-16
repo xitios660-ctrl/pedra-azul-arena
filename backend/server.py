@@ -53,6 +53,7 @@ from site_settings import SiteSettingsUpdate
 import waitlist_service as wls
 import audit_log
 import promo_codes as promo_svc
+import hour_credits as credits_svc
 
 # -----------------------------------------------------------------------------
 # Setup
@@ -205,6 +206,7 @@ class BookingCreate(BaseModel):
     your_team_crest: Optional[str] = None         # URL (uploaded) or emoji
     opponent_team_crest: Optional[str] = None
     promo_code: Optional[str] = Field(default=None, max_length=32)
+    pay_with_credits: bool = False
 
 
 class RecurringBookingCreate(BookingCreate):
@@ -239,6 +241,19 @@ class PromoCreateIn(BaseModel):
     max_uses: Optional[int] = Field(default=None, ge=1)
     expires_at: Optional[str] = None
     active: bool = True
+
+
+class HourCreditAdjustIn(BaseModel):
+    phone: str = Field(min_length=8, max_length=20)
+    delta_hours: float = Field(..., description="Positive to add, negative to subtract")
+    name: Optional[str] = Field(default=None, max_length=80)
+    notes: Optional[str] = Field(default=None, max_length=300)
+
+
+class HourCreditLookupIn(BaseModel):
+    phone: str = Field(min_length=8, max_length=20)
+
+
 
 
 class LookupIn(BaseModel):
@@ -550,6 +565,7 @@ async def create_booking(payload: BookingCreate, request: Request):
             source="web",
             status="pending",
             promo_code=payload.promo_code,
+            pay_with_credits=bool(payload.pay_with_credits),
         )
     except DuplicateKeyError:
         raise HTTPException(status_code=409, detail="Horário já reservado")
@@ -2618,6 +2634,79 @@ async def admin_deactivate_promo(promo_id: str, admin: dict = Depends(require_ad
     )
     return doc
 
+# =============================================================================
+# HOUR CREDITS / PACOTES (Cycle 32)
+# =============================================================================
+@api.get("/credits/balance")
+async def credits_balance(phone: str, request: Request):
+    """Public balance lookup by WhatsApp digits — for booking UI toggle."""
+    _rate_limit_booking(request)
+    settings = await sset.get_settings(db)
+    if not settings.get("credits_enabled", True):
+        return {"credits_enabled": False, "has_credit": False, "balance_hours": 0, "phone_digits": None}
+    try:
+        data = await credits_svc.lookup_balance(db, phone)
+        data["credits_enabled"] = True
+        return data
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@api.post("/credits/lookup")
+async def credits_lookup(payload: HourCreditLookupIn, request: Request):
+    """Same as GET balance — POST body for clients that prefer JSON."""
+    _rate_limit_booking(request)
+    settings = await sset.get_settings(db)
+    if not settings.get("credits_enabled", True):
+        return {"credits_enabled": False, "has_credit": False, "balance_hours": 0, "phone_digits": None}
+    try:
+        data = await credits_svc.lookup_balance(db, payload.phone)
+        data["credits_enabled"] = True
+        return data
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@api.get("/admin/hour-credits")
+async def admin_list_hour_credits(
+    phone: Optional[str] = None,
+    admin: dict = Depends(require_admin),
+):
+    items = await credits_svc.list_credits(db, phone=phone)
+    return {"items": items, "count": len(items)}
+
+
+@api.post("/admin/hour-credits")
+async def admin_adjust_hour_credits(payload: HourCreditAdjustIn, admin: dict = Depends(require_admin)):
+    try:
+        doc = await credits_svc.adjust_credit(
+            db,
+            phone=payload.phone,
+            delta_hours=payload.delta_hours,
+            name=payload.name,
+            notes=payload.notes,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    delta = float(payload.delta_hours)
+    action = "credit_add" if delta > 0 else "credit_adjust"
+    await audit_log.audit(
+        db, admin, action,
+        entity_type="hour_credit",
+        entity_id=doc.get("id"),
+        summary=f"Crédito {'+' if delta > 0 else ''}{delta}h · {doc.get('phone_digits')} · saldo {doc.get('balance_hours')}h",
+        meta={
+            "phone_digits": doc.get("phone_digits"),
+            "delta_hours": delta,
+            "balance_hours": doc.get("balance_hours"),
+            "name": doc.get("name"),
+        },
+    )
+    return doc
+
+
+
+
 
 # =============================================================================
 # ADMIN — Audit log (Cycle 28)
@@ -2897,6 +2986,7 @@ async def startup():
     await wls.ensure_indexes(db)
     await audit_log.ensure_indexes(db)
     await promo_svc.ensure_indexes(db)
+    await credits_svc.ensure_indexes(db)
     logger.info("Arena Futsal Premium API initialized (CPF + WA bot + calendar)")
 
     # Cycle 18: lightweight localhost WA sidecar self-ping (optional).

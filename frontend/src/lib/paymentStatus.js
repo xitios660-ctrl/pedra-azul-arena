@@ -62,10 +62,23 @@ export const PIX_BADGE = {
   },
 };
 
+export const CREDITS_BADGE = {
+  label: "Crédito de horas",
+  short: "Crédito",
+  hint: "Pago com pacote de horas — sem PIX.",
+  color: "var(--success)",
+  tone: "success",
+};
+
 /** Resolve booking + payment into a PIX pipeline badge. */
 export function pixBadgeFor(booking) {
   if (!booking) return PIX_BADGE.pending;
   const pay = booking.payment?.status;
+  const method = booking.payment?.method;
+  if (method === "credits" || booking.paid_with_credits) {
+    if (booking.status === "cancelled" || pay === "cancelled") return PIX_BADGE.cancelled;
+    return CREDITS_BADGE;
+  }
   if (booking.status === "expired" || pay === "expired") return PIX_BADGE.expired;
   if (booking.status === "cancelled" || pay === "cancelled") return PIX_BADGE.cancelled;
   if (booking.status === "confirmed" || pay === "paid") return PIX_BADGE.confirmed;

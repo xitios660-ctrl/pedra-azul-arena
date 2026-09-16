@@ -119,8 +119,12 @@ export default function BookingReceipt({
           <ReceiptRow icon={<User className="w-3.5 h-3.5" />} label="Nome" value={booking.customer_name || "—"} />
           <ReceiptRow
             icon={<Banknote className="w-3.5 h-3.5" />}
-            label="Valor (calção)"
-            value={fmtBRL(booking.deposit ?? booking.total)}
+            label={booking.payment?.method === "credits" || booking.paid_with_credits ? "Pagamento" : "Valor (calção)"}
+            value={
+              booking.payment?.method === "credits" || booking.paid_with_credits
+                ? `Crédito${booking.payment?.credits_hours || booking.credits_hours ? ` (${booking.payment?.credits_hours || booking.credits_hours}h)` : ""}`
+                : fmtBRL(booking.deposit ?? booking.total)
+            }
             accent
           />
           {address ? (

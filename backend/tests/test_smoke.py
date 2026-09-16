@@ -3069,3 +3069,298 @@ def test_admin_revenue_report(admin_session, s):
         for bid in created:
             _admin_cancel_quiet(admin_session, bid)
 
+
+
+def test_hour_credits_unit_normalize():
+    """Cycle 32: phone normalize + public shape helpers."""
+    import sys
+    from pathlib import Path as P
+    root = P(__file__).resolve().parents[1]
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    import hour_credits as hc
+
+    assert hc.normalize_phone("11999887766").startswith("55")
+    pub = hc.public_credit({
+        "id": "x",
+        "phone_digits": "5511999887766",
+        "name": "Ana",
+        "balance_hours": 10.0,
+        "notes": None,
+        "updated_at": "t",
+        "created_at": "t",
+    })
+    assert pub["balance_hours"] == 10
+    assert pub["phone_digits"] == "5511999887766"
+
+
+def test_hour_credits_add_book_insufficient(admin_session, s):
+    """Cycle 32: admin add credit → book with credits → balance drops; insufficient → 400.
+    Concurrent-safe decrement via atomic $gte filter (spot-check with sequential double consume).
+    """
+    import uuid as _uuid
+
+    # 11-digit BR mobile unique per run (digits only)
+    phone = "1199" + f"{int(_uuid.uuid4().hex[:8], 16) % 10_000_000:07d}"
+
+    created_ids = []
+
+    # Auth required
+    bare = requests.Session()
+    assert bare.get(f"{API}/admin/hour-credits", timeout=10).status_code in (401, 403)
+
+    # Ensure credits enabled
+    st = admin_session.get(f"{API}/admin/site-settings", timeout=10)
+    assert st.status_code == 200, st.text
+    original = st.json()
+    if original.get("credits_enabled") is False:
+        payload = {**original, "credits_enabled": True}
+        # strip non-updatable helpers if any
+        for k in list(payload.keys()):
+            if k.endswith("_resolved") or k in ("amenities_text", "use_weekend_hours", "updated_at", "created_at", "id"):
+                payload.pop(k, None)
+        ur = admin_session.put(f"{API}/admin/site-settings", json=payload, timeout=15)
+        assert ur.status_code == 200, ur.text
+
+    try:
+        # Public settings exposes flag
+        pub = s.get(f"{API}/site-settings", timeout=10)
+        assert pub.status_code == 200
+        assert pub.json().get("credits_enabled") is not False
+
+        # Add 3 hours
+        r_add = admin_session.post(
+            f"{API}/admin/hour-credits",
+            json={"phone": phone, "delta_hours": 3, "name": "Cycle32 Tester", "notes": "pacote teste"},
+            timeout=10,
+        )
+        assert r_add.status_code == 200, r_add.text
+        assert float(r_add.json()["balance_hours"]) == 3
+        phone_digits = r_add.json()["phone_digits"]
+
+        # List / search
+        rl = admin_session.get(f"{API}/admin/hour-credits", params={"phone": phone}, timeout=10)
+        assert rl.status_code == 200, rl.text
+        assert any(x["phone_digits"] == phone_digits for x in rl.json().get("items") or [])
+
+        # Public balance
+        rb = s.get(f"{API}/credits/balance", params={"phone": phone}, headers=_xff(), timeout=10)
+        assert rb.status_code == 200, rb.text
+        assert rb.json()["has_credit"] is True
+        assert float(rb.json()["balance_hours"]) == 3
+
+        # Audit
+        ra = admin_session.get(f"{API}/admin/audit", params={"limit": 20, "action": "credit_add"}, timeout=10)
+        assert ra.status_code == 200
+        assert any(it.get("action") == "credit_add" for it in (ra.json().get("items") or []))
+
+        day, free, _price = _find_day_with_n_free(s, n=3, start_off=130, end_off=260)
+        assert day and free, "need free slots for credits booking test"
+
+        # Book 1h with credits
+        cr = s.post(
+            f"{API}/bookings",
+            json={
+                "court_id": "court-1",
+                "date": day,
+                "start_time": free[0],
+                "duration_hours": 1,
+                "cpf": SMOKE_CPF,
+                "customer_name": "Credits Cycle32",
+                "whatsapp": phone,
+                "your_team_name": "A",
+                "opponent_team_name": "B",
+                "pay_with_credits": True,
+            },
+            headers=_xff(),
+            timeout=15,
+        )
+        assert cr.status_code in (200, 201), cr.text
+        b = cr.json()
+        created_ids.append(b.get("id"))
+        assert b.get("status") == "confirmed"
+        assert b.get("payment", {}).get("method") == "credits"
+        assert b.get("payment", {}).get("status") == "paid"
+        assert b.get("paid_with_credits") is True
+        assert float(b.get("payment", {}).get("credits_hours") or b.get("credits_hours") or 0) == 1
+        assert b.get("payment", {}).get("pix_copy_paste") in (None, "")
+
+        # Balance decreased to 2
+        rb2 = s.get(f"{API}/credits/balance", params={"phone": phone}, headers=_xff(), timeout=10)
+        assert rb2.status_code == 200
+        assert float(rb2.json()["balance_hours"]) == 2
+
+        # Book another 1h → balance 1
+        free2 = [
+            x["time"]
+            for x in s.get(
+                f"{API}/courts/availability",
+                params={"court_id": "court-1", "date": day},
+                timeout=15,
+                headers=_xff(),
+            ).json().get("slots") or []
+            if x.get("status") == "available"
+        ]
+        assert free2
+        cr2 = s.post(
+            f"{API}/bookings",
+            json={
+                "court_id": "court-1",
+                "date": day,
+                "start_time": free2[0],
+                "duration_hours": 1,
+                "cpf": SMOKE_CPF,
+                "customer_name": "Credits Cycle32 B",
+                "whatsapp": phone,
+                "your_team_name": "A",
+                "opponent_team_name": "B",
+                "pay_with_credits": True,
+            },
+            headers=_xff(),
+            timeout=15,
+        )
+        assert cr2.status_code in (200, 201), cr2.text
+        created_ids.append(cr2.json().get("id"))
+        assert float(s.get(f"{API}/credits/balance", params={"phone": phone}, headers=_xff(), timeout=10).json()["balance_hours"]) == 1
+
+        # Insufficient: try 2h with only 1h left (or 1h after draining)
+        # Drain last hour
+        free3 = [
+            x["time"]
+            for x in s.get(
+                f"{API}/courts/availability",
+                params={"court_id": "court-1", "date": day},
+                timeout=15,
+                headers=_xff(),
+            ).json().get("slots") or []
+            if x.get("status") == "available"
+        ]
+        assert free3
+        cr3 = s.post(
+            f"{API}/bookings",
+            json={
+                "court_id": "court-1",
+                "date": day,
+                "start_time": free3[0],
+                "duration_hours": 1,
+                "cpf": SMOKE_CPF,
+                "customer_name": "Credits Cycle32 C",
+                "whatsapp": phone,
+                "your_team_name": "A",
+                "opponent_team_name": "B",
+                "pay_with_credits": True,
+            },
+            headers=_xff(),
+            timeout=15,
+        )
+        assert cr3.status_code in (200, 201), cr3.text
+        created_ids.append(cr3.json().get("id"))
+        assert float(s.get(f"{API}/credits/balance", params={"phone": phone}, headers=_xff(), timeout=10).json()["balance_hours"]) == 0
+
+        # Insufficient fails
+        free4 = [
+            x["time"]
+            for x in s.get(
+                f"{API}/courts/availability",
+                params={"court_id": "court-1", "date": day},
+                timeout=15,
+                headers=_xff(),
+            ).json().get("slots") or []
+            if x.get("status") == "available"
+        ]
+        if not free4:
+            day2, free4, _ = _find_day_with_n_free(s, n=1, start_off=260, end_off=340)
+            assert day2 and free4
+            day = day2
+        fail = s.post(
+            f"{API}/bookings",
+            json={
+                "court_id": "court-1",
+                "date": day,
+                "start_time": free4[0],
+                "duration_hours": 1,
+                "cpf": SMOKE_CPF,
+                "customer_name": "Credits Fail",
+                "whatsapp": phone,
+                "your_team_name": "A",
+                "opponent_team_name": "B",
+                "pay_with_credits": True,
+            },
+            headers=_xff(),
+            timeout=15,
+        )
+        assert fail.status_code == 400, fail.text
+        detail = (fail.json().get("detail") or "").lower()
+        assert "crédito" in detail or "credito" in detail or "insuficiente" in detail or "sem crédito" in detail
+
+        # PIX path unchanged when not using credits
+        pix = s.post(
+            f"{API}/bookings",
+            json={
+                "court_id": "court-1",
+                "date": day,
+                "start_time": free4[0],
+                "duration_hours": 1,
+                "cpf": SMOKE_CPF,
+                "customer_name": "PIX Still Works",
+                "whatsapp": phone,
+                "your_team_name": "A",
+                "opponent_team_name": "B",
+            },
+            headers=_xff(),
+            timeout=15,
+        )
+        assert pix.status_code in (200, 201), pix.text
+        created_ids.append(pix.json().get("id"))
+        assert pix.json().get("payment", {}).get("method") == "pix"
+        assert pix.json().get("payment", {}).get("status") == "pending"
+        assert pix.json().get("status") == "pending"
+
+        # Concurrent-safe: add 1h then two parallel 1h consumes — only one succeeds
+        admin_session.post(
+            f"{API}/admin/hour-credits",
+            json={"phone": phone, "delta_hours": 1, "notes": "race"},
+            timeout=10,
+        )
+        day3, free5, _ = _find_day_with_n_free(s, n=2, start_off=300, end_off=380)
+        assert day3 and len(free5) >= 2
+        import concurrent.futures
+
+        def _book(slot):
+            sess = requests.Session()
+            return sess.post(
+                f"{API}/bookings",
+                json={
+                    "court_id": "court-1",
+                    "date": day3,
+                    "start_time": slot,
+                    "duration_hours": 1,
+                    "cpf": SMOKE_CPF,
+                    "customer_name": "Race Credits",
+                    "whatsapp": phone,
+                    "your_team_name": "A",
+                    "opponent_team_name": "B",
+                    "pay_with_credits": True,
+                },
+                headers=_xff(),
+                timeout=20,
+            )
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
+            futs = [ex.submit(_book, free5[0]), ex.submit(_book, free5[1])]
+            results = [f.result() for f in futs]
+        for r in results:
+            if r.status_code in (200, 201):
+                created_ids.append(r.json().get("id"))
+        ok_n = sum(1 for r in results if r.status_code in (200, 201))
+        fail_n = sum(1 for r in results if r.status_code == 400)
+        # One consumes the 1h credit; the other must fail on insufficient (or both could race slots)
+        assert ok_n == 1, f"expected 1 credit success, got {[r.status_code for r in results]} {[r.text[:80] for r in results]}"
+        assert fail_n >= 1
+        bal_final = float(
+            s.get(f"{API}/credits/balance", params={"phone": phone}, headers=_xff(), timeout=10).json()["balance_hours"]
+        )
+        assert bal_final == 0
+    finally:
+        for bid in created_ids:
+            _admin_cancel_quiet(admin_session, bid)

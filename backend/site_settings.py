@@ -16,6 +16,7 @@ Amenities / FAQ (Cycle 17): has_parking, parking_note, game_duration_note,
 accepts_pix, structure_blurb, amenities — used on landing + WA FAQ.
 Policies (Cycle 30): policy_cancel, policy_rain (editable pt-BR, max ~800),
 policies_enabled — landing / booking / WA FAQ. {horas} in policy_cancel → cancel_min_hours.
+Credits (Cycle 32): credits_enabled (default true) — prepaid hour packs by phone.
 Do not invent street numbers or covered-court claims; keep address_label / maps_url as-is.
 """
 from __future__ import annotations
@@ -84,6 +85,8 @@ DEFAULTS: dict[str, Any] = {
         "de antecedência do horário reservado. Após esse prazo, entre em contato pelo WhatsApp."
     ),
     "policy_rain": "Em caso de chuva, entre em contato pelo WhatsApp.",
+    # Cycle 32: prepaid hour credits (pacotes)
+    "credits_enabled": True,
 }
 
 # Legacy Arena Premium placeholders → migrate once if still at old seed values.
@@ -130,6 +133,7 @@ class SiteSettingsUpdate(BaseModel):
     policies_enabled: bool = Field(default=True)
     policy_cancel: str = Field(default="", max_length=800)
     policy_rain: str = Field(default="", max_length=800)
+    credits_enabled: bool = Field(default=True)
 
     @field_validator("whatsapp_e164")
     @classmethod
@@ -444,6 +448,9 @@ def public_view(doc: dict[str, Any]) -> dict[str, Any]:
         ),
         "policy_cancel_resolved": resolve_policy_cancel(d),
         "policy_rain_resolved": resolve_policy_rain(d),
+        "credits_enabled": bool(
+            d.get("credits_enabled") if d.get("credits_enabled") is not None else DEFAULTS["credits_enabled"]
+        ),
     }
 
 

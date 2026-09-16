@@ -248,7 +248,11 @@ function BookingCard({ b, cpf, idx, onChanged }) {
       </div>
       <p className="text-[11px] text-white/45 mt-2" data-testid={`mybook-pix-hint-${b.id}`}>
         {badge.hint}
-        {b.payment?.status ? ` · pagamento: ${b.payment.status}` : ""}
+        {b.payment?.method === "credits" || b.paid_with_credits
+          ? ` · método: crédito${b.payment?.credits_hours || b.credits_hours ? ` (${b.payment?.credits_hours || b.credits_hours}h)` : ""}`
+          : b.payment?.status
+            ? ` · pagamento: ${b.payment.status}`
+            : ""}
       </p>
       <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-4 mt-4">
         <div className="text-center">
@@ -272,7 +276,7 @@ function BookingCard({ b, cpf, idx, onChanged }) {
         </p>
       )}
 
-      {b.status === "pending" && (
+      {b.status === "pending" && b.payment?.method !== "credits" && !b.paid_with_credits && (
         <div className="mt-5 border-t border-white/10 pt-4">
           <div className="text-[10px] uppercase tracking-[0.3em] text-[var(--brand)] flex items-center gap-2 mb-2">
             <Upload className="w-3 h-3" /> Envie o comprovante PIX
@@ -299,7 +303,9 @@ function BookingCard({ b, cpf, idx, onChanged }) {
       {b.status === "confirmed" && (
         <div className="mt-5 border-t border-white/10 pt-4 text-xs text-white/60 flex items-start gap-2">
           <CheckCircle2 className="w-3 h-3 text-[var(--success)] mt-0.5 shrink-0" />
-          PIX confirmado. Reserva ativa — chegue 10 min antes.
+          {b.payment?.method === "credits" || b.paid_with_credits
+            ? "Pago com crédito de horas. Reserva ativa — chegue 10 min antes."
+            : "PIX confirmado. Reserva ativa — chegue 10 min antes."}
         </div>
       )}
       {b.status === "expired" && (

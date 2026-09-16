@@ -437,12 +437,17 @@ async def create_booking_atomic(
     payment_status: Optional[str] = None,
     series_id: Optional[str] = None,
     promo_code: Optional[str] = None,
+    pay_with_credits: bool = False,
 ) -> dict[str, Any]:
     """Insert one booking spanning N consecutive slots + unique slot_locks.
 
     Primary bookings.slot_key = start hour (partial unique index).
     All covered hours also locked in slot_locks (unique slot_key) so 2h
     blocks the second hour. Raises DuplicateKeyError or ValueError.
+
+    pay_with_credits: when True, atomically consume duration hours from
+    hour_credits for this WhatsApp; payment.method=credits, status=paid,
+    booking confirmed (no PIX flow).
     """
     if court_id != COURT_ID:
         raise ValueError("Quadra não encontrada")
@@ -520,16 +525,57 @@ async def create_booking_atomic(
             await release_slot_locks(db, booking_id)
             raise
 
-    deposit = round(total * DEPOSIT_RATE, 2)
-    pay_status = payment_status or ("paid" if status == "confirmed" and source == "whatsapp" else "pending")
-
-    pix_bits = _pix_payload(settings, deposit) if source == "web" else {
-        "method": "whatsapp" if source == "whatsapp" else ("admin" if source == "admin" else "other"),
-        "qr_code": None,
-        "pix_copy_paste": None,
-        "pix_key": settings.get("pix_key"),
-        "amount": deposit,
-    }
+    use_credits = bool(pay_with_credits)
+    consumed_credit_hours = None
+    final_status = status
+    if use_credits:
+        if not settings.get("credits_enabled", True):
+            await release_slot_locks(db, booking_id)
+            if claimed_promo_code:
+                import promo_codes as promo_svc
+                await promo_svc.release_claim(db, claimed_promo_code)
+            raise ValueError("Pagamento com crédito de horas está desativado")
+        import hour_credits as credits_svc
+        hours_needed = round(float(bill_hours), 2)
+        try:
+            await credits_svc.consume_hours(db, whatsapp, hours_needed)
+            consumed_credit_hours = hours_needed
+        except ValueError:
+            await release_slot_locks(db, booking_id)
+            if claimed_promo_code:
+                import promo_codes as promo_svc
+                await promo_svc.release_claim(db, claimed_promo_code)
+            raise
+        except Exception:
+            await release_slot_locks(db, booking_id)
+            if claimed_promo_code:
+                import promo_codes as promo_svc
+                await promo_svc.release_claim(db, claimed_promo_code)
+            raise
+        # Credits settle the booking — no PIX / comprovante wait
+        final_status = "confirmed"
+        pay_status = "paid"
+        deposit = 0.0
+        pix_bits = {
+            "method": "credits",
+            "qr_code": None,
+            "pix_copy_paste": None,
+            "pix_key": None,
+            "amount": 0.0,
+            "credits_hours": hours_needed,
+        }
+    else:
+        deposit = round(total * DEPOSIT_RATE, 2)
+        pay_status = payment_status or (
+            "paid" if status == "confirmed" and source == "whatsapp" else "pending"
+        )
+        pix_bits = _pix_payload(settings, deposit) if source == "web" else {
+            "method": "whatsapp" if source == "whatsapp" else ("admin" if source == "admin" else "other"),
+            "qr_code": None,
+            "pix_copy_paste": None,
+            "pix_key": settings.get("pix_key"),
+            "amount": deposit,
+        }
 
     booking = {
         "id": booking_id,
@@ -553,7 +599,7 @@ async def create_booking_atomic(
         "discount": discount,
         "promo_code": applied_promo,
         "deposit": deposit,
-        "status": status,
+        "status": final_status,
         "source": source,
         "payment": {
             **pix_bits,
@@ -561,10 +607,10 @@ async def create_booking_atomic(
             "created_at": now_iso(),
             "expires_at": (
                 (datetime.now(timezone.utc) + timedelta(minutes=PIX_TTL_MINUTES)).isoformat()
-                if pay_status == "pending" and status == "pending"
+                if pay_status == "pending" and final_status == "pending"
                 else None
             ),
-            "confirmed_at": now_iso() if status == "confirmed" else None,
+            "confirmed_at": now_iso() if final_status == "confirmed" or pay_status == "paid" else None,
             "comprovante_url": None,
             "comprovante_uploaded_at": None,
             "comprovante_gridfs_id": None,
@@ -579,6 +625,8 @@ async def create_booking_atomic(
         "slot_key": primary_sk,
         "slot_keys": slot_keys,
         "series_id": series_id,
+        "paid_with_credits": bool(use_credits),
+        "credits_hours": consumed_credit_hours,
     }
     try:
         await db.bookings.insert_one(booking)
@@ -587,12 +635,18 @@ async def create_booking_atomic(
         if claimed_promo_code:
             import promo_codes as promo_svc
             await promo_svc.release_claim(db, claimed_promo_code)
+        if consumed_credit_hours:
+            import hour_credits as credits_svc
+            await credits_svc.restore_hours(db, whatsapp, consumed_credit_hours)
         raise
     except Exception:
         await release_slot_locks(db, booking_id)
         if claimed_promo_code:
             import promo_codes as promo_svc
             await promo_svc.release_claim(db, claimed_promo_code)
+        if consumed_credit_hours:
+            import hour_credits as credits_svc
+            await credits_svc.restore_hours(db, whatsapp, consumed_credit_hours)
         raise
     booking.pop("_id", None)
     return booking

@@ -112,6 +112,9 @@ export default function Booking() {
   const [promoApplied, setPromoApplied] = useState(null); // { code, discount, total, original_total, ... }
   const [promoBusy, setPromoBusy] = useState(false);
   const [promoErr, setPromoErr] = useState("");
+  const [creditInfo, setCreditInfo] = useState(null); // { balance_hours, has_credit, credits_enabled }
+  const [payWithCredits, setPayWithCredits] = useState(false);
+  const [creditBusy, setCreditBusy] = useState(false);
 
   const [booking, setBooking] = useState(null);
   const [err, setErr] = useState("");
@@ -162,6 +165,7 @@ export default function Booking() {
   }, [selectedCourt, date]);
 
   const waitlistOn = settings?.waitlist_enabled !== false && (availability?.settings?.waitlist_enabled !== false);
+  const creditsOn = settings?.credits_enabled !== false;
 
   const openWaitlist = (slot) => {
     if (!waitlistOn || !isSlotReserved(slot)) return;
@@ -226,6 +230,40 @@ export default function Booking() {
     2,
     Math.min(8, Number(availability?.settings?.recurring_max_weeks || settings?.recurring_max_weeks || 8) || 8),
   );
+
+  // Load hour-credit balance when phone is known (review step)
+  useEffect(() => {
+    if (step !== "review" || !creditsOn) {
+      return;
+    }
+    const digits = onlyDigits(whatsapp || "");
+    if (digits.length < 10) {
+      setCreditInfo(null);
+      setPayWithCredits(false);
+      return;
+    }
+    let cancelled = false;
+    setCreditBusy(true);
+    api.get("/credits/balance", { params: { phone: whatsapp } })
+      .then(({ data }) => {
+        if (cancelled) return;
+        setCreditInfo(data);
+        const bal = Number(data?.balance_hours || 0);
+        const need = Number(durationHours || 1);
+        if (!(data?.has_credit && bal >= need) || recurringOn) {
+          setPayWithCredits(false);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setCreditInfo(null);
+          setPayWithCredits(false);
+        }
+      })
+      .finally(() => { if (!cancelled) setCreditBusy(false); });
+    return () => { cancelled = true; };
+  }, [step, whatsapp, durationHours, creditsOn, recurringOn]);
+
 
   const loadRecurringPreview = async (weeks) => {
     if (!selectedCourt || !pickedSlot || !weeks || weeks < 2) {
@@ -329,6 +367,7 @@ export default function Booking() {
         your_team_crest: yourCrest,
         opponent_team_crest: oppCrest,
         ...(promoApplied?.code ? { promo_code: promoApplied.code } : {}),
+        ...((payWithCredits && !recurringOn) ? { pay_with_credits: true } : {}),
       };
       let data;
       if (recurringOn && recurringWeeks >= 2) {
@@ -341,7 +380,8 @@ export default function Booking() {
         data = res.data;
       }
       setBooking(data);
-      setStep("pix");
+      const usedCredits = data?.payment?.method === "credits" || data?.paid_with_credits;
+      setStep(usedCredits ? "credits_ok" : "pix");
       const { data: av } = await api.get("/courts/availability", { params: { court_id: selectedCourt.id, date } });
       setAvailability(av);
     } catch (e) {
@@ -385,6 +425,8 @@ export default function Booking() {
     setStep("idle"); setPickedSlot(null); setDurationHours(1); setBooking(null); setErr("");
     setCpf(""); setName(""); setWhatsapp("");
     setYourTeam(""); setOppTeam(""); setYourCrest("⚽"); setOppCrest("🔥");
+    setCreditInfo(null); setPayWithCredits(false);
+    setPromoApplied(null); setPromoInput(""); setPromoErr("");
   };
 
   const effectiveHourly = (() => {
@@ -1046,6 +1088,34 @@ export default function Booking() {
                 )}
               </div>
 
+              {creditsOn && !recurringOn && (() => {
+                const bal = Number(creditInfo?.balance_hours || 0);
+                const need = Number(durationHours || 1);
+                const canUse = Boolean(creditInfo?.has_credit && bal >= need);
+                if (!canUse && !creditBusy) return null;
+                return (
+                  <div className="mt-4 glass p-4 space-y-2" data-testid="booking-credits-box">
+                    <div className="text-[10px] uppercase tracking-[0.3em] text-[var(--brand)]">Crédito de horas</div>
+                    {creditBusy ? (
+                      <div className="text-sm text-white/50 flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Consultando saldo…</div>
+                    ) : canUse ? (
+                      <label className="flex items-start gap-3 min-h-[44px] cursor-pointer" data-testid="booking-credits-toggle">
+                        <input
+                          type="checkbox"
+                          className="w-5 h-5 mt-0.5 accent-[var(--brand)]"
+                          checked={payWithCredits}
+                          onChange={(e) => setPayWithCredits(e.target.checked)}
+                        />
+                        <span className="text-sm text-white/80">
+                          Usar crédito ({bal}h) — esta reserva usa {need}h
+                          {payWithCredits ? <span className="block text-[var(--success)] text-xs mt-1">Sem PIX · confirmação imediata</span> : null}
+                        </span>
+                      </label>
+                    ) : null}
+                  </div>
+                );
+              })()}
+
               {policiesVisible(settings) && resolvePolicyCancel(settings) ? (
                 <div className="mt-4 text-sm" data-testid="booking-cancel-policy">
                   <button
@@ -1072,7 +1142,7 @@ export default function Booking() {
                   {(() => {
                     const base = (effectiveHourly || 0) * (durationHours || 1);
                     const total = promoApplied?.total != null ? Number(promoApplied.total) : base;
-                    const deposit = total * 0.3;
+                    const deposit = payWithCredits ? 0 : total * 0.3;
                     return (
                       <div className="font-heading text-2xl sm:text-3xl" data-testid="booking-price-summary">
                         {promoApplied && Number(promoApplied.discount) > 0 ? (
@@ -1098,6 +1168,41 @@ export default function Booking() {
                   {confirming ? <Loader2 className="w-5 h-5 animate-spin" /> : <>{recurringWeeks > 1 ? `RESERVAR ${recurringWeeks} SEMANAS` : "RESERVAR HORÁRIO"} <ChevronRight className="w-5 h-5" /></>}
                 </button>
               </div>
+            </motion.div>
+          </Overlay>
+        )}
+
+        {step === "credits_ok" && booking && (
+          <Overlay onClose={closeAll}>
+            <motion.div
+              data-testid="booking-credits-ok"
+              {...m.modalMotion}
+              className="relative glass-strong booking-modal-sheet w-[min(620px,95vw)] p-6 sm:p-10 text-center overflow-hidden victory-panel max-h-[92vh] overflow-y-auto"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="credits-ok-title"
+            >
+              <VictoryBurst />
+              <CloseBtn onClick={closeAll} />
+              <div className="relative z-[1] w-20 h-20 mx-auto rounded-full bg-[var(--success)]/15 grid place-items-center border border-[var(--success)]/30">
+                <Check className="w-10 h-10 text-[var(--success)]" strokeWidth={2.5} />
+              </div>
+              <div className="text-[11px] tracking-[0.35em] uppercase text-[var(--brand)] mt-6">// Crédito</div>
+              <h2 id="credits-ok-title" className="font-heading text-3xl sm:text-4xl uppercase italic mt-1">Reserva confirmada</h2>
+              <p className="mt-3 text-sm text-white/70 max-w-md mx-auto">
+                Pago com <strong className="text-white">crédito de horas</strong>
+                {booking.payment?.credits_hours || booking.credits_hours
+                  ? ` (${booking.payment?.credits_hours || booking.credits_hours}h)`
+                  : ""}. Sem PIX.
+              </p>
+              <div className="mt-6 glass p-4 text-left text-sm space-y-1">
+                <div><span className="text-white/45">Quadra</span> · {booking.court_name}</div>
+                <div><span className="text-white/45">Data</span> · {booking.date} · {booking.start_time}</div>
+                <div><span className="text-white/45">Pagamento</span> · crédito · {booking.payment?.status || "paid"}</div>
+              </div>
+              <button type="button" className="btn-neon mt-6 min-h-[44px] justify-center w-full sm:w-auto mx-auto" onClick={closeAll} data-testid="booking-credits-ok-close">
+                Fechar
+              </button>
             </motion.div>
           </Overlay>
         )}

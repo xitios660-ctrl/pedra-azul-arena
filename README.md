@@ -261,3 +261,8 @@ Prod smoke: `GET /api/health`, `/api/courts`, `/api/site-settings`, WhatsApp `AG
 - Relatório de faturamento admin: `GET /api/admin/reports/revenue?date_from=&date_to=` (soma calção paid/confirmed por dia; contagens reservas/cancel/no-show/descontos) + CSV `.../revenue.csv`.
 - Admin aba **Faturamento**: intervalo de datas, totais, tabela diária, export CSV. Usa só campos de pagamento já gravados (sem liquidação PIX inventada).
 
+## Cycle 32 notes
+- Pacotes de horas (`hour_credits`): saldo por WhatsApp (`phone_digits` único); admin adiciona/ajusta com audit `credit_add` / `credit_adjust`.
+- Settings: `credits_enabled` (default true). Público: `GET /api/credits/balance?phone=` e `POST /api/credits/lookup`.
+- Reserva com `pay_with_credits: true`: se duração ≤ saldo, decremento atômico; `payment.method=credits`, `status=paid`, booking `confirmed` (sem PIX). Insuficiente → 400.
+- UI Booking: toggle “Usar crédito (Xh)” quando telefone tem saldo; MyBookings/recibo mostram método crédito.
