@@ -237,3 +237,9 @@ Prod smoke: `GET /api/health`, `/api/courts`, `/api/site-settings`, WhatsApp `AG
 - Conflito numa semana → pula e reporta; sucesso parcial OK. Settings: `recurring_enabled` (default true), `recurring_max_weeks` (default 8).
 - UI Booking: “Repetir por X semanas” + prévia livre/ocupado; cancelar uma não cancela a série; “Cancelar série futura” (cliente/admin).
 
+
+## Cycle 28 notes
+- Admin **audit log**: collection `audit_log` (`id`, `at`, `actor_email`/`actor_id`, `action`, `entity_type`, `entity_id`, `summary`, `meta` — sem segredos).
+- Helper `audit_log.audit` best-effort nas mutações admin (PIX confirm/reject, cancel, create, block/unblock, settings, WhatsApp disconnect, no-show, check-in, waitlist remove, reschedule).
+- `GET /api/admin/audit?limit=&action=` (admin JWT, mais recentes primeiro); aba **Atividade** com filtros.
+- Índice `at` descendente; sem auto-delete.

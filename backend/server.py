@@ -51,6 +51,7 @@ from seed_data import run_all_seeds
 import site_settings as sset
 from site_settings import SiteSettingsUpdate
 import waitlist_service as wls
+import audit_log
 
 # -----------------------------------------------------------------------------
 # Setup
@@ -307,9 +308,17 @@ async def admin_get_site_settings(admin: dict = Depends(require_admin)):
 @api.put("/admin/site-settings")
 async def admin_put_site_settings(payload: SiteSettingsUpdate, admin: dict = Depends(require_admin)):
     try:
-        return await sset.update_settings(db, payload)
+        updated = await sset.update_settings(db, payload)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+    await audit_log.audit(
+        db, admin, "settings_save",
+        entity_type="site_settings",
+        entity_id="singleton",
+        summary="Configurações do site salvas",
+        meta={"keys": sorted((payload.model_dump(exclude_unset=True) or {}).keys())},
+    )
+    return updated
 
 
 # =============================================================================
@@ -1364,6 +1373,12 @@ async def admin_confirm_booking(booking_id: str, admin: dict = Depends(require_a
         updated["whatsapp_auto"] = True
     else:
         updated["whatsapp_auto"] = False
+    await audit_log.audit(
+        db, admin, "booking_confirm",
+        entity_type="booking", entity_id=booking_id,
+        summary=f"PIX confirmado · {updated.get('date')} {updated.get('start_time')} · {updated.get('customer_name') or ''}",
+        meta={"date": updated.get("date"), "start_time": updated.get("start_time"), "whatsapp_auto": bool(updated.get("whatsapp_auto"))},
+    )
     return updated
 
 
@@ -1403,6 +1418,12 @@ async def admin_cancel_booking(booking_id: str, admin: dict = Depends(require_ad
     wa_ok = await _notify_cancel_wa(b, source="admin")
     await _after_booking_freed(b)
     logger.info("event=booking_cancel source=admin booking_id=%s wa=%s", booking_id[:8], wa_ok)
+    await audit_log.audit(
+        db, admin, "booking_cancel",
+        entity_type="booking", entity_id=booking_id,
+        summary=f"Reserva cancelada · {b.get('date')} {b.get('start_time')} · {b.get('customer_name') or ''}",
+        meta={"date": b.get("date"), "start_time": b.get("start_time")},
+    )
     return {"ok": True, "whatsapp_notified": wa_ok}
 
 
@@ -1450,6 +1471,12 @@ async def admin_mark_no_show(booking_id: str, admin: dict = Depends(require_admi
     updated = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
     await daily_metrics.note_no_show(db)
     logger.info("event=booking_no_show source=admin booking_id=%s", booking_id[:8])
+    await audit_log.audit(
+        db, admin, "booking_no_show",
+        entity_type="booking", entity_id=booking_id,
+        summary=f"No-show · {updated.get('date')} {updated.get('start_time')} · {updated.get('customer_name') or ''}",
+        meta={"date": updated.get("date"), "start_time": updated.get("start_time")},
+    )
     return {"ok": True, "status": "no_show", "booking": updated}
 
 
@@ -1526,6 +1553,12 @@ async def admin_check_in_booking(booking_id: str, admin: dict = Depends(require_
     if res.modified_count != 1 and not (updated and updated.get("checked_in_at")):
         raise HTTPException(status_code=409, detail="Não foi possível registrar check-in")
     logger.info("event=booking_check_in booking_id=%s", booking_id[:8])
+    await audit_log.audit(
+        db, admin, "booking_check_in",
+        entity_type="booking", entity_id=booking_id,
+        summary=f"Check-in · {updated.get('date')} {updated.get('start_time')} · {updated.get('customer_name') or ''}",
+        meta={"date": updated.get("date"), "start_time": updated.get("start_time")},
+    )
     return {
         "ok": True,
         "checked_in": True,
@@ -1596,6 +1629,12 @@ async def admin_reschedule_booking(
         updated.get("start_time"),
         wa_ok,
     )
+    await audit_log.audit(
+        db, admin, "booking_reschedule",
+        entity_type="booking", entity_id=booking_id,
+        summary=f"Remarcado · {old_date} {old_time} → {updated.get('date')} {updated.get('start_time')}",
+        meta={"old_date": old_date, "old_time": old_time, "date": updated.get("date"), "start_time": updated.get("start_time")},
+    )
     return {**updated, "whatsapp_notified": wa_ok}
 
 
@@ -1629,6 +1668,12 @@ async def admin_reject_booking(booking_id: str, admin: dict = Depends(require_ad
         f"A reserva foi cancelada. Se precisar, envie outro comprovante após nova reserva no site."
     )
     sent = await whatsapp_bridge.send_text(b.get("whatsapp") or "", msg)
+    await audit_log.audit(
+        db, admin, "booking_reject",
+        entity_type="booking", entity_id=booking_id,
+        summary=f"PIX rejeitado · {b.get('date')} {b.get('start_time')} · {b.get('customer_name') or ''}",
+        meta={"date": b.get("date"), "start_time": b.get("start_time"), "whatsapp_notified": bool(sent)},
+    )
     return {"ok": True, "id": booking_id, "status": "cancelled", "whatsapp_notified": bool(sent)}
 
 
@@ -2074,6 +2119,12 @@ async def admin_block_slot(payload: AdminBlockIn, admin: dict = Depends(require_
         )
     except DuplicateKeyError:
         pass
+    await audit_log.audit(
+        db, admin, "slot_block",
+        entity_type="blocked_slot", entity_id=sk,
+        summary=f"Horário bloqueado · {payload.date} {payload.start_time}",
+        meta={"date": payload.date, "start_time": payload.start_time, "reason": reason_clean},
+    )
     return {"ok": True, "blocked": doc}
 
 
@@ -2081,13 +2132,19 @@ async def admin_block_slot(payload: AdminBlockIn, admin: dict = Depends(require_
 async def admin_unblock_slot(payload: AdminBlockIn, admin: dict = Depends(require_admin)):
     sk = bsvc.slot_key(COURT_ID, payload.date, payload.start_time)
     await db.blocked_slots.delete_one({"slot_key": sk})
+    await audit_log.audit(
+        db, admin, "slot_unblock",
+        entity_type="blocked_slot", entity_id=sk,
+        summary=f"Horário desbloqueado · {payload.date} {payload.start_time}",
+        meta={"date": payload.date, "start_time": payload.start_time},
+    )
     return {"ok": True}
 
 
 @api.post("/admin/calendar/block-day")
 async def admin_block_day(payload: AdminBlockDayIn, admin: dict = Depends(require_admin)):
     try:
-        return await bsvc.block_day(
+        result = await bsvc.block_day(
             db,
             date=payload.date,
             reason=payload.reason,
@@ -2095,12 +2152,19 @@ async def admin_block_day(payload: AdminBlockDayIn, admin: dict = Depends(requir
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    await audit_log.audit(
+        db, admin, "day_block",
+        entity_type="day", entity_id=payload.date,
+        summary=f"Dia bloqueado · {payload.date}",
+        meta={"date": payload.date, "blocked": result.get("blocked"), "skipped_reserved": result.get("skipped_reserved")},
+    )
+    return result
 
 
 @api.post("/admin/calendar/block-range")
 async def admin_block_range(payload: AdminBlockRangeIn, admin: dict = Depends(require_admin)):
     try:
-        return await bsvc.block_date_range(
+        result = await bsvc.block_date_range(
             db,
             date_from=payload.date_from,
             date_to=payload.date_to,
@@ -2109,14 +2173,28 @@ async def admin_block_range(payload: AdminBlockRangeIn, admin: dict = Depends(re
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    await audit_log.audit(
+        db, admin, "range_block",
+        entity_type="day_range", entity_id=f"{payload.date_from}:{payload.date_to}",
+        summary=f"Período bloqueado · {payload.date_from} → {payload.date_to}",
+        meta={"date_from": payload.date_from, "date_to": payload.date_to, "blocked": result.get("blocked")},
+    )
+    return result
 
 
 @api.post("/admin/calendar/unblock-day")
 async def admin_unblock_day(payload: AdminUnblockDayIn, admin: dict = Depends(require_admin)):
     try:
-        return await bsvc.unblock_day(db, date=payload.date)
+        result = await bsvc.unblock_day(db, date=payload.date)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    await audit_log.audit(
+        db, admin, "day_unblock",
+        entity_type="day", entity_id=payload.date,
+        summary=f"Dia desbloqueado · {payload.date}",
+        meta={"date": payload.date, "removed": result.get("removed") if isinstance(result, dict) else None},
+    )
+    return result
 
 
 @api.post("/admin/calendar/bookings")
@@ -2152,6 +2230,12 @@ async def admin_calendar_create_booking(payload: AdminBookingIn, admin: dict = D
         booking["id"][:8],
         booking["date"],
         booking["start_time"],
+    )
+    await audit_log.audit(
+        db, admin, "booking_create",
+        entity_type="booking", entity_id=booking["id"],
+        summary=f"Reserva criada · {booking.get('date')} {booking.get('start_time')} · {booking.get('customer_name') or ''}",
+        meta={"date": booking.get("date"), "start_time": booking.get("start_time"), "status": booking.get("status")},
     )
     return booking
 
@@ -2210,7 +2294,7 @@ async def admin_calendar_create_recurring(
             booking["start_time"],
         )
 
-    return {
+    out = {
         "series_id": result["series_id"],
         "weeks": result["weeks"],
         "start_time": result["start_time"],
@@ -2220,6 +2304,18 @@ async def admin_calendar_create_recurring(
         "skipped": result["skipped"],
         "created": result["created"],
     }
+    await audit_log.audit(
+        db, admin, "booking_create_recurring",
+        entity_type="series", entity_id=result["series_id"],
+        summary=result.get("summary") or f"Série criada · {result['created_count']} reservas",
+        meta={
+            "weeks": result.get("weeks"),
+            "created_count": result.get("created_count"),
+            "skipped_count": result.get("skipped_count"),
+            "start_time": result.get("start_time"),
+        },
+    )
+    return out
 
 
 @api.post("/admin/bookings/series/{series_id}/cancel-future")
@@ -2250,7 +2346,27 @@ async def admin_cancel_series_future(series_id: str, admin: dict = Depends(requi
         series_id[:8],
         out.get("cancelled_count"),
     )
+    await audit_log.audit(
+        db, admin, "series_cancel_future",
+        entity_type="series", entity_id=series_id,
+        summary=f"Série futura cancelada · {out.get('cancelled_count') or 0} reserva(s)",
+        meta={"cancelled_count": out.get("cancelled_count")},
+    )
     return out
+
+
+# =============================================================================
+# ADMIN — Audit log (Cycle 28)
+# =============================================================================
+@api.get("/admin/audit")
+async def admin_list_audit(
+    limit: int = 50,
+    action: Optional[str] = None,
+    admin: dict = Depends(require_admin),
+):
+    """Newest-first admin activity. Optional filter by action name."""
+    items = await audit_log.list_audit(db, limit=limit, action=action)
+    return {"items": items, "count": len(items)}
 
 
 # =============================================================================
@@ -2338,6 +2454,12 @@ async def admin_remove_waitlist(entry_id: str, admin: dict = Depends(require_adm
     ok = await wls.remove_entry(db, entry_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Entrada não encontrada ou já removida")
+    await audit_log.audit(
+        db, admin, "waitlist_remove",
+        entity_type="waitlist", entity_id=entry_id,
+        summary=f"Lista de espera · entrada removida",
+        meta={},
+    )
     return {"ok": True, "id": entry_id}
 
 # =============================================================================
@@ -2359,9 +2481,16 @@ async def admin_whatsapp_start(admin: dict = Depends(require_admin)):
 @api.post("/admin/whatsapp/logout")
 async def admin_whatsapp_logout(admin: dict = Depends(require_admin)):
     try:
-        return await whatsapp_bridge.logout_session()
+        result = await whatsapp_bridge.logout_session()
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
+    await audit_log.audit(
+        db, admin, "whatsapp_disconnect",
+        entity_type="whatsapp", entity_id="session",
+        summary="WhatsApp desconectado",
+        meta={},
+    )
+    return result
 
 
 @api.get("/admin/whatsapp/events")
@@ -2502,6 +2631,7 @@ async def startup():
     await sset.ensure_seeded(db)
     await daily_metrics.ensure_indexes(db)
     await wls.ensure_indexes(db)
+    await audit_log.ensure_indexes(db)
     logger.info("Arena Futsal Premium API initialized (CPF + WA bot + calendar)")
 
     # Cycle 18: lightweight localhost WA sidecar self-ping (optional).

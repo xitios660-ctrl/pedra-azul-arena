@@ -2454,3 +2454,115 @@ def test_recurring_weeks_unit():
         assert False, "expected ValueError when disabled"
     except ValueError:
         pass
+
+
+def test_admin_audit_log_write_and_auth(admin_session, s):
+    """Cycle 28: mutation writes audit entry; list requires admin."""
+    bare = requests.Session()
+    r0 = bare.get(f"{API}/admin/audit", timeout=10)
+    assert r0.status_code in (401, 403), r0.text
+
+    # Trigger a settings save (safe mutation) to generate an audit row
+    cur = admin_session.get(f"{API}/admin/site-settings", timeout=10)
+    assert cur.status_code == 200, cur.text
+    original = cur.json()
+    patched = {**original, "structure_blurb": (original.get("structure_blurb") or "")}
+    # toggle a harmless bool if present, else re-save same payload
+    if "accepts_pix" in patched:
+        # keep same value — still a settings_save
+        pass
+    rput = admin_session.put(f"{API}/admin/site-settings", json=patched, timeout=15)
+    assert rput.status_code == 200, rput.text
+
+    r = admin_session.get(f"{API}/admin/audit", params={"limit": 20}, timeout=10)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert "items" in body and isinstance(body["items"], list)
+    assert body["count"] == len(body["items"])
+    assert any(it.get("action") == "settings_save" for it in body["items"]), body["items"][:3]
+
+    # Filter by action
+    rf = admin_session.get(
+        f"{API}/admin/audit",
+        params={"limit": 10, "action": "settings_save"},
+        timeout=10,
+    )
+    assert rf.status_code == 200, rf.text
+    items = rf.json().get("items") or []
+    assert items, "expected at least one settings_save"
+    assert all(it.get("action") == "settings_save" for it in items)
+    # newest first: at descending
+    ats = [it.get("at") or "" for it in items]
+    assert ats == sorted(ats, reverse=True)
+    # no secrets in meta
+    blob = str(items).lower()
+    for leak in ("password", "jwt", "token", "secret", "mongo_url"):
+        assert leak not in blob
+
+    # Also exercise cancel → booking_cancel audit when we can create a booking
+    day = None
+    start = None
+    for off in range(40, 90):
+        cand = (datetime.now(TZ) + timedelta(days=off)).strftime("%Y-%m-%d")
+        if datetime.strptime(cand, "%Y-%m-%d").weekday() >= 5:
+            continue
+        avail = s.get(
+            f"{API}/courts/availability",
+            params={"court_id": "court-1", "date": cand},
+            timeout=15,
+            headers=_xff(),
+        )
+        if avail.status_code != 200:
+            continue
+        free = [x["time"] for x in avail.json().get("slots") or [] if x.get("status") == "available"]
+        if free:
+            day, start = cand, free[0]
+            break
+    if day and start:
+        cr = admin_session.post(
+            f"{API}/admin/calendar/bookings",
+            json={
+                "date": day,
+                "start_time": start,
+                "customer_name": "Audit Cycle28",
+                "whatsapp": "5511997002828",
+                "status": "confirmed",
+                "duration_hours": 1,
+            },
+            timeout=15,
+        )
+        assert cr.status_code in (200, 201), cr.text
+        bid = cr.json()["id"]
+        ca = admin_session.post(f"{API}/admin/bookings/{bid}/cancel", timeout=10)
+        assert ca.status_code == 200, ca.text
+        ra = admin_session.get(
+            f"{API}/admin/audit",
+            params={"limit": 30, "action": "booking_cancel"},
+            timeout=10,
+        )
+        assert ra.status_code == 200
+        cancels = ra.json().get("items") or []
+        assert any(it.get("entity_id") == bid for it in cancels), cancels[:5]
+
+
+def test_audit_helper_strips_secrets_unit():
+    """Cycle 28: _safe_meta drops password/token keys."""
+    import sys
+    from pathlib import Path as P
+    root = P(__file__).resolve().parents[1]
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    import audit_log as al
+
+    cleaned = al._safe_meta({
+        "date": "2026-10-01",
+        "password": "secret",
+        "access_token": "abc",
+        "jwt_secret": "x",
+        "ok": True,
+    })
+    assert cleaned.get("date") == "2026-10-01"
+    assert cleaned.get("ok") is True
+    assert "password" not in cleaned
+    assert "access_token" not in cleaned
+    assert "jwt_secret" not in cleaned

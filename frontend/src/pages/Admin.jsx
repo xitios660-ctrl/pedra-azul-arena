@@ -8,7 +8,7 @@ import {
   TrendingUp, CheckCircle2, Hourglass, Activity, DollarSign, BarChart3, Save,
   Eye, MessageCircle, FileCheck, Wifi, WifiOff, QrCode, RefreshCw, LogOut, Loader2,
   Calendar, Clock, Ticket, X, Settings, AlertCircle, Download, Search,
-  UserCheck, StickyNote, ChevronDown, ChevronUp, Printer
+  UserCheck, StickyNote, ChevronDown, ChevronUp, Printer, History
 } from "lucide-react";
 import { isWhatsAppPlaceholder, isPixKeyPlaceholder, OPEN_DAY_LABELS } from "@/lib/siteConfig";
 import AdminCalendar from "@/components/AdminCalendar";
@@ -181,6 +181,7 @@ export default function AdminDashboard() {
             { id: "whatsapp", label: "WhatsApp" },
             { id: "customers", label: "Clientes" },
             { id: "waitlist", label: "Lista de espera" },
+            { id: "activity", label: "Atividade" },
             { id: "settings", label: "Configurações" },
             { id: "tournaments", label: "Campeonatos" },
           ].map(t => (
@@ -224,6 +225,7 @@ export default function AdminDashboard() {
           />
         )}
         {activeTab === "waitlist" && <WaitlistAdmin />}
+        {activeTab === "activity" && <AuditActivityAdmin />}
         {activeTab === "settings" && <SiteSettingsAdmin />}
         {activeTab === "tournaments" && (
           <TournamentsAdmin tournaments={tournaments} selected={selectedTour} setSelected={setSelectedTour} onUpdated={refresh} />
@@ -1373,6 +1375,182 @@ function CustomersAdmin({ onOpenReservas }) {
             );
           })}
         </div>
+      )}
+    </div>
+  );
+}
+
+
+
+const AUDIT_ACTION_LABELS = {
+  booking_confirm: "PIX confirmado",
+  booking_reject: "PIX rejeitado",
+  booking_cancel: "Reserva cancelada",
+  booking_create: "Reserva criada",
+  booking_create_recurring: "Série criada",
+  booking_no_show: "No-show",
+  booking_check_in: "Check-in",
+  booking_reschedule: "Remarcação",
+  series_cancel_future: "Série cancelada",
+  slot_block: "Horário bloqueado",
+  slot_unblock: "Horário desbloqueado",
+  day_block: "Dia bloqueado",
+  day_unblock: "Dia desbloqueado",
+  range_block: "Período bloqueado",
+  settings_save: "Configurações",
+  whatsapp_disconnect: "WhatsApp desconectado",
+  waitlist_remove: "Lista de espera",
+};
+
+const AUDIT_FILTER_CHIPS = [
+  { id: "", label: "Todas" },
+  { id: "booking_confirm", label: "PIX OK" },
+  { id: "booking_reject", label: "PIX rejeitado" },
+  { id: "booking_cancel", label: "Cancelamentos" },
+  { id: "booking_create", label: "Criações" },
+  { id: "day_block", label: "Bloqueios" },
+  { id: "settings_save", label: "Config." },
+  { id: "whatsapp_disconnect", label: "WhatsApp" },
+  { id: "booking_check_in", label: "Check-in" },
+  { id: "booking_no_show", label: "No-show" },
+  { id: "waitlist_remove", label: "Espera" },
+];
+
+function formatAuditAt(iso) {
+  if (!iso) return "—";
+  try {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return String(iso).slice(0, 16).replace("T", " ");
+    return d.toLocaleString("pt-BR", {
+      timeZone: "America/Sao_Paulo",
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return String(iso).slice(0, 16).replace("T", " ");
+  }
+}
+
+function AuditActivityAdmin() {
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState("");
+  const [actionFilter, setActionFilter] = useState("");
+
+  const load = async (action = actionFilter) => {
+    setLoading(true); setErr("");
+    try {
+      const params = { limit: 80 };
+      if (action) params.action = action;
+      const { data } = await api.get("/admin/audit", { params });
+      setItems(data.items || []);
+    } catch (e) {
+      setErr(e.response?.data?.detail || e.message || "Falha ao carregar atividade");
+      setItems([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true); setErr("");
+      try {
+        const params = { limit: 80 };
+        if (actionFilter) params.action = actionFilter;
+        const { data } = await api.get("/admin/audit", { params });
+        if (!cancelled) setItems(data.items || []);
+      } catch (e) {
+        if (!cancelled) {
+          setErr(e.response?.data?.detail || e.message || "Falha ao carregar atividade");
+          setItems([]);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [actionFilter]);
+
+  return (
+    <div data-testid="admin-audit" className="glass p-5 sm:p-6 space-y-4">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <div className="text-[11px] tracking-[0.35em] uppercase text-[var(--brand)] flex items-center gap-2">
+            <History className="w-3.5 h-3.5" /> // Audit
+          </div>
+          <h2 className="font-heading text-3xl sm:text-4xl uppercase italic">Atividade</h2>
+          <p className="text-white/55 text-sm mt-1">
+            Registro de ações do admin (confirmações, cancelamentos, bloqueios…). Mais recentes primeiro.
+          </p>
+        </div>
+        <button
+          type="button"
+          data-testid="admin-audit-refresh"
+          className="btn-ghost !py-2 !px-4 !text-xs flex items-center gap-2"
+          onClick={() => load(actionFilter)}
+          disabled={loading}
+        >
+          <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} /> Atualizar
+        </button>
+      </div>
+
+      <div className="flex flex-wrap gap-2" data-testid="admin-audit-filters">
+        {AUDIT_FILTER_CHIPS.map((c) => (
+          <button
+            key={c.id || "all"}
+            type="button"
+            data-testid={`admin-audit-filter-${c.id || "all"}`}
+            onClick={() => setActionFilter(c.id)}
+            className={`px-3 py-1.5 rounded-full text-xs font-heading uppercase tracking-wider border transition-colors ${
+              actionFilter === c.id
+                ? "border-[var(--brand)] bg-[var(--brand)]/15 text-[var(--brand)]"
+                : "border-white/15 text-white/55 hover:text-white hover:border-white/30"
+            }`}
+          >
+            {c.label}
+          </button>
+        ))}
+      </div>
+
+      {err && <div className="text-[var(--danger)] text-sm">{err}</div>}
+      {loading ? (
+        <div className="text-white/50 py-8">Carregando…</div>
+      ) : items.length === 0 ? (
+        <div className="text-white/50 py-8 text-center" data-testid="admin-audit-empty">
+          Nenhuma atividade registrada{actionFilter ? " neste filtro" : ""}.
+        </div>
+      ) : (
+        <ul className="divide-y divide-white/5" data-testid="admin-audit-list">
+          {items.map((row) => (
+            <li
+              key={row.id}
+              data-testid={`admin-audit-row-${row.id}`}
+              className="py-3 flex flex-col sm:flex-row sm:items-start gap-1 sm:gap-4"
+            >
+              <div className="text-xs text-white/45 font-mono shrink-0 sm:w-36">
+                {formatAuditAt(row.at)}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[10px] uppercase tracking-[0.2em] text-[var(--brand)]">
+                    {AUDIT_ACTION_LABELS[row.action] || row.action}
+                  </span>
+                  {row.actor_email && (
+                    <span className="text-[10px] text-white/40 truncate">{row.actor_email}</span>
+                  )}
+                </div>
+                <div className="text-sm text-white/85 mt-0.5">
+                  {row.summary || "—"}
+                </div>
+              </div>
+            </li>
+          ))}
+        </ul>
       )}
     </div>
   );
