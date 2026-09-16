@@ -185,7 +185,7 @@ export default function AdminCalendar() {
     }
   };
 
-  const [createForm, setCreateForm] = useState({ customer_name: "", whatsapp: "", duration_hours: 1 });
+  const [createForm, setCreateForm] = useState({ customer_name: "", whatsapp: "", duration_hours: 1, weeks: 1 });
   const [rangeForm, setRangeForm] = useState({
     date_from: todayYmd(),
     date_to: todayYmd(),
@@ -257,26 +257,44 @@ export default function AdminCalendar() {
   };
 
   const openCreate = () => {
-    setCreateForm({ customer_name: "", whatsapp: "", duration_hours: 1 });
+    setCreateForm({ customer_name: "", whatsapp: "", duration_hours: 1, weeks: 1 });
     setDialog((d) => ({ ...d, type: "create" }));
   };
 
   const submitCreate = async (e) => {
     e.preventDefault();
-    if (!window.confirm(`Criar reserva ${dialog.date} ${dialog.time} para ${createForm.customer_name}?`)) return;
+    const weeks = Math.max(1, Number(createForm.weeks) || 1);
+    const label = weeks > 1
+      ? `Criar série de ${weeks} semanas (${dialog.date} ${dialog.time}) para ${createForm.customer_name}?`
+      : `Criar reserva ${dialog.date} ${dialog.time} para ${createForm.customer_name}?`;
+    if (!window.confirm(label)) return;
     try {
-      await api.post("/admin/calendar/bookings", {
-        date: dialog.date,
-        start_time: dialog.time,
-        customer_name: createForm.customer_name,
-        whatsapp: createForm.whatsapp,
-        status: "confirmed",
-        duration_hours: Number(createForm.duration_hours) || 1,
-      });
+      if (weeks >= 2) {
+        const { data } = await api.post("/admin/calendar/bookings/recurring", {
+          date: dialog.date,
+          start_time: dialog.time,
+          customer_name: createForm.customer_name,
+          whatsapp: createForm.whatsapp,
+          status: "confirmed",
+          duration_hours: Number(createForm.duration_hours) || 1,
+          weeks,
+        });
+        alert(data.summary || `${data.created_count} criadas`);
+      } else {
+        await api.post("/admin/calendar/bookings", {
+          date: dialog.date,
+          start_time: dialog.time,
+          customer_name: createForm.customer_name,
+          whatsapp: createForm.whatsapp,
+          status: "confirmed",
+          duration_hours: Number(createForm.duration_hours) || 1,
+        });
+      }
       setDialog(null);
       load();
     } catch (ex) {
-      alert(ex.response?.data?.detail || ex.message);
+      const d = ex.response?.data?.detail;
+      alert((d && typeof d === "object" && d.message) ? d.message : (d || ex.message));
     }
   };
 
@@ -650,6 +668,26 @@ export default function AdminCalendar() {
                     <button type="button" onClick={doCancelBooking} className="btn-ghost justify-center !text-sm text-[var(--danger)] border-[var(--danger)]/50">
                       <Ban className="w-4 h-4" /> Cancelar reserva
                     </button>
+                    {dialog.slot?.series_id && (
+                      <button
+                        type="button"
+                        data-testid="admin-calendar-cancel-series"
+                        onClick={async () => {
+                          if (!window.confirm("Cancelar toda a série futura desta reserva?")) return;
+                          try {
+                            const { data } = await api.post(`/admin/bookings/series/${dialog.slot.series_id}/cancel-future`);
+                            alert(`${data.cancelled_count || 0} reserva(s) cancelada(s).`);
+                            setDialog(null);
+                            load();
+                          } catch (ex) {
+                            alert(ex.response?.data?.detail || ex.message);
+                          }
+                        }}
+                        className="btn-ghost justify-center !text-sm text-[var(--danger)] border-[var(--danger)]/50"
+                      >
+                        <Ban className="w-4 h-4" /> Cancelar série futura
+                      </button>
+                    )}
                   </>
                 )}
                 <button type="button" onClick={() => setDialog(null)} className="btn-ghost justify-center !text-sm mt-2">
@@ -697,6 +735,26 @@ export default function AdminCalendar() {
                         </button>
                       );
                     })}
+                  </div>
+                </div>
+                <div data-testid="admin-calendar-recurring">
+                  <label className="text-[10px] uppercase tracking-[0.3em] text-white/40">Repetir semanas</label>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {[1, 2, 3, 4, 8].map((w) => (
+                      <button
+                        key={w}
+                        type="button"
+                        data-testid={`admin-calendar-weeks-${w}`}
+                        onClick={() => setCreateForm({ ...createForm, weeks: w })}
+                        className={`px-3 py-2 text-xs border uppercase tracking-wider ${
+                          Number(createForm.weeks) === w
+                            ? "border-[var(--brand)] text-[var(--brand)]"
+                            : "border-white/20 text-white/70"
+                        }`}
+                      >
+                        {w === 1 ? "1×" : `${w} sem.`}
+                      </button>
+                    ))}
                   </div>
                 </div>
                 <div className="flex gap-2 pt-2">

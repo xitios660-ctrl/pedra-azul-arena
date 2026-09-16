@@ -73,7 +73,7 @@ SSE: `GET /api/admin/whatsapp/events` (JWT/cookie admin).
 
 ## Admin — Configurações
 
-Aba **Configurações** edita o singleton `site_settings` (WhatsApp E.164, PIX, endereço/Maps, preço/hora, abertura/fechamento, **dias abertos** `open_days`, duração do slot, **multi-hora** `allow_multi_hour` / `max_hours_per_booking`, **lista de espera** `waitlist_enabled`, estacionamento, nome da quadra).
+Aba **Configurações** edita o singleton `site_settings` (WhatsApp E.164, PIX, endereço/Maps, preço/hora, abertura/fechamento, **dias abertos** `open_days`, duração do slot, **multi-hora** `allow_multi_hour` / `max_hours_per_booking`, **lista de espera** `waitlist_enabled`, **recorrente** `recurring_enabled` / `recurring_max_weeks`, estacionamento, nome da quadra).
 
 - Público: `GET /api/site-settings`
 - Admin JWT: `GET|PUT /api/admin/site-settings`
@@ -230,4 +230,10 @@ Prod smoke: `GET /api/health`, `/api/courts`, `/api/site-settings`, WhatsApp `AG
 - Cancel/expire/reject liberam o slot e notificam o **primeiro** `waiting` via WhatsApp (best-effort), status → `notified` (uma vez).
 - Admin: aba **Lista de espera** (por data) + remoção; Configurações: `waitlist_enabled` (default true).
 - Sem hold lock — o cliente reserva normalmente no site/WA após o aviso.
+
+## Cycle 27 notes
+- Reservas recorrentes semanais: `POST /api/bookings/recurring` (+ preview) e admin `POST /api/admin/calendar/bookings/recurring`.
+- Mesmo weekday + `start_time` por N semanas (2–8); cada ocorrência é booking próprio com `series_id` e `slot_locks`.
+- Conflito numa semana → pula e reporta; sucesso parcial OK. Settings: `recurring_enabled` (default true), `recurring_max_weeks` (default 8).
+- UI Booking: “Repetir por X semanas” + prévia livre/ocupado; cancelar uma não cancela a série; “Cancelar série futura” (cliente/admin).
 

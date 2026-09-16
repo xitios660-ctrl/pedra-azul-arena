@@ -203,6 +203,20 @@ function BookingCard({ b, cpf, idx, onChanged }) {
     }
   };
 
+  const cancelSeries = async () => {
+    if (!b.series_id) return;
+    if (!window.confirm("Cancelar todas as reservas futuras desta série? (esta e as próximas semanas)")) return;
+    try {
+      const { data } = await api.post(`/bookings/series/${b.series_id}/cancel-future`, {
+        cpf: onlyDigits(cpf),
+      });
+      window.alert(`${data.cancelled_count || 0} reserva(s) cancelada(s).`);
+      onChanged();
+    } catch (e) {
+      setErr(formatApiErrorDetail(e.response?.data?.detail) || e.message);
+    }
+  };
+
   const isActive = ["pending", "awaiting_admin", "confirmed"].includes(b.status);
 
   const renderCrest = (c) => {
@@ -252,6 +266,11 @@ function BookingCard({ b, cpf, idx, onChanged }) {
         <div className="flex items-center gap-2"><Clock className="w-4 h-4 text-[var(--brand)]" /> {b.start_time}</div>
         <div className="font-heading text-[var(--brand)]">{fmtBRL(b.deposit)}</div>
       </div>
+      {b.series_id && (
+        <p className="mt-2 text-[10px] uppercase tracking-[0.25em] text-white/40" data-testid={`mybook-series-${b.id}`}>
+          Série semanal · {b.series_id.slice(0, 8)}…
+        </p>
+      )}
 
       {b.status === "pending" && (
         <div className="mt-5 border-t border-white/10 pt-4">
@@ -314,6 +333,16 @@ function BookingCard({ b, cpf, idx, onChanged }) {
               className="text-xs text-white/40 hover:text-[var(--danger)] transition-colors">
               Cancelar reserva
             </button>
+            {b.series_id && (
+              <button
+                type="button"
+                data-testid={`mybook-cancel-series-${b.id}`}
+                onClick={cancelSeries}
+                className="text-xs text-white/40 hover:text-[var(--danger)] transition-colors"
+              >
+                Cancelar série futura
+              </button>
+            )}
           </>
         )}
       </div>

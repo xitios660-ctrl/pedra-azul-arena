@@ -9,6 +9,7 @@ Weekend hours (Cycle 21): optional weekend_open_hour / weekend_close_hour
 Weekend price (Cycle 23): optional price_weekend (null/0 = use price_per_hour on Sat/Sun).
 Multi-hour (Cycle 24): allow_multi_hour + max_hours_per_booking (1–3, default 2).
 Waitlist (Cycle 25): waitlist_enabled (default true) — join when slot full; FIFO WA notify on free.
+Recurring (Cycle 27): recurring_enabled (default true) + recurring_max_weeks (2–8, default 8).
 maps_url may be empty — Landing/Footer hide "Como chegar" when unset.
 
 Amenities / FAQ (Cycle 17): has_parking, parking_note, game_duration_note,
@@ -71,6 +72,9 @@ DEFAULTS: dict[str, Any] = {
     "admin_alerts_enabled": True,
     # Cycle 25: waitlist when slot reserved/blocked
     "waitlist_enabled": True,
+    # Cycle 27: recurring weekly bookings
+    "recurring_enabled": True,
+    "recurring_max_weeks": 8,  # capped 2–8
 }
 
 # Legacy Arena Premium placeholders → migrate once if still at old seed values.
@@ -112,6 +116,8 @@ class SiteSettingsUpdate(BaseModel):
     admin_whatsapp_e164: Optional[str] = Field(default="", max_length=20)
     admin_alerts_enabled: bool = Field(default=True)
     waitlist_enabled: bool = Field(default=True)
+    recurring_enabled: bool = Field(default=True)
+    recurring_max_weeks: int = Field(default=8, ge=2, le=8)
 
     @field_validator("whatsapp_e164")
     @classmethod
@@ -156,6 +162,14 @@ class SiteSettingsUpdate(BaseModel):
         n = int(v)
         if n < 1 or n > 3:
             raise ValueError("max_hours_per_booking deve ser 1–3")
+        return n
+
+    @field_validator("recurring_max_weeks")
+    @classmethod
+    def cap_recurring_weeks(cls, v: int) -> int:
+        n = int(v)
+        if n < 2 or n > 8:
+            raise ValueError("recurring_max_weeks deve ser 2–8")
         return n
 
     @field_validator("open_days")
@@ -361,6 +375,12 @@ def public_view(doc: dict[str, Any]) -> dict[str, Any]:
         "waitlist_enabled": bool(
             d.get("waitlist_enabled") if d.get("waitlist_enabled") is not None else DEFAULTS["waitlist_enabled"]
         ),
+        "recurring_enabled": bool(
+            d.get("recurring_enabled") if d.get("recurring_enabled") is not None else DEFAULTS["recurring_enabled"]
+        ),
+        "recurring_max_weeks": max(2, min(8, int(
+            d.get("recurring_max_weeks") if d.get("recurring_max_weeks") is not None else DEFAULTS["recurring_max_weeks"]
+        ))),
     }
 
 

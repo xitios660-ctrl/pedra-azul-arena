@@ -2198,3 +2198,259 @@ def test_waitlist_covered_times_unit():
     })
     assert times == ["18:00", "19:00"]
     assert wls.covered_times_from_booking({"start_time": "10:00"}) == ["10:00"]
+
+
+def test_recurring_weekly_partial_and_locks(admin_session, s):
+    """Cycle 27: 4 weeks with 1 conflict → 3 created 1 skipped; slot_locks; cancel one keeps series."""
+    pub = s.get(f"{API}/site-settings", timeout=10)
+    assert pub.status_code == 200, pub.text
+    assert pub.json().get("recurring_enabled") is not False
+    assert int(pub.json().get("recurring_max_weeks") or 0) >= 2
+
+    # Find a free weekday slot far ahead; ensure +1w, +2w, +3w same time mostly free
+    day = None
+    start = None
+    for day_off in range(60, 120):
+        cand = (datetime.now(TZ) + timedelta(days=day_off)).strftime("%Y-%m-%d")
+        # Prefer mid-week
+        wd = datetime.strptime(cand, "%Y-%m-%d").weekday()
+        if wd >= 5:
+            continue
+        dates = [(datetime.strptime(cand, "%Y-%m-%d") + timedelta(weeks=i)).strftime("%Y-%m-%d") for i in range(4)]
+        ok = True
+        for d in dates:
+            avail = s.get(
+                f"{API}/courts/availability",
+                params={"court_id": "court-1", "date": d},
+                timeout=15,
+                headers=_xff(),
+            )
+            assert avail.status_code == 200, avail.text
+            data = avail.json()
+            if data.get("day_open") is False:
+                ok = False
+                break
+            by_t = {x["time"]: x for x in (data.get("slots") or [])}
+            # pick first free evening-ish if possible
+            if start is None:
+                for sl in data.get("slots") or []:
+                    if sl.get("status") == "available" and sl["time"] >= "18:00":
+                        start = sl["time"]
+                        break
+                if start is None:
+                    for sl in data.get("slots") or []:
+                        if sl.get("status") == "available":
+                            start = sl["time"]
+                            break
+            if not start or by_t.get(start, {}).get("status") != "available":
+                ok = False
+                break
+        if ok and start:
+            day = cand
+            break
+    assert day and start, "no free 4-week window found for recurring test"
+
+    week2 = (datetime.strptime(day, "%Y-%m-%d") + timedelta(weeks=1)).strftime("%Y-%m-%d")
+
+    # Conflict on week 2 via admin
+    clash = admin_session.post(
+        f"{API}/admin/calendar/bookings",
+        json={
+            "date": week2,
+            "start_time": start,
+            "customer_name": "Conflict Cycle27",
+            "whatsapp": "5511997001122",
+            "duration_hours": 1,
+        },
+        timeout=15,
+    )
+    assert clash.status_code in (200, 201), clash.text
+    clash_id = clash.json()["id"]
+
+    created_ids = []
+    series_id = None
+    try:
+        # Preview
+        prev = s.post(
+            f"{API}/bookings/recurring/preview",
+            json={
+                "court_id": "court-1",
+                "date": day,
+                "start_time": start,
+                "weeks": 4,
+                "duration_hours": 1,
+            },
+            timeout=15,
+            headers=_xff(),
+        )
+        assert prev.status_code == 200, prev.text
+        occ = prev.json()["occurrences"]
+        assert len(occ) == 4
+        by_d = {o["date"]: o for o in occ}
+        assert by_d[week2]["available"] is False
+        free_dates = [o["date"] for o in occ if o["available"]]
+        assert len(free_dates) == 3
+
+        # Public recurring create
+        r = s.post(
+            f"{API}/bookings/recurring",
+            json={
+                "court_id": "court-1",
+                "date": day,
+                "start_time": start,
+                "weeks": 4,
+                "duration_hours": 1,
+                "cpf": SMOKE_CPF,
+                "customer_name": "Recorrente Cycle27",
+                "whatsapp": "5511997003344",
+                "your_team_name": "Time R",
+                "opponent_team_name": "Time S",
+            },
+            timeout=20,
+            headers=_xff(),
+        )
+        assert r.status_code in (200, 201), r.text
+        body = r.json()
+        assert body["created_count"] == 3, body
+        assert body["skipped_count"] == 1, body
+        assert body["skipped"][0]["date"] == week2
+        assert "já reservado" in (body["skipped"][0].get("reason") or "").lower() or "reservado" in (
+            body["skipped"][0].get("reason") or ""
+        ).lower()
+        series_id = body["series_id"]
+        assert series_id
+        created = body["created"]
+        assert len(created) == 3
+        created_ids = [b["id"] for b in created]
+        for b in created:
+            assert b.get("series_id") == series_id
+            assert b.get("start_time") == start
+            assert isinstance(b.get("slot_keys"), list) and len(b["slot_keys"]) >= 1
+
+        # Slot locks present for created weeks
+        from pymongo import MongoClient
+        import os as _os
+        uri = _os.environ.get("MONGO_URL") or "mongodb://127.0.0.1:27017"
+        dbn = _os.environ.get("DB_NAME") or "arena_futsal"
+        client = MongoClient(uri)
+        locks = list(client[dbn].slot_locks.find({"booking_id": {"$in": created_ids}}))
+        assert len(locks) >= 3, f"expected slot_locks for created bookings, got {len(locks)}"
+
+        # Cancel ONE booking — series siblings remain active
+        one = created_ids[0]
+        c = s.post(
+            f"{API}/bookings/{one}/cancel",
+            params={"cpf": SMOKE_CPF},
+            timeout=15,
+            headers=_xff(),
+        )
+        assert c.status_code == 200, c.text
+        still = [
+            x for x in created_ids[1:]
+            if admin_session.get(f"{API}/admin/bookings", params={"q": "Recorrente Cycle27"}, timeout=15).status_code == 200
+        ]
+        # Check remaining via lookup
+        look = s.post(f"{API}/bookings/lookup", json={"cpf": SMOKE_CPF}, timeout=15, headers=_xff())
+        assert look.status_code == 200
+        active_series = [
+            b for b in look.json().get("bookings") or []
+            if b.get("series_id") == series_id and b.get("status") in ("pending", "awaiting_admin", "confirmed")
+        ]
+        assert len(active_series) == 2, f"expected 2 active after single cancel, got {len(active_series)}"
+
+        # Cancel série futura
+        sc = s.post(
+            f"{API}/bookings/series/{series_id}/cancel-future",
+            json={"cpf": SMOKE_CPF},
+            timeout=15,
+            headers=_xff(),
+        )
+        assert sc.status_code == 200, sc.text
+        assert sc.json()["cancelled_count"] >= 2
+
+        # Admin recurring path smoke (short 2 weeks far ahead)
+        day_a = None
+        start_a = None
+        for day_off in range(130, 180):
+            cand = (datetime.now(TZ) + timedelta(days=day_off)).strftime("%Y-%m-%d")
+            if datetime.strptime(cand, "%Y-%m-%d").weekday() >= 5:
+                continue
+            d2 = (datetime.strptime(cand, "%Y-%m-%d") + timedelta(weeks=1)).strftime("%Y-%m-%d")
+            free = True
+            for d in (cand, d2):
+                avail = s.get(
+                    f"{API}/courts/availability",
+                    params={"court_id": "court-1", "date": d},
+                    timeout=15,
+                    headers=_xff(),
+                )
+                by_t = {x["time"]: x for x in avail.json().get("slots") or []}
+                t = start or "20:00"
+                if by_t.get(t, {}).get("status") != "available":
+                    # try any free shared time
+                    free = False
+                    break
+            if not free:
+                # find a time free on both
+                a1 = s.get(f"{API}/courts/availability", params={"court_id": "court-1", "date": cand}, timeout=15).json()
+                a2 = s.get(f"{API}/courts/availability", params={"court_id": "court-1", "date": d2}, timeout=15).json()
+                t1 = {x["time"] for x in a1.get("slots") or [] if x.get("status") == "available"}
+                t2 = {x["time"] for x in a2.get("slots") or [] if x.get("status") == "available"}
+                common = sorted(t1 & t2)
+                if common:
+                    day_a, start_a = cand, common[0]
+                    break
+            else:
+                day_a, start_a = cand, start or "20:00"
+                break
+        assert day_a and start_a
+        ar = admin_session.post(
+            f"{API}/admin/calendar/bookings/recurring",
+            json={
+                "date": day_a,
+                "start_time": start_a,
+                "customer_name": "Admin Rec Cycle27",
+                "whatsapp": "5511997005566",
+                "weeks": 2,
+                "duration_hours": 1,
+            },
+            timeout=20,
+        )
+        assert ar.status_code in (200, 201), ar.text
+        assert ar.json()["created_count"] == 2
+        admin_series = ar.json()["series_id"]
+        for b in ar.json()["created"]:
+            created_ids.append(b["id"])
+        # Admin cancel series
+        ac = admin_session.post(f"{API}/admin/bookings/series/{admin_series}/cancel-future", timeout=15)
+        assert ac.status_code == 200, ac.text
+        assert ac.json()["cancelled_count"] >= 1
+
+    finally:
+        admin_session.post(f"{API}/admin/bookings/{clash_id}/cancel", timeout=10)
+        for bid in created_ids:
+            admin_session.post(f"{API}/admin/bookings/{bid}/cancel", timeout=10)
+
+
+def test_recurring_weeks_unit():
+    """Cycle 27: weekly dates + clamp_recurring_weeks."""
+    import sys
+    from pathlib import Path as P
+    root = P(__file__).resolve().parents[1]
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    import booking_service as bsvc
+
+    dates = bsvc.weekly_occurrence_dates("2026-10-06", 4)  # Tuesday
+    assert dates == ["2026-10-06", "2026-10-13", "2026-10-20", "2026-10-27"]
+    assert bsvc.clamp_recurring_weeks(4, {"recurring_enabled": True, "recurring_max_weeks": 8}) == 4
+    try:
+        bsvc.clamp_recurring_weeks(1, {"recurring_enabled": True, "recurring_max_weeks": 8})
+        assert False, "expected ValueError for weeks=1"
+    except ValueError:
+        pass
+    try:
+        bsvc.clamp_recurring_weeks(4, {"recurring_enabled": False})
+        assert False, "expected ValueError when disabled"
+    except ValueError:
+        pass

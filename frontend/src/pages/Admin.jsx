@@ -108,6 +108,17 @@ export default function AdminDashboard() {
     await api.post(`/admin/bookings/${id}/cancel`);
     refresh();
   };
+  const cancelSeriesFuture = async (seriesId) => {
+    if (!seriesId) return;
+    if (!window.confirm("Cancelar toda a série futura?")) return;
+    try {
+      const { data } = await api.post(`/admin/bookings/series/${seriesId}/cancel-future`);
+      window.alert(`${data.cancelled_count || 0} reserva(s) da série cancelada(s).`);
+      refresh();
+    } catch (e) {
+      window.alert(e.response?.data?.detail || e.message || "Não foi possível cancelar a série");
+    }
+  };
   const rejectBooking = async (id) => {
     if (!window.confirm("Recusar comprovante / rejeitar PIX? A reserva será cancelada (sem auto-confirmação).")) return;
     await api.post(`/admin/bookings/${id}/reject`);
@@ -194,7 +205,7 @@ export default function AdminDashboard() {
           <BookingsAdmin bookings={bookings}
             initialSearch={bookingsInitialSearch}
             onConfirm={confirmAndPrepareWhatsapp}
-            onCancel={cancelBooking}
+            onCancel={cancelBooking} onCancelSeries={cancelSeriesFuture}
             onReject={rejectBooking}
             onNoShow={markNoShow}
             onCheckIn={markCheckIn}
@@ -744,7 +755,7 @@ function DashboardView({ stats, bookings = [], onConfirm, onReject }) {
   );
 }
 
-function BookingsAdmin({ bookings, initialSearch = "", onConfirm, onCancel, onReject, onNoShow, onCheckIn, onUndoCheckIn, onSaveNotes, onReschedule }) {
+function BookingsAdmin({ bookings, initialSearch = "", onConfirm, onCancel, onCancelSeries, onReject, onNoShow, onCheckIn, onUndoCheckIn, onSaveNotes, onReschedule }) {
   const awaitingCount = bookings.filter((b) => b.status === "awaiting_admin").length;
   const [filter, setFilter] = useState("all");
   const [dateFrom, setDateFrom] = useState("");
@@ -934,7 +945,7 @@ function BookingsAdmin({ bookings, initialSearch = "", onConfirm, onCancel, onRe
             )}
           </div>
         ) : filtered.map((b) => (
-          <BookingRow key={b.id} b={b} onConfirm={onConfirm} onCancel={onCancel} onReject={onReject} onNoShow={onNoShow} onCheckIn={onCheckIn} onUndoCheckIn={onUndoCheckIn} onSaveNotes={onSaveNotes} onReschedule={onReschedule} />
+          <BookingRow key={b.id} b={b} onConfirm={onConfirm} onCancel={onCancel} onCancelSeries={onCancelSeries} onReject={onReject} onNoShow={onNoShow} onCheckIn={onCheckIn} onUndoCheckIn={onUndoCheckIn} onSaveNotes={onSaveNotes} onReschedule={onReschedule} />
         ))}
       </div>
     </div>
@@ -992,7 +1003,7 @@ function AwaitingPixQueue({ bookings, onConfirm, onReject }) {
   );
 }
 
-function BookingRow({ b, onConfirm, onCancel, onReject, onNoShow, onCheckIn, onUndoCheckIn, onSaveNotes, onReschedule }) {
+function BookingRow({ b, onConfirm, onCancel, onCancelSeries, onReject, onNoShow, onCheckIn, onUndoCheckIn, onSaveNotes, onReschedule }) {
   const [open, setOpen] = useState(false);
   const [showReceipt, setShowReceipt] = useState(false);
   const [notes, setNotes] = useState(b.admin_notes || "");
@@ -1103,6 +1114,16 @@ function BookingRow({ b, onConfirm, onCancel, onReject, onNoShow, onCheckIn, onU
             <button data-testid={ADMIN.cancelBooking(b.id)} onClick={() => onCancel(b.id)}
               className="text-[10px] uppercase tracking-[0.2em] px-2 py-1 border border-[var(--danger)]/40 text-white/40 hover:text-[var(--danger)] hover:border-[var(--danger)]/60">
               Cancelar
+            </button>
+          )}
+          {b.series_id && ["pending", "awaiting_admin", "confirmed"].includes(b.status) && onCancelSeries && (
+            <button
+              type="button"
+              data-testid={`admin-cancel-series-${b.id}`}
+              onClick={() => onCancelSeries(b.series_id)}
+              className="text-[10px] uppercase tracking-[0.2em] px-2 py-1 border border-[var(--danger)]/50 text-[var(--danger)] hover:bg-[var(--danger)]/15"
+            >
+              Cancelar série futura
             </button>
           )}
           <button type="button" data-testid={ADMIN.openReceipt(b.id)} onClick={() => setShowReceipt(true)}
@@ -1517,6 +1538,8 @@ function SiteSettingsAdmin() {
           allow_multi_hour: data.allow_multi_hour !== false,
           max_hours_per_booking: data.max_hours_per_booking ?? 2,
           waitlist_enabled: data.waitlist_enabled !== false,
+          recurring_enabled: data.recurring_enabled !== false,
+          recurring_max_weeks: data.recurring_max_weeks ?? 8,
         });
       } catch (e) {
         setErr(e.response?.data?.detail || e.message);
@@ -1552,6 +1575,8 @@ function SiteSettingsAdmin() {
         allow_multi_hour: form.allow_multi_hour !== false,
         max_hours_per_booking: Math.max(1, Math.min(3, Number(form.max_hours_per_booking ?? 2) || 2)),
         waitlist_enabled: form.waitlist_enabled !== false,
+        recurring_enabled: form.recurring_enabled !== false,
+        recurring_max_weeks: Math.max(2, Math.min(8, Number(form.recurring_max_weeks ?? 8) || 8)),
         cancel_min_hours: Number(form.cancel_min_hours ?? 2),
         reminder_hours_before: Number(form.reminder_hours_before ?? 3),
         admin_whatsapp_e164: String(form.admin_whatsapp_e164 || "").replace(/\D/g, ""),
@@ -1654,6 +1679,16 @@ function SiteSettingsAdmin() {
         />
         <span className="text-sm text-white/80">Lista de espera quando horário estiver ocupado (avisar no WhatsApp se liberar)</span>
       </label>
+      <label className="flex items-center gap-3 min-h-[44px] cursor-pointer" data-testid="admin-recurring-enabled">
+        <input
+          type="checkbox"
+          className="w-5 h-5 accent-[var(--brand)]"
+          checked={form.recurring_enabled !== false}
+          onChange={(e) => set("recurring_enabled", e.target.checked)}
+        />
+        <span className="text-sm text-white/80">Permitir reservas recorrentes (mesmo dia/horário por N semanas)</span>
+      </label>
+      {field("Máx. semanas recorrentes (2–8)", "recurring_max_weeks", { type: "number", min: 2, max: 8, step: 1 })}
       <div className="border border-white/10 rounded-lg p-4 space-y-3 bg-black/20" data-testid="admin-weekend-hours">
         <div className="text-[10px] uppercase tracking-[0.25em] text-[var(--brand)]">Horário fim de semana (opcional)</div>
         <p className="text-white/55 text-xs">

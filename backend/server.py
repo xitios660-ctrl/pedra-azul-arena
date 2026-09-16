@@ -204,6 +204,25 @@ class BookingCreate(BaseModel):
     opponent_team_crest: Optional[str] = None
 
 
+class RecurringBookingCreate(BookingCreate):
+    """Cycle 27: same weekday+time for N consecutive weeks (2–8)."""
+    weeks: int = Field(ge=2, le=8)
+
+
+class RecurringPreviewIn(BaseModel):
+    court_id: str
+    date: str
+    start_time: str
+    weeks: int = Field(ge=2, le=8)
+    duration_minutes: Optional[int] = None
+    duration_hours: Optional[int] = None
+
+
+class SeriesCancelIn(BaseModel):
+    cpf: str
+    from_date: Optional[str] = None  # default: today local
+
+
 class LookupIn(BaseModel):
     cpf: str
 
@@ -532,6 +551,151 @@ async def create_booking(payload: BookingCreate, request: Request):
     except Exception:
         pass
     return _public_booking(booking)
+
+
+@api.post("/bookings/recurring/preview")
+async def preview_recurring_bookings(payload: RecurringPreviewIn, request: Request):
+    """Preview free/busy for N weekly occurrences before confirm."""
+    _rate_limit_booking(request)
+    await bsvc.expire_stale_pending(db)
+    if payload.court_id not in COURT_BY_ID:
+        raise HTTPException(status_code=404, detail="Quadra não encontrada")
+    try:
+        return await bsvc.preview_recurring(
+            db,
+            court_id=payload.court_id,
+            date=payload.date,
+            start_time=payload.start_time,
+            weeks=payload.weeks,
+            duration_minutes=payload.duration_minutes,
+            duration_hours=payload.duration_hours,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@api.post("/bookings/recurring")
+async def create_recurring_bookings(payload: RecurringBookingCreate, request: Request):
+    """Create weekly series — partial OK; each week atomic with own slot_locks."""
+    _rate_limit_booking(request)
+    await bsvc.expire_stale_pending(db)
+    if payload.court_id not in COURT_BY_ID:
+        raise HTTPException(status_code=404, detail="Quadra não encontrada")
+    if not validate_cpf(payload.cpf):
+        raise HTTPException(status_code=400, detail="CPF inválido")
+    if not only_digits(payload.whatsapp) or len(only_digits(payload.whatsapp)) < 10:
+        raise HTTPException(status_code=400, detail="WhatsApp inválido")
+
+    cpf_digits = only_digits(payload.cpf)
+    cpf_masked = mask_cpf(payload.cpf)
+    whatsapp_digits = normalize_whatsapp(payload.whatsapp)
+
+    try:
+        result = await bsvc.create_recurring_bookings(
+            db,
+            court_id=payload.court_id,
+            date=payload.date,
+            start_time=payload.start_time,
+            weeks=payload.weeks,
+            customer_name=payload.customer_name,
+            whatsapp=whatsapp_digits,
+            cpf=cpf_digits,
+            cpf_masked=cpf_masked,
+            your_team_name=payload.your_team_name,
+            opponent_team_name=payload.opponent_team_name,
+            your_team_crest=payload.your_team_crest,
+            opponent_team_crest=payload.opponent_team_crest,
+            duration_minutes=payload.duration_minutes,
+            duration_hours=payload.duration_hours,
+            source="web",
+            status="pending",
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    if result["created_count"] == 0:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": result["summary"],
+                "series_id": result["series_id"],
+                "skipped": result["skipped"],
+                "created_count": 0,
+                "skipped_count": result["skipped_count"],
+            },
+        )
+
+    for booking in result["created"]:
+        ops_metrics.note_booking_create("web")
+        await daily_metrics.note_created(db)
+        logger.info(
+            "event=booking_create source=web recurring=1 series=%s booking_id=%s date=%s time=%s",
+            result["series_id"][:8],
+            booking["id"][:8],
+            booking["date"],
+            booking["start_time"],
+        )
+        await admin_alerts.notify_admin_new_booking(db, booking)
+        try:
+            await wls.mark_fulfilled_on_book(
+                db,
+                court_id=booking.get("court_id") or COURT_ID,
+                date=booking["date"],
+                start_time=booking["start_time"],
+                phone=booking.get("whatsapp") or "",
+            )
+        except Exception:
+            pass
+
+    return {
+        "series_id": result["series_id"],
+        "weeks": result["weeks"],
+        "start_time": result["start_time"],
+        "created_count": result["created_count"],
+        "skipped_count": result["skipped_count"],
+        "summary": result["summary"],
+        "skipped": result["skipped"],
+        "created": [_public_booking(b) for b in result["created"]],
+        # Convenience: first booking for PIX flow (same as single booking UX)
+        "booking": _public_booking(result["created"][0]) if result["created"] else None,
+    }
+
+
+@api.post("/bookings/series/{series_id}/cancel-future")
+async def cancel_series_future_customer(series_id: str, payload: SeriesCancelIn):
+    """Customer cancels future occurrences in a series (not past). CPF must match."""
+    if not validate_cpf(payload.cpf):
+        raise HTTPException(status_code=400, detail="CPF inválido")
+    cpf_d = only_digits(payload.cpf)
+    # Ensure series belongs to this CPF
+    sample = await db.bookings.find_one({"series_id": series_id}, {"_id": 0, "cpf": 1})
+    if not sample:
+        raise HTTPException(status_code=404, detail="Série não encontrada")
+    if sample.get("cpf") != cpf_d:
+        raise HTTPException(status_code=403, detail="CPF não confere com esta série")
+    try:
+        out = await bsvc.cancel_series_future(
+            db,
+            series_id,
+            cancelled_by="customer",
+            cpf=cpf_d,
+            from_date=payload.from_date,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    for bid in out.get("cancelled_ids") or []:
+        ops_metrics.note_booking_cancel("customer")
+        await daily_metrics.note_cancelled(db)
+        b = await db.bookings.find_one({"id": bid}, {"_id": 0})
+        if b:
+            await _notify_cancel_wa(b, source="customer")
+            await _after_booking_freed(b)
+    logger.info(
+        "event=series_cancel source=customer series=%s count=%s",
+        series_id[:8],
+        out.get("cancelled_count"),
+    )
+    return out
 
 
 @api.post("/bookings/{booking_id}/comprovante")
@@ -1545,6 +1709,10 @@ class AdminBookingIn(BaseModel):
     duration_hours: Optional[int] = None
 
 
+class AdminRecurringBookingIn(AdminBookingIn):
+    weeks: int = Field(ge=2, le=8)
+
+
 @api.get("/internal/whatsapp/availability")
 async def internal_wa_availability(request: Request, date: str, after_hour: Optional[int] = None):
     _require_internal(request)
@@ -1986,6 +2154,103 @@ async def admin_calendar_create_booking(payload: AdminBookingIn, admin: dict = D
         booking["start_time"],
     )
     return booking
+
+
+@api.post("/admin/calendar/bookings/recurring")
+async def admin_calendar_create_recurring(
+    payload: AdminRecurringBookingIn,
+    admin: dict = Depends(require_admin),
+):
+    """Admin recurring weekly bookings — partial OK; each week atomic."""
+    await bsvc.expire_stale_pending(db)
+    phone = normalize_whatsapp(payload.whatsapp)
+    cpf_digits = f"ad{only_digits(phone)[-9:]}".ljust(11, "0")[:11]
+    try:
+        result = await bsvc.create_recurring_bookings(
+            db,
+            court_id=COURT_ID,
+            date=payload.date,
+            start_time=payload.start_time,
+            weeks=payload.weeks,
+            customer_name=payload.customer_name,
+            whatsapp=phone,
+            cpf=cpf_digits,
+            cpf_masked="Admin",
+            your_team_name="Admin",
+            opponent_team_name="A definir",
+            duration_minutes=payload.duration_minutes,
+            duration_hours=payload.duration_hours,
+            source="admin",
+            status=payload.status,
+            payment_status="paid" if payload.status == "confirmed" else "pending",
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    if result["created_count"] == 0:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": result["summary"],
+                "series_id": result["series_id"],
+                "skipped": result["skipped"],
+                "created_count": 0,
+                "skipped_count": result["skipped_count"],
+            },
+        )
+
+    for booking in result["created"]:
+        ops_metrics.note_booking_create("admin")
+        await daily_metrics.note_created(db)
+        logger.info(
+            "event=booking_create source=admin recurring=1 series=%s booking_id=%s date=%s time=%s",
+            result["series_id"][:8],
+            booking["id"][:8],
+            booking["date"],
+            booking["start_time"],
+        )
+
+    return {
+        "series_id": result["series_id"],
+        "weeks": result["weeks"],
+        "start_time": result["start_time"],
+        "created_count": result["created_count"],
+        "skipped_count": result["skipped_count"],
+        "summary": result["summary"],
+        "skipped": result["skipped"],
+        "created": result["created"],
+    }
+
+
+@api.post("/admin/bookings/series/{series_id}/cancel-future")
+async def admin_cancel_series_future(series_id: str, admin: dict = Depends(require_admin)):
+    """Admin cancels all future active bookings in a series."""
+    sample = await db.bookings.find_one({"series_id": series_id}, {"_id": 0, "id": 1})
+    if not sample:
+        raise HTTPException(status_code=404, detail="Série não encontrada")
+    try:
+        out = await bsvc.cancel_series_future(
+            db,
+            series_id,
+            cancelled_by="admin",
+            cpf=None,
+            from_date=None,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    for bid in out.get("cancelled_ids") or []:
+        ops_metrics.note_booking_cancel("admin")
+        await daily_metrics.note_cancelled(db)
+        b = await db.bookings.find_one({"id": bid}, {"_id": 0})
+        if b:
+            await _notify_cancel_wa(b, source="admin")
+            await _after_booking_freed(b)
+    logger.info(
+        "event=series_cancel source=admin series=%s count=%s",
+        series_id[:8],
+        out.get("cancelled_count"),
+    )
+    return out
 
 
 # =============================================================================

@@ -89,6 +89,9 @@ export default function Booking() {
 
   const [pickedSlot, setPickedSlot] = useState(null);
   const [durationHours, setDurationHours] = useState(1);
+  const [recurringWeeks, setRecurringWeeks] = useState(1); // 1 = single; 2–8 = series
+  const [recurringPreview, setRecurringPreview] = useState(null);
+  const [recurringSummary, setRecurringSummary] = useState("");
   // step: idle | duration | identify | matchmaking | pix | awaiting | done
   const [step, setStep] = useState("idle");
 
@@ -186,6 +189,9 @@ export default function Booking() {
     if (!isSlotAvailable(slot)) return;
     setPickedSlot(slot);
     setDurationHours(1);
+    setRecurringWeeks(1);
+    setRecurringPreview(null);
+    setRecurringSummary("");
     const allowMulti = settings?.allow_multi_hour !== false && (availability?.settings?.allow_multi_hour !== false);
     const maxH = Math.min(
       3,
@@ -208,6 +214,33 @@ export default function Booking() {
     return Math.min(cap, Number(pickedSlot.max_consecutive || 1) || 1);
   })();
 
+  const recurringOn = settings?.recurring_enabled !== false && (availability?.settings?.recurring_enabled !== false);
+  const recurringMaxWeeks = Math.max(
+    2,
+    Math.min(8, Number(availability?.settings?.recurring_max_weeks || settings?.recurring_max_weeks || 8) || 8),
+  );
+
+  const loadRecurringPreview = async (weeks) => {
+    if (!selectedCourt || !pickedSlot || !weeks || weeks < 2) {
+      setRecurringPreview(null);
+      return;
+    }
+    try {
+      const { data } = await api.post("/bookings/recurring/preview", {
+        court_id: selectedCourt.id,
+        date,
+        start_time: pickedSlot.time,
+        weeks,
+        duration_hours: durationHours || 1,
+        duration_minutes: (durationHours || 1) * (settings?.slot_duration_minutes || 60),
+      });
+      setRecurringPreview(data);
+    } catch (e) {
+      setRecurringPreview(null);
+      setErr(formatApiErrorDetail(e.response?.data?.detail) || e.message || "Não foi possível pré-visualizar.");
+    }
+  };
+
   const onIdentifyContinue = (e) => {
     e?.preventDefault();
     setErr("");
@@ -215,6 +248,11 @@ export default function Booking() {
     if (name.trim().length < 2) { setErr("Informe seu nome completo."); return; }
     if (onlyDigits(whatsapp).length < 10) { setErr("Informe um WhatsApp válido (com DDD)."); return; }
     setStep("review");
+    if (recurringOn && recurringWeeks >= 2) {
+      loadRecurringPreview(recurringWeeks);
+    } else {
+      setRecurringPreview(null);
+    }
   };
 
   const handleCrestUpload = async (side, file) => {
@@ -237,8 +275,9 @@ export default function Booking() {
   const confirmReservation = async () => {
     setErr("");
     setConfirming(true);
+    setRecurringSummary("");
     try {
-      const { data } = await api.post("/bookings", {
+      const basePayload = {
         court_id: selectedCourt.id,
         date,
         start_time: pickedSlot.time,
@@ -251,7 +290,17 @@ export default function Booking() {
         opponent_team_name: oppTeam || "Adversário",
         your_team_crest: yourCrest,
         opponent_team_crest: oppCrest,
-      });
+      };
+      let data;
+      if (recurringOn && recurringWeeks >= 2) {
+        const res = await api.post("/bookings/recurring", { ...basePayload, weeks: recurringWeeks });
+        data = res.data?.booking || (res.data?.created && res.data.created[0]) || null;
+        setRecurringSummary(res.data?.summary || "");
+        if (!data) throw new Error(res.data?.summary || "Nenhuma semana criada.");
+      } else {
+        const res = await api.post("/bookings", basePayload);
+        data = res.data;
+      }
       setBooking(data);
       setStep("pix");
       const { data: av } = await api.get("/courts/availability", { params: { court_id: selectedCourt.id, date } });
@@ -259,9 +308,14 @@ export default function Booking() {
     } catch (e) {
       const detail = formatApiErrorDetail(e.response?.data?.detail) || e.message;
       if (e.response?.status === 409) {
-        setErr("Este horário acabou de ser reservado. Escolha outro.");
-        setStep("idle");
-        setPickedSlot(null);
+        const d = e.response?.data?.detail;
+        if (d && typeof d === "object" && d.message) {
+          setErr(d.message);
+        } else {
+          setErr("Este horário acabou de ser reservado. Escolha outro.");
+          setStep("idle");
+          setPickedSlot(null);
+        }
         try {
           const { data: av } = await api.get("/courts/availability", { params: { court_id: selectedCourt.id, date } });
           setAvailability(av);
@@ -738,10 +792,35 @@ export default function Booking() {
                   </button>
                 )}
               </div>
+              {recurringOn && (
+                <div className="mt-6" data-testid="booking-recurring-block">
+                  <div className="text-[10px] uppercase tracking-[0.3em] text-white/40 mb-2">Repetir por X semanas (opcional)</div>
+                  <div className="flex flex-wrap gap-2">
+                    {[1, 2, 3, 4].concat(recurringMaxWeeks > 4 ? [recurringMaxWeeks] : []).filter((v, i, a) => a.indexOf(v) === i && v <= recurringMaxWeeks).map((w) => (
+                      <button
+                        key={w}
+                        type="button"
+                        data-testid={`booking-recurring-${w}w`}
+                        onClick={() => setRecurringWeeks(w)}
+                        className={`min-h-[40px] px-3 py-2 border text-xs uppercase tracking-[0.15em] transition ${
+                          recurringWeeks === w
+                            ? "border-[var(--brand)] bg-[var(--brand)]/15 text-[var(--brand)]"
+                            : "border-white/20 text-white/70 hover:border-[var(--brand)]/60"
+                        }`}
+                      >
+                        {w === 1 ? "Só esta" : `${w} semanas`}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-white/45 text-xs mt-2">
+                    Mesmo dia da semana e horário. Semanas ocupadas são puladas (parcial ok).
+                  </p>
+                </div>
+              )}
               <div className="mt-6 glass p-4 flex items-center justify-between gap-3">
                 <div>
                   <div className="text-[10px] uppercase tracking-[0.3em] text-white/40">Total estimado</div>
-                  <div className="font-heading text-2xl">{fmtBRL((effectiveHourly || 0) * (durationHours || 1))}</div>
+                  <div className="font-heading text-2xl">{fmtBRL((effectiveHourly || 0) * (durationHours || 1))}{recurringWeeks > 1 ? ` × ${recurringWeeks}` : ""}</div>
                 </div>
                 <button
                   type="button"
@@ -804,6 +883,29 @@ export default function Booking() {
                 </FormField>
               </div>
 
+              {recurringOn && (
+                <div className="mt-5" data-testid="booking-recurring-identify">
+                  <div className="text-[10px] uppercase tracking-[0.3em] text-white/40 mb-2">Repetir por X semanas</div>
+                  <div className="flex flex-wrap gap-2">
+                    {[1, 2, 3, 4].filter((w) => w <= recurringMaxWeeks).map((w) => (
+                      <button
+                        key={w}
+                        type="button"
+                        data-testid={`booking-recurring-id-${w}w`}
+                        onClick={() => setRecurringWeeks(w)}
+                        className={`min-h-[40px] px-3 py-2 border text-xs uppercase tracking-[0.15em] ${
+                          recurringWeeks === w
+                            ? "border-[var(--brand)] bg-[var(--brand)]/15 text-[var(--brand)]"
+                            : "border-white/20 text-white/70"
+                        }`}
+                      >
+                        {w === 1 ? "Só esta" : `${w} sem.`}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {err && <div data-testid={BOOKING.identifyError} className="mt-4 px-4 py-3 text-sm border-l-2 border-[var(--danger)] bg-[var(--danger)]/10">{err}</div>}
 
               <div className="mt-6 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -832,10 +934,36 @@ export default function Booking() {
               <div className="mt-3 glass px-4 py-3 text-sm text-white/70">
                 <strong className="text-white">{name}</strong> · CPF {cpf} · WhatsApp {whatsapp}<br />
                 {selectedCourt?.name} · {new Date(date+"T00:00:00").toLocaleDateString("pt-BR")} · {pickedSlot?.time} · {durationHours || 1}h
+                {recurringWeeks > 1 ? ` · série de ${recurringWeeks} semanas` : ""}
               </div>
               <p className="text-white/60 mt-1 text-sm">
                 {selectedCourt?.name} · {new Date(date+"T00:00:00").toLocaleDateString("pt-BR")} · {pickedSlot?.time} · {durationHours || 1}h
               </p>
+
+              {recurringWeeks > 1 && (
+                <div className="mt-4 glass p-4" data-testid="booking-recurring-preview">
+                  <div className="text-[10px] uppercase tracking-[0.3em] text-[var(--brand)] mb-2">Prévia da série</div>
+                  {!recurringPreview ? (
+                    <p className="text-sm text-white/50">Carregando disponibilidade…</p>
+                  ) : (
+                    <ul className="space-y-1.5 text-sm">
+                      {(recurringPreview.occurrences || []).map((o) => (
+                        <li key={o.date} className="flex items-center justify-between gap-2" data-testid={`booking-recurring-occ-${o.date}`}>
+                          <span>{new Date(o.date + "T00:00:00").toLocaleDateString("pt-BR")} · {o.start_time}</span>
+                          <span className={o.available ? "text-[var(--brand)]" : "text-[var(--danger)]"}>
+                            {o.available ? "Livre" : (o.reason || "Ocupado")}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {recurringPreview && (
+                    <p className="text-xs text-white/45 mt-2">
+                      {recurringPreview.available_count} livres · {recurringPreview.busy_count} ocupadas (ocupadas serão puladas)
+                    </p>
+                  )}
+                </div>
+              )}
 
               <div className="grid grid-cols-1 md:grid-cols-[1fr_auto_1fr] items-center gap-4 md:gap-6 mt-8">
                 <TeamCard side="home" name={yourTeam} onName={setYourTeam} crest={yourCrest} onCrest={setYourCrest}
@@ -860,7 +988,7 @@ export default function Booking() {
                   disabled={confirming}
                   className="btn-neon justify-center"
                 >
-                  {confirming ? <Loader2 className="w-5 h-5 animate-spin" /> : <>RESERVAR HORÁRIO <ChevronRight className="w-5 h-5" /></>}
+                  {confirming ? <Loader2 className="w-5 h-5 animate-spin" /> : <>{recurringWeeks > 1 ? `RESERVAR ${recurringWeeks} SEMANAS` : "RESERVAR HORÁRIO"} <ChevronRight className="w-5 h-5" /></>}
                 </button>
               </div>
             </motion.div>
@@ -881,6 +1009,12 @@ export default function Booking() {
               <StepBar current={3} />
               <div className="text-[11px] tracking-[0.35em] uppercase text-[var(--brand)] mt-2">// 5 · Pagamento PIX</div>
               <h2 id="pix-title" className="font-heading text-3xl sm:text-4xl uppercase italic">Calção via <span className="text-[var(--brand)]">PIX</span></h2>
+              {recurringSummary && (
+                <div className="mt-3 text-sm border border-[var(--brand)]/40 bg-[var(--brand)]/10 px-3 py-2" data-testid="booking-recurring-summary" role="status">
+                  {recurringSummary}
+                  {booking?.series_id ? <span className="block text-xs text-white/50 mt-1">Série: {booking.series_id.slice(0, 8)}… · pague o calção de cada semana (abaixo: 1ª ocorrência)</span> : null}
+                </div>
+              )}
               <div className="mt-3 inline-flex items-center gap-2 text-[10px] uppercase tracking-[0.25em] px-2.5 py-1.5 border border-[var(--warning)]/50 text-[var(--warning)]">
                 <span className="w-1.5 h-1.5 rounded-full bg-[var(--warning)] animate-pulse" aria-hidden />
                 Status: {pixPipelineLabel(booking)} · aguardando pagamento

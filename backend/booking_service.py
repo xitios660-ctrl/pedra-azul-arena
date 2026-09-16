@@ -348,6 +348,7 @@ async def build_availability(
                 "checked_in": bool(b.get("checked_in_at")) if b else False,
                 "duration_minutes": int(b.get("duration_minutes") or step) if b else None,
                 "is_continuation": is_continuation,
+                "series_id": b.get("series_id") if b else None,
                 "price": price,
             }
         )
@@ -384,6 +385,12 @@ async def build_availability(
         "allow_multi_hour": bool(runtime["settings"].get("allow_multi_hour", True)),
         "max_hours_per_booking": max_hours_cap(runtime["settings"]),
         "waitlist_enabled": bool(runtime["settings"].get("waitlist_enabled", True)),
+        "recurring_enabled": bool(runtime["settings"].get("recurring_enabled", True)),
+        "recurring_max_weeks": max(2, min(8, int(
+            runtime["settings"].get("recurring_max_weeks")
+            if runtime["settings"].get("recurring_max_weeks") is not None
+            else 8
+        ))),
     }}
 
 
@@ -428,6 +435,7 @@ async def create_booking_atomic(
     source: str = "web",
     status: str = "pending",
     payment_status: Optional[str] = None,
+    series_id: Optional[str] = None,
 ) -> dict[str, Any]:
     """Insert one booking spanning N consecutive slots + unique slot_locks.
 
@@ -544,6 +552,7 @@ async def create_booking_atomic(
         "created_at": now_iso(),
         "slot_key": primary_sk,
         "slot_keys": slot_keys,
+        "series_id": series_id,
     }
     try:
         await db.bookings.insert_one(booking)
@@ -933,3 +942,285 @@ async def reschedule_booking_atomic(
             pass
         raise ValueError("Reserva não encontrada ou inativa")
     return updated
+
+
+# -----------------------------------------------------------------------------
+# Cycle 27 — recurring weekly bookings
+# -----------------------------------------------------------------------------
+
+def weekly_occurrence_dates(start_date: str, weeks: int) -> list[str]:
+    """N consecutive weekly dates starting at start_date (inclusive)."""
+    try:
+        base = datetime.strptime(start_date, "%Y-%m-%d")
+    except ValueError as e:
+        raise ValueError("Data inválida") from e
+    n = int(weeks)
+    if n < 1:
+        raise ValueError("weeks deve ser >= 1")
+    return [(base + timedelta(weeks=i)).strftime("%Y-%m-%d") for i in range(n)]
+
+
+def clamp_recurring_weeks(weeks: int, settings: dict[str, Any]) -> int:
+    """Validate weeks against settings recurring_max_weeks (2..max, max capped 2–8)."""
+    enabled = settings.get("recurring_enabled")
+    if enabled is False:
+        raise ValueError("Reservas recorrentes desativadas")
+    raw_max = settings.get("recurring_max_weeks")
+    try:
+        max_w = int(raw_max if raw_max is not None else 8)
+    except (TypeError, ValueError):
+        max_w = 8
+    max_w = max(2, min(8, max_w))
+    try:
+        n = int(weeks)
+    except (TypeError, ValueError) as e:
+        raise ValueError("Número de semanas inválido") from e
+    if n < 2 or n > max_w:
+        raise ValueError(f"Repetir por 2 a {max_w} semanas")
+    return n
+
+
+async def preview_recurring(
+    db,
+    *,
+    court_id: str,
+    date: str,
+    start_time: str,
+    weeks: int,
+    duration_minutes: Optional[int] = None,
+    duration_hours: Optional[int] = None,
+) -> dict[str, Any]:
+    """Check free/busy for each weekly occurrence (no locks created)."""
+    if court_id != COURT_ID:
+        raise ValueError("Quadra não encontrada")
+    settings = await sset.get_settings(db)
+    weeks_n = clamp_recurring_weeks(weeks, settings)
+    dates = weekly_occurrence_dates(date, weeks_n)
+    step = int(settings.get("slot_duration_minutes") or 60)
+    # Duration resolved once from settings (same hours each week)
+    try:
+        dur = resolve_booking_duration(
+            settings,
+            duration_minutes=duration_minutes,
+            duration_hours=duration_hours,
+        )
+    except ValueError:
+        dur = step
+
+    items: list[dict[str, Any]] = []
+    for d in dates:
+        entry: dict[str, Any] = {
+            "date": d,
+            "start_time": start_time,
+            "available": False,
+            "reason": None,
+            "weekday": datetime.strptime(d, "%Y-%m-%d").weekday(),
+            "price_per_hour": None,
+        }
+        try:
+            runtime = await get_runtime(db, d)
+            entry["price_per_hour"] = float(runtime["court"]["price_per_hour"])
+            time_slots = runtime["time_slots"]
+            if start_time not in time_slots:
+                entry["reason"] = "Horário inválido neste dia"
+                items.append(entry)
+                continue
+            if not sset.is_open_weekday(d, runtime["settings"]):
+                entry["reason"] = "Quadra fechada neste dia da semana"
+                items.append(entry)
+                continue
+            if is_past_slot(d, start_time):
+                entry["reason"] = "Horário indisponível"
+                items.append(entry)
+                continue
+            covered = covered_start_times(start_time, dur, time_slots, slot_step=step)
+            blocked = await get_blocked_times(db, court_id, d)
+            reserved = await _reserved_times(db, court_id, d)
+            busy = False
+            reason = None
+            for t in covered:
+                if t in blocked:
+                    busy = True
+                    reason = "Horário bloqueado"
+                    break
+                if t in reserved:
+                    busy = True
+                    reason = "Horário já reservado"
+                    break
+                if is_past_slot(d, t):
+                    busy = True
+                    reason = "Horário indisponível"
+                    break
+            if busy:
+                entry["reason"] = reason
+            else:
+                entry["available"] = True
+                bill_hours = dur / 60.0
+                entry["estimated_total"] = round(entry["price_per_hour"] * bill_hours, 2)
+                entry["estimated_deposit"] = round(entry["estimated_total"] * DEPOSIT_RATE, 2)
+        except ValueError as e:
+            entry["reason"] = str(e)
+        items.append(entry)
+
+    free_n = sum(1 for x in items if x["available"])
+    return {
+        "court_id": court_id,
+        "start_time": start_time,
+        "weeks": weeks_n,
+        "duration_minutes": dur,
+        "occurrences": items,
+        "available_count": free_n,
+        "busy_count": len(items) - free_n,
+    }
+
+
+async def create_recurring_bookings(
+    db,
+    *,
+    court_id: str,
+    date: str,
+    start_time: str,
+    weeks: int,
+    customer_name: str,
+    whatsapp: str,
+    cpf: str,
+    cpf_masked: str,
+    your_team_name: str = "Time A",
+    opponent_team_name: str = "Time B",
+    your_team_crest: Optional[str] = None,
+    opponent_team_crest: Optional[str] = None,
+    duration_minutes: Optional[int] = None,
+    duration_hours: Optional[int] = None,
+    source: str = "web",
+    status: str = "pending",
+    payment_status: Optional[str] = None,
+) -> dict[str, Any]:
+    """Create up to N weekly bookings; skip conflicts; partial success OK.
+
+    Each week is its own atomic booking + slot_locks. Shared series_id links them.
+    """
+    settings = await sset.get_settings(db)
+    weeks_n = clamp_recurring_weeks(weeks, settings)
+    dates = weekly_occurrence_dates(date, weeks_n)
+    series_id = str(uuid.uuid4())
+    created: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+
+    for d in dates:
+        try:
+            booking = await create_booking_atomic(
+                db,
+                court_id=court_id,
+                date=d,
+                start_time=start_time,
+                customer_name=customer_name,
+                whatsapp=whatsapp,
+                cpf=cpf,
+                cpf_masked=cpf_masked,
+                your_team_name=your_team_name,
+                opponent_team_name=opponent_team_name,
+                your_team_crest=your_team_crest,
+                opponent_team_crest=opponent_team_crest,
+                duration_minutes=duration_minutes,
+                duration_hours=duration_hours,
+                source=source,
+                status=status,
+                payment_status=payment_status,
+                series_id=series_id,
+            )
+            created.append(booking)
+        except DuplicateKeyError:
+            skipped.append({"date": d, "start_time": start_time, "reason": "Horário já reservado"})
+        except ValueError as e:
+            skipped.append({"date": d, "start_time": start_time, "reason": str(e)})
+
+    summary = _recurring_summary_pt(created, skipped, weeks_n)
+    return {
+        "series_id": series_id,
+        "weeks": weeks_n,
+        "start_time": start_time,
+        "created": created,
+        "skipped": skipped,
+        "created_count": len(created),
+        "skipped_count": len(skipped),
+        "summary": summary,
+    }
+
+
+def _recurring_summary_pt(
+    created: list[dict[str, Any]],
+    skipped: list[dict[str, Any]],
+    weeks_n: int,
+) -> str:
+    n_ok = len(created)
+    n_skip = len(skipped)
+    if n_ok == weeks_n and n_skip == 0:
+        return f"{n_ok} reservas criadas nas {weeks_n} semanas."
+    parts = [f"{n_ok} de {weeks_n} semanas criadas."]
+    if n_skip:
+        fails = ", ".join(
+            f"{s['date']} ({s.get('reason') or 'indisponível'})" for s in skipped
+        )
+        parts.append(f"Não criadas: {fails}.")
+    return " ".join(parts)
+
+
+async def cancel_series_future(
+    db,
+    series_id: str,
+    *,
+    cancelled_by: str = "customer",
+    cpf: Optional[str] = None,
+    from_date: Optional[str] = None,
+) -> dict[str, Any]:
+    """Cancel active bookings in a series from from_date (inclusive) onward.
+
+    Does not cancel past occurrences. Returns count + ids.
+    """
+    sid = (series_id or "").strip()
+    if not sid:
+        raise ValueError("series_id inválido")
+    today = now_local().strftime("%Y-%m-%d")
+    cutoff = from_date or today
+    try:
+        datetime.strptime(cutoff, "%Y-%m-%d")
+    except ValueError as e:
+        raise ValueError("Data inválida") from e
+
+    query: dict[str, Any] = {
+        "series_id": sid,
+        "status": {"$in": list(ACTIVE_STATUSES)},
+        "date": {"$gte": cutoff},
+    }
+    if cpf:
+        query["cpf"] = cpf
+
+    cursor = db.bookings.find(query, {"_id": 0, "id": 1, "date": 1, "start_time": 1, "cpf": 1})
+    docs = await cursor.to_list(200)
+    cancelled_ids: list[str] = []
+    for b in docs:
+        bid = b["id"]
+        filt: dict[str, Any] = {"id": bid, "status": {"$in": list(ACTIVE_STATUSES)}}
+        if cpf:
+            filt["cpf"] = cpf
+        res = await db.bookings.update_one(
+            filt,
+            {"$set": {
+                "status": "cancelled",
+                "payment.status": "cancelled",
+                "cancelled_at": now_iso(),
+                "cancelled_by": cancelled_by,
+                "cancelled_series": True,
+            }},
+        )
+        if res.modified_count == 1:
+            await release_slot_locks(db, bid)
+            cancelled_ids.append(bid)
+
+    return {
+        "ok": True,
+        "series_id": sid,
+        "cancelled_count": len(cancelled_ids),
+        "cancelled_ids": cancelled_ids,
+        "from_date": cutoff,
+    }
