@@ -1026,6 +1026,12 @@ function SiteSettingsAdmin() {
           open_days: Array.isArray(data.open_days) && data.open_days.length
             ? data.open_days.map(Number)
             : [0, 1, 2, 3, 4, 5, 6],
+          has_parking: data.has_parking !== false,
+          accepts_pix: data.accepts_pix !== false,
+          game_duration_note: data.game_duration_note || "",
+          structure_blurb: data.structure_blurb || "",
+          amenities: Array.isArray(data.amenities) ? data.amenities : [],
+          amenities_text: Array.isArray(data.amenities) ? data.amenities.join("\n") : "",
         });
       } catch (e) {
         setErr(e.response?.data?.detail || e.message);
@@ -1040,6 +1046,11 @@ function SiteSettingsAdmin() {
     if (!form) return;
     setBusy(true); setErr(""); setOk("");
     try {
+      const amenities = String(form.amenities_text ?? (Array.isArray(form.amenities) ? form.amenities.join("\n") : ""))
+        .split(/[\n,]/)
+        .map((x) => x.trim())
+        .filter(Boolean)
+        .slice(0, 12);
       const payload = {
         ...form,
         price_per_hour: Number(form.price_per_hour),
@@ -1050,9 +1061,18 @@ function SiteSettingsAdmin() {
         cancel_min_hours: Number(form.cancel_min_hours ?? 2),
         admin_whatsapp_e164: String(form.admin_whatsapp_e164 || "").replace(/\D/g, ""),
         admin_alerts_enabled: form.admin_alerts_enabled !== false,
+        has_parking: form.has_parking !== false,
+        accepts_pix: form.accepts_pix !== false,
+        game_duration_note: String(form.game_duration_note || "").trim(),
+        structure_blurb: String(form.structure_blurb || "").trim(),
+        amenities,
       };
+      delete payload.amenities_text;
       const { data } = await api.put("/admin/site-settings", payload);
-      setForm(data);
+      setForm({
+        ...data,
+        amenities_text: Array.isArray(data.amenities) ? data.amenities.join("\n") : "",
+      });
       try { await refreshPublicSettings(); } catch (_) { /* public cache best-effort */ }
       setOk("Configurações salvas. Booking, landing e bot usam os novos valores.");
     } catch (e2) {
@@ -1096,7 +1116,7 @@ function SiteSettingsAdmin() {
       <div className="text-[11px] uppercase tracking-[0.35em] text-[var(--brand)]">// Site · Quadra única</div>
       <h2 className="font-heading text-4xl uppercase italic mb-2">Configurações</h2>
       <p className="text-white/55 text-sm mb-4">
-        WhatsApp, PIX, endereço, preço, horários e dias abertos — usados no booking público e nas respostas do bot.
+        WhatsApp, PIX, endereço, estrutura/amenities, preço, horários e dias abertos — booking público, landing e bot WA.
         Cancelamento pelo cliente respeita as horas mínimas; admin cancela sempre.
       </p>
       <div className="grid sm:grid-cols-2 gap-4">
@@ -1165,7 +1185,48 @@ function SiteSettingsAdmin() {
       {field("Endereço / local (label)", "address_label")}
       {field("URL Maps", "maps_url")}
       {field("PIX copia-e-cola (texto)", "pix_copy_text", { textarea: true, maxLength: 600 })}
-      {field("Nota estacionamento", "parking_note", { textarea: true })}
+      <div className="border border-white/10 rounded-lg p-4 space-y-3 bg-black/20" data-testid="admin-amenities">
+        <div className="text-[10px] uppercase tracking-[0.25em] text-[var(--brand)]">Estrutura · FAQ</div>
+        <p className="text-white/55 text-xs">
+          Respostas do bot (endereço, estacionamento, duração, PIX) e a faixa “Conheça a quadra” no site.
+          Não invente número de rua — use só o label / Maps.
+        </p>
+        <div className="flex flex-wrap gap-4">
+          <label className="flex items-center gap-3 min-h-[44px] cursor-pointer">
+            <input
+              type="checkbox"
+              className="w-5 h-5 accent-[var(--brand)]"
+              checked={form.has_parking !== false}
+              onChange={(e) => set("has_parking", e.target.checked)}
+              data-testid="admin-has-parking"
+            />
+            <span className="text-sm text-white/80">Tem estacionamento</span>
+          </label>
+          <label className="flex items-center gap-3 min-h-[44px] cursor-pointer">
+            <input
+              type="checkbox"
+              className="w-5 h-5 accent-[var(--brand)]"
+              checked={form.accepts_pix !== false}
+              onChange={(e) => set("accepts_pix", e.target.checked)}
+              data-testid="admin-accepts-pix"
+            />
+            <span className="text-sm text-white/80">Aceita PIX</span>
+          </label>
+        </div>
+        {field("Nota estacionamento", "parking_note", { textarea: true })}
+        {field("Duração do jogo (texto FAQ)", "game_duration_note")}
+        {field("Texto estrutura / conheça a quadra", "structure_blurb", { textarea: true, maxLength: 400 })}
+        <label className="block">
+          <div className="text-[10px] uppercase tracking-[0.25em] text-white/55 mb-1">Amenities (um por linha)</div>
+          <textarea
+            className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm min-h-[80px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--brand)]"
+            value={form.amenities_text ?? ""}
+            onChange={(e) => set("amenities_text", e.target.value)}
+            data-testid="admin-amenities-text"
+            placeholder={"Iluminação noturna\nPelada & treino"}
+          />
+        </label>
+      </div>
       {err && <div className="text-[var(--danger)] text-sm" role="alert">{err}</div>}
       {ok && <div className="text-[var(--success)] text-sm">{ok}</div>}
       <button

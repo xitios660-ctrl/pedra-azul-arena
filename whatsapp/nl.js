@@ -311,8 +311,8 @@ export function detectIntent(text, conversationState) {
     return { intent: "duration" };
   }
 
-  // PIX how-to
-  if (/\b(pix|como pagar|pagamento|calcao|calção|comprovante|qr ?code|copia e cola|copia-e-cola)\b/.test(t)) {
+  // PIX how-to / acceptance
+  if (/\b(aceita\s+pix|aceitam\s+pix|aceita\s+pagamento|pix|como pagar|pagamento|calcao|calção|comprovante|qr ?code|copia e cola|copia-e-cola)\b/.test(t)) {
     return { intent: "pix_howto" };
   }
 
@@ -321,8 +321,8 @@ export function detectIntent(text, conversationState) {
     return { intent: "price" };
   }
 
-  // Address / location / maps
-  if (/\b(endereco|endereço|onde fica|localizacao|localização|como chegar|onde e|onde é|mapa|maps|google maps|waze)\b/.test(t)) {
+  // Address / location / maps / structure
+  if (/\b(endereco|endereço|onde fica|localizacao|localização|como chegar|onde e|onde é|mapa|maps|google maps|waze|conhece a quadra|estrutura da quadra)\b/.test(t)) {
     return { intent: "address" };
   }
 

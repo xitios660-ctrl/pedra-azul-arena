@@ -191,3 +191,10 @@ Prod smoke: `GET /api/health`, `/api/courts`, `/api/site-settings`, WhatsApp `AG
 - Seed/`ensure_seeded`: se faltar a chave, preenche com os 7 dias.
 - `build_availability` / create booking / WA availability: weekday fora de `open_days` → slots `unavailable` (sem free); booking → 400 "Quadra fechada neste dia da semana".
 - Admin Configurações: checkboxes Seg–Dom; booking mostra aviso se o dia escolhido estiver fechado.
+
+## Cycle 17 notes
+- `site_settings` amenities / FAQ: `has_parking`, `parking_note`, `game_duration_note` (default from `slot_duration_minutes`), `accepts_pix` (default true), `structure_blurb`, `amenities` (lista curta).
+- Admin **Configurações**: checkboxes + textos; landing faixa **Estrutura / Conheça a quadra** (chips + blurb + vídeo).
+- Bot WA: intents estacionamento / endereço / duração / PIX leem settings ao vivo (pt-BR curto).
+- Sem inventar número de rua — `address_label` / `maps_url` inalterados na semântica.
+

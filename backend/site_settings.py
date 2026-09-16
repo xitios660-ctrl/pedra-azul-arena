@@ -2,6 +2,10 @@
 
 open_days: list of Python datetime.weekday() ints — 0=Monday .. 6=Sunday
 (ISO Monday-first, zero-based). Default [0,1,2,3,4,5,6] = all week.
+
+Amenities / FAQ (Cycle 17): has_parking, parking_note, game_duration_note,
+accepts_pix, structure_blurb, amenities — used on landing + WA FAQ.
+Do not invent street numbers; keep address_label / maps_url as-is.
 """
 from __future__ import annotations
 
@@ -36,6 +40,14 @@ DEFAULTS: dict[str, Any] = {
     "open_days": [0, 1, 2, 3, 4, 5, 6],
     "slot_duration_minutes": 60,
     "parking_note": "Estacionamento no entorno da quadra — chegue ~10 min antes.",
+    "has_parking": True,
+    "game_duration_note": "1 hora (60 min)",  # default aligned with slot_duration_minutes=60
+    "accepts_pix": True,
+    "structure_blurb": (
+        "Quadra oficial no Alto Tietê — iluminação noturna, espaço para peladas e treinos. "
+        "Chegue ~10 min antes."
+    ),
+    "amenities": ["Iluminação noturna", "Pelada & treino", "Copa Alto Tietê"],
     "court_name": "Quadra Pedra Azul — Núncio",
     "cancel_min_hours": 2,  # customer cancel cutoff before slot start; admin always can
     # Admin WA alerts — empty until owner sets a real number (never invent phones)
@@ -66,6 +78,11 @@ class SiteSettingsUpdate(BaseModel):
     open_days: list[int] = Field(default_factory=lambda: [0, 1, 2, 3, 4, 5, 6])
     slot_duration_minutes: int = Field(ge=30, le=180)
     parking_note: str = Field(min_length=0, max_length=240)
+    has_parking: bool = Field(default=True)
+    game_duration_note: str = Field(default="", max_length=120)
+    accepts_pix: bool = Field(default=True)
+    structure_blurb: str = Field(default="", max_length=400)
+    amenities: list[str] = Field(default_factory=list)
     court_name: Optional[str] = Field(default=None, max_length=120)
     cancel_min_hours: int = Field(default=2, ge=0, le=168)
     admin_whatsapp_e164: Optional[str] = Field(default="", max_length=20)
@@ -126,6 +143,31 @@ class SiteSettingsUpdate(BaseModel):
         out.sort()
         return out
 
+    @field_validator("amenities")
+    @classmethod
+    def normalize_amenities(cls, v: list[str]) -> list[str]:
+        if v is None:
+            return []
+        if not isinstance(v, list):
+            raise ValueError("amenities deve ser lista de strings curtas")
+        out: list[str] = []
+        for x in v:
+            s = str(x or "").strip()
+            if not s:
+                continue
+            if len(s) > 48:
+                s = s[:48]
+            if s not in out:
+                out.append(s)
+            if len(out) >= 12:
+                break
+        return out
+
+    @field_validator("game_duration_note", "structure_blurb", "parking_note")
+    @classmethod
+    def strip_text(cls, v: str) -> str:
+        return (v or "").strip()
+
     @model_validator(mode="after")
     def hours_order(self):
         if self.close_hour < self.open_hour:
@@ -168,6 +210,42 @@ def is_open_weekday(date_ymd: str, settings: dict[str, Any] | None = None) -> bo
     return wd in days
 
 
+
+def default_game_duration_note(mins: int | None = None) -> str:
+    """Human label for slot length — default from slot_duration_minutes."""
+    try:
+        m = int(mins if mins is not None else DEFAULTS["slot_duration_minutes"])
+    except (TypeError, ValueError):
+        m = 60
+    if m <= 0:
+        m = 60
+    if m == 60:
+        return "1 hora (60 min)"
+    if m % 60 == 0:
+        h = m // 60
+        return f"{h} hora{'s' if h != 1 else ''} ({m} min)"
+    return f"{m} minutos"
+
+
+def _normalize_amenities(raw: Any) -> list[str]:
+    if raw is None:
+        return list(DEFAULTS["amenities"])
+    if not isinstance(raw, (list, tuple)):
+        return list(DEFAULTS["amenities"])
+    out: list[str] = []
+    for x in raw:
+        s = str(x or "").strip()
+        if not s:
+            continue
+        if len(s) > 48:
+            s = s[:48]
+        if s not in out:
+            out.append(s)
+        if len(out) >= 12:
+            break
+    return out
+
+
 def public_view(doc: dict[str, Any]) -> dict[str, Any]:
     """Fields safe for public booking + WA bot."""
     d = {**DEFAULTS, **(doc or {})}
@@ -183,7 +261,15 @@ def public_view(doc: dict[str, Any]) -> dict[str, Any]:
         "close_hour": int(d["close_hour"]),
         "open_days": _normalize_open_days(d.get("open_days")),
         "slot_duration_minutes": int(d["slot_duration_minutes"]),
-        "parking_note": d.get("parking_note") or DEFAULTS["parking_note"],
+        "parking_note": d.get("parking_note") if d.get("parking_note") is not None else DEFAULTS["parking_note"],
+        "has_parking": bool(d["has_parking"]) if d.get("has_parking") is not None else bool(DEFAULTS["has_parking"]),
+        "game_duration_note": (
+            (d.get("game_duration_note") or "").strip()
+            or default_game_duration_note(d.get("slot_duration_minutes"))
+        ),
+        "accepts_pix": bool(d["accepts_pix"]) if d.get("accepts_pix") is not None else bool(DEFAULTS["accepts_pix"]),
+        "structure_blurb": (d.get("structure_blurb") if d.get("structure_blurb") is not None else DEFAULTS["structure_blurb"]) or "",
+        "amenities": _normalize_amenities(d.get("amenities")),
         "court_name": d.get("court_name") or DEFAULTS["court_name"],
         "cancel_min_hours": int(d.get("cancel_min_hours") if d.get("cancel_min_hours") is not None else DEFAULTS["cancel_min_hours"]),
         # admin_whatsapp_e164 stays admin-only (not in public_view)
@@ -277,6 +363,10 @@ async def update_settings(db, payload: SiteSettingsUpdate) -> dict[str, Any]:
     data = payload.model_dump()
     if not data.get("court_name"):
         data["court_name"] = DEFAULTS["court_name"]
+    if not (data.get("game_duration_note") or "").strip():
+        data["game_duration_note"] = default_game_duration_note(data.get("slot_duration_minutes"))
+    if data.get("amenities") is None:
+        data["amenities"] = list(DEFAULTS["amenities"])
     data["updated_at"] = datetime.now(timezone.utc).isoformat()
     await db.site_settings.update_one(
         {"id": SINGLETON_ID},

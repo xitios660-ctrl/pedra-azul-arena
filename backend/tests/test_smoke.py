@@ -860,3 +860,49 @@ def test_open_days_closes_weekday_availability_and_booking(admin_session, s):
         assert "fechada" in detail or "semana" in detail or bad.status_code == 409, detail
     finally:
         admin_session.put(f"{API}/admin/site-settings", json=original, timeout=10)
+
+
+def test_amenities_settings_roundtrip(admin_session, s):
+    """Cycle 17: amenities / FAQ fields on site_settings (public + admin)."""
+    r = admin_session.get(f"{API}/admin/site-settings", timeout=10)
+    assert r.status_code == 200, r.text
+    original = r.json()
+    for key in (
+        "has_parking",
+        "parking_note",
+        "game_duration_note",
+        "accepts_pix",
+        "structure_blurb",
+        "amenities",
+    ):
+        assert key in original, key
+
+    patched = {
+        **original,
+        "has_parking": False,
+        "parking_note": "Sem vaga própria — use carona.",
+        "game_duration_note": "1 hora (60 min)",
+        "accepts_pix": True,
+        "structure_blurb": "Quadra oficial · iluminação noturna.",
+        "amenities": ["Iluminação noturna", "Pelada & treino"],
+    }
+    try:
+        rput = admin_session.put(f"{API}/admin/site-settings", json=patched, timeout=10)
+        assert rput.status_code == 200, rput.text
+        body = rput.json()
+        assert body.get("has_parking") is False
+        assert body.get("accepts_pix") is True
+        assert "Iluminação noturna" in (body.get("amenities") or [])
+        assert "1 hora" in (body.get("game_duration_note") or "")
+
+        pub = s.get(f"{API}/site-settings", timeout=10)
+        assert pub.status_code == 200, pub.text
+        pdata = pub.json()
+        assert pdata.get("has_parking") is False
+        assert pdata.get("accepts_pix") is True
+        assert isinstance(pdata.get("amenities"), list)
+        assert pdata.get("structure_blurb")
+        # admin phone stays admin-only
+        assert "admin_whatsapp_e164" not in pdata
+    finally:
+        admin_session.put(f"{API}/admin/site-settings", json=original, timeout=10)

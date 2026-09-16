@@ -16,6 +16,9 @@ export const COURT_MAPS_URL =
   "https://www.google.com/maps/search/?api=1&query=Pedra%20Azul%20Nuncio%20Alto%20Tiete%20SP";
 export const COURT_DURATION_LABEL = "1 hora (60 min)";
 export const PARKING_NOTE = "Estacionamento no entorno da quadra — chegue ~10 min antes.";
+export const STRUCTURE_BLURB =
+  "Quadra oficial no Alto Tietê — iluminação noturna, espaço para peladas e treinos. Chegue ~10 min antes.";
+export const DEFAULT_AMENITIES = ["Iluminação noturna", "Pelada & treino", "Copa Alto Tietê"];
 
 /** Brand arena video (cinematic opening / hero loop) */
 export const BALEYS_VIDEO_SRC = "/assets/video/baleys-lite.mp4";
@@ -38,6 +41,11 @@ export const DEFAULT_SITE_SETTINGS = {
   open_days: [0, 1, 2, 3, 4, 5, 6],
   slot_duration_minutes: 60,
   parking_note: PARKING_NOTE,
+  has_parking: true,
+  game_duration_note: COURT_DURATION_LABEL,
+  accepts_pix: true,
+  structure_blurb: STRUCTURE_BLURB,
+  amenities: DEFAULT_AMENITIES,
   court_name: "Quadra Pedra Azul — Núncio",
 };
 
@@ -128,4 +136,38 @@ export const OPEN_DAY_LABELS = [
   { value: 5, short: "Sáb", full: "Sábado" },
   { value: 6, short: "Dom", full: "Domingo" },
 ];
+
+/** Duration chip / FAQ label from settings (falls back to slot minutes). */
+export function gameDurationLabel(settings) {
+  const note = (settings?.game_duration_note || "").trim();
+  if (note) return note;
+  const mins = Number(settings?.slot_duration_minutes ?? 60);
+  if (mins === 60) return COURT_DURATION_LABEL;
+  if (Number.isFinite(mins) && mins > 0) {
+    if (mins % 60 === 0) {
+      const h = mins / 60;
+      return `${h} hora${h !== 1 ? "s" : ""} (${mins} min)`;
+    }
+    return `${mins} minutos`;
+  }
+  return COURT_DURATION_LABEL;
+}
+
+/** Build landing amenity chips from settings flags + amenities list. */
+export function structureChips(settings) {
+  const s = settings || DEFAULT_SITE_SETTINGS;
+  const chips = [];
+  const seen = new Set();
+  const push = (label) => {
+    const t = String(label || "").trim();
+    if (!t || seen.has(t)) return;
+    seen.add(t);
+    chips.push(t);
+  };
+  for (const a of Array.isArray(s.amenities) ? s.amenities : []) push(a);
+  if (s.has_parking !== false) push("Estacionamento");
+  if (s.accepts_pix !== false) push("Aceita PIX");
+  push(gameDurationLabel(s));
+  return chips.slice(0, 10);
+}
 

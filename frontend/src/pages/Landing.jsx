@@ -5,7 +5,7 @@ import PageShell from "@/components/PageShell";
 import { HOME } from "@/constants/testIds";
 import {
   ChevronRight, CalendarDays, Trophy, Ticket, Zap, Activity, Play,
-  MessageCircle, MapPin, ShieldCheck, Banknote,
+  MessageCircle, MapPin, ShieldCheck, Banknote, Car, Clock, Sparkles,
 } from "lucide-react";
 import api from "@/lib/api";
 import {
@@ -15,6 +15,8 @@ import {
   BALEYS_VIDEO_SRC,
   BALEYS_POSTER_SRC,
   BALEYS_POSTER_FALLBACK,
+  structureChips,
+  gameDurationLabel,
 } from "@/lib/siteConfig";
 import { useSiteSettings } from "@/lib/SiteSettings";
 import { useMotionSystem } from "@/lib/motion";
@@ -128,11 +130,14 @@ export default function Landing() {
       .catch(() => {});
   }, []);
 
-  const { settings, priceLabel: COURT_PRICE_LABEL, waReady, waHref: ctxWa } = useSiteSettings();
+  const { settings, priceLabel: COURT_PRICE_LABEL, waReady, waHref: ctxWa, pixReady } = useSiteSettings();
   const WHATSAPP_DISPLAY = settings.whatsapp_display;
   const waHref = waReady
     ? (ctxWa || whatsappUrl(defaultWhatsAppPrefill(), settings.whatsapp_e164))
     : null;
+  const chips = structureChips(settings);
+  const structureBlurb = (settings.structure_blurb || "").trim();
+  const durationLabel = gameDurationLabel(settings);
 
   return (
     <PageShell>
@@ -301,15 +306,15 @@ export default function Landing() {
         </div>
       </div>
 
-      {/* ===== ARENA VIDEO BAND ===== */}
+      {/* ===== ESTRUTURA / CONHEÇA A QUADRA (+ video) ===== */}
       <section
         className="relative py-14 sm:py-20 overflow-hidden border-y border-white/5"
-        data-testid="landing-arena-video-band"
+        data-testid="landing-structure-band"
       >
         <div className="absolute inset-0 pointer-events-none">
           {!m.reduce && (
             <video
-              className="absolute inset-0 w-full h-full object-cover opacity-40"
+              className="absolute inset-0 w-full h-full object-cover opacity-35"
               src={BALEYS_VIDEO_SRC}
               poster={BALEYS_POSTER_SRC}
               autoPlay
@@ -320,19 +325,72 @@ export default function Landing() {
               aria-hidden="true"
             />
           )}
-          <div className="absolute inset-0 bg-gradient-to-b from-[#030305] via-[#030305]/85 to-[#030305]" />
+          <div className="absolute inset-0 bg-gradient-to-b from-[#030305] via-[#030305]/88 to-[#030305]" />
           <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(0,229,255,0.12),transparent_65%)]" />
         </div>
-        <div className="relative max-w-7xl mx-auto px-6 md:px-10 text-center">
-          <div className="text-[10px] sm:text-[11px] tracking-[0.45em] uppercase text-[var(--brand)] mb-4">
-            // Arena · Pedra Azul
+        <div className="relative max-w-7xl mx-auto px-6 md:px-10">
+          <div className="text-center max-w-2xl mx-auto">
+            <div className="text-[10px] sm:text-[11px] tracking-[0.45em] uppercase text-[var(--brand)] mb-3">
+              // Estrutura · Conheça a quadra
+            </div>
+            <h2 className="font-heading text-[clamp(2rem,7vw,4.5rem)] uppercase italic font-black leading-[0.92] tracking-tighter">
+              Até a <span className="text-glow-strong text-[var(--brand)]">Pedra Azul</span>
+            </h2>
+            <p className="mt-4 text-white/60 text-sm sm:text-base leading-relaxed" data-testid="landing-structure-blurb">
+              {structureBlurb ||
+                "A energia da quadra — reserve, jogue e dispute a Copa Alto Tietê. Tire dúvidas e reserve no WhatsApp."}
+            </p>
           </div>
-          <h2 className="font-heading text-[clamp(2rem,8vw,5.5rem)] uppercase italic font-black leading-[0.9] tracking-tighter">
-            Até a <span className="text-glow-strong text-[var(--brand)]">Pedra Azul</span>
-          </h2>
-          <p className="mt-5 text-white/55 text-sm sm:text-base max-w-xl mx-auto">
-            A energia da quadra — reserve, jogue e dispute a Copa Alto Tietê. Tire dúvidas e reserve no WhatsApp.
-          </p>
+          {chips.length > 0 && (
+            <ul
+              className="mt-8 flex flex-wrap justify-center gap-2 sm:gap-2.5 max-w-3xl mx-auto"
+              data-testid="landing-amenities-chips"
+              aria-label="Amenities da quadra"
+            >
+              {chips.map((c) => (
+                <li
+                  key={c}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 min-h-[40px] rounded-full border border-[var(--brand)]/35 bg-black/45 text-[11px] sm:text-xs uppercase tracking-[0.12em] text-white/85 shadow-[0_0_18px_rgba(0,229,255,0.08)]"
+                >
+                  <Sparkles className="w-3 h-3 text-[var(--brand)] shrink-0" aria-hidden />
+                  {c}
+                </li>
+              ))}
+            </ul>
+          )}
+          <div className="mt-8 grid grid-cols-1 sm:grid-cols-3 gap-3 max-w-3xl mx-auto">
+            <div className="glass px-4 py-3 flex items-start gap-3 border border-white/10">
+              <MapPin className="w-4 h-4 text-[var(--brand)] mt-0.5 shrink-0" aria-hidden />
+              <div>
+                <div className="text-[10px] uppercase tracking-[0.25em] text-white/45">Local</div>
+                <div className="text-sm text-white/85 mt-0.5">{settings.address_label || COURT_LOCATION}</div>
+              </div>
+            </div>
+            <div className="glass px-4 py-3 flex items-start gap-3 border border-white/10">
+              <Clock className="w-4 h-4 text-[var(--brand)] mt-0.5 shrink-0" aria-hidden />
+              <div>
+                <div className="text-[10px] uppercase tracking-[0.25em] text-white/45">Duração</div>
+                <div className="text-sm text-white/85 mt-0.5">{durationLabel}</div>
+              </div>
+            </div>
+            <div className="glass px-4 py-3 flex items-start gap-3 border border-white/10">
+              {settings.has_parking !== false ? (
+                <Car className="w-4 h-4 text-[var(--brand)] mt-0.5 shrink-0" aria-hidden />
+              ) : (
+                <Banknote className="w-4 h-4 text-[var(--brand)] mt-0.5 shrink-0" aria-hidden />
+              )}
+              <div>
+                <div className="text-[10px] uppercase tracking-[0.25em] text-white/45">
+                  {settings.has_parking !== false ? "Estacionamento" : "Pagamento"}
+                </div>
+                <div className="text-sm text-white/85 mt-0.5 line-clamp-2">
+                  {settings.has_parking !== false
+                    ? (settings.parking_note || "No entorno da quadra")
+                    : (settings.accepts_pix !== false && pixReady ? "Aceita PIX" : settings.accepts_pix !== false ? "Aceita PIX" : "Consulte no WhatsApp")}
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </section>
 

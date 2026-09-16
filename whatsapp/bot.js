@@ -27,6 +27,12 @@ const FALLBACK_SETTINGS = {
   pix_key: process.env.PIX_KEY || "contato@pedraazulfs.com.br",
   pix_copy_text: process.env.PIX_COPY_TEXT || "",
   parking_note: "Estacionamento no entorno da quadra — chegue ~10 min antes.",
+  has_parking: true,
+  game_duration_note: "1 hora (60 min)",
+  accepts_pix: true,
+  structure_blurb:
+    "Quadra oficial no Alto Tietê — iluminação noturna, espaço para peladas e treinos. Chegue ~10 min antes.",
+  amenities: ["Iluminação noturna", "Pelada & treino", "Copa Alto Tietê"],
   open_hour: 8,
   close_hour: 23,
 };
@@ -189,28 +195,44 @@ export function createBot(deps) {
 
         case "parking": {
           const s = await getSiteSettings();
-          await reply(
-            `🅿️ *Estacionamento:* ${s.parking_note || "há espaço para carros próximo à quadra."}\n` +
-              `Se estiver lotado no sábado à noite, oriente o time a combinar caronas.`
-          );
+          if (s.has_parking === false) {
+            await reply(
+              `🅿️ *Estacionamento:* não temos vaga própria no local.\n` +
+                `${s.parking_note ? s.parking_note + "\n" : ""}` +
+                `Se vier de carro, combine carona com o time.`
+            );
+          } else {
+            await reply(
+              `🅿️ *Estacionamento:* ${s.parking_note || "há espaço para carros no entorno da quadra."}\n` +
+                `Chegue uns 10 min antes — sábado à noite costuma lotar; carona ajuda.`
+            );
+          }
           return;
         }
 
         case "duration": {
           const s = await getSiteSettings();
           const mins = s.slot_duration_minutes || 60;
+          const note = (s.game_duration_note || "").trim() || `${mins} minutos`;
           await reply(
-            `⏱️ Cada reserva é de *${mins} minutos* na *${s.court_name}*.\n` +
-              `Valor: *R$ ${s.price_per_hour}/hora*. Horário: ${String(s.open_hour).padStart(2,"0")}h–${String(s.close_hour).padStart(2,"0")}h. Quer ver vagas? Ex.: "sábado à noite".`
+            `⏱️ Cada jogo/reserva dura *${note}* na *${s.court_name}*.\n` +
+              `Valor: *R$ ${s.price_per_hour}/hora*. Horário: ${String(s.open_hour).padStart(2, "0")}h–${String(s.close_hour).padStart(2, "0")}h. Quer ver vagas? Ex.: "sábado à noite".`
           );
           return;
         }
 
         case "pix_howto": {
           const s = await getSiteSettings();
+          if (s.accepts_pix === false) {
+            await reply(
+              `💳 No momento *não estamos aceitando PIX* pela configuração da quadra.\n` +
+                `Fale com a gente para combinar outra forma de pagamento ou aguarde atualização.`
+            );
+            return;
+          }
           const keyLine = s.pix_key ? `Chave PIX: *${s.pix_key}*\n` : "";
           await reply(
-            `💳 *Como pagar (PIX)*\n` +
+            `💳 *Sim, aceitamos PIX.*\n` +
               keyLine +
               `1) Reserve no *site* (fluxo com CPF) → gera PIX do *calção (30%)*.\n` +
               `2) Pague e *envie a foto do comprovante* no site *ou aqui no WhatsApp*.\n` +
@@ -223,19 +245,25 @@ export function createBot(deps) {
 
         case "price": {
           const s = await getSiteSettings();
+          const note = (s.game_duration_note || "").trim() || `${s.slot_duration_minutes || 60} min`;
+          const pixBit =
+            s.accepts_pix === false
+              ? "PIX desativado nas configurações — combine o pagamento no WhatsApp."
+              : "No site: calção PIX 30% + comprovante. Pelo WhatsApp combinamos o pagamento na confirmação.";
           await reply(
-            `A *${s.court_name}* custa *R$ ${s.price_per_hour}/hora* (${s.slot_duration_minutes || 60} min).\n` +
-              `No site: calção PIX 30% + comprovante. Pelo WhatsApp combinamos o pagamento na confirmação.`
+            `A *${s.court_name}* custa *R$ ${s.price_per_hour}/hora* (${note}).\n` + pixBit
           );
           return;
         }
 
         case "address": {
           const s = await getSiteSettings();
+          const blurb = (s.structure_blurb || "").trim();
           await reply(
             `📍 *Local:* ${s.address_label}\n` +
               `🗺️ Maps (busca): ${s.maps_url}\n` +
-              `(Não inventamos rua completa no cadastro — se precisar do ponto exato, peça aqui.)`
+              (blurb ? `${blurb}\n` : "") +
+              `(Sem número de rua inventado no cadastro — se precisar do ponto exato, peça aqui.)`
           );
           return;
         }

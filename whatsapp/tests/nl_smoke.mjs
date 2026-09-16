@@ -36,6 +36,12 @@ check("duration", dur.intent === "duration");
 const pix = detectIntent("como pagar no pix?", { state: "idle" });
 check("pix", pix.intent === "pix_howto");
 
+const aceita = detectIntent("aceita pix?", { state: "idle" });
+check("aceita pix", aceita.intent === "pix_howto");
+
+const end = detectIntent("qual o endereço?", { state: "idle" });
+check("endereco", end.intent === "address");
+
 const maps = detectIntent("manda o maps", { state: "idle" });
 check("address/maps", maps.intent === "address");
 
