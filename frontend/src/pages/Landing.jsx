@@ -151,6 +151,8 @@ export default function Landing() {
             loop
             playsInline
             preload="metadata"
+            disablePictureInPicture
+            disableRemotePlayback
             aria-hidden="true"
           />
         )}
@@ -228,14 +230,20 @@ export default function Landing() {
           <motion.div {...m.fadeUp(0.58)} className="mt-10 flex flex-wrap items-center gap-3 sm:gap-4 max-w-full">
             <MagneticCTA>
               <Link to="/booking" data-testid={HOME.heroCta} className="btn-neon cta-select">
-                Reservar Quadra <ChevronRight className="w-5 h-5" />
+                RESERVAR HORÁRIO <ChevronRight className="w-5 h-5" />
               </Link>
             </MagneticCTA>
+            <a
+              href={waHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              data-testid="hero-whatsapp-cta"
+              className="btn-ghost !border-[#25D366]/40 hover:!border-[#25D366] hover:!text-[#25D366]"
+            >
+              <MessageCircle className="w-4 h-4 text-[#25D366]" /> FALAR NO WHATSAPP
+            </a>
             <Link to="/tournaments" data-testid={HOME.heroSecondary} className="btn-ghost">
               <Trophy className="w-4 h-4" /> Ver Campeonatos
-            </Link>
-            <Link to="/apresentacao" data-testid="hero-presentation-cta" className="btn-ghost group">
-              <Play className="w-4 h-4 group-hover:translate-x-0.5 transition" /> Rever Apresentação
             </Link>
           </motion.div>
 
@@ -412,11 +420,11 @@ export default function Landing() {
                   className="btn-neon !bg-gradient-to-r from-[#25D366] to-[#128C7E] !shadow-[0_0_28px_rgba(37,211,102,0.45)]"
                   aria-label={`Abrir WhatsApp ${WHATSAPP_DISPLAY}`}
                 >
-                  <MessageCircle className="w-5 h-5" /> Chamar no WhatsApp
+                  <MessageCircle className="w-5 h-5" /> FALAR NO WHATSAPP
                 </a>
               </MagneticCTA>
               <Link to="/booking" className="btn-ghost">
-                Ou reservar online <ChevronRight className="w-4 h-4" />
+                RESERVAR HORÁRIO <ChevronRight className="w-4 h-4" />
               </Link>
             </div>
           </motion.div>

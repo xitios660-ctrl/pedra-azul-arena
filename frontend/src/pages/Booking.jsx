@@ -30,19 +30,36 @@ function fmtBRL(n) { return n.toLocaleString("pt-BR", { style: "currency", curre
 const EMOJI_CRESTS = ["⚽","🔥","⚡","🐯","🐺","🦁","🦅","🐲","🦊","🐂","🐍","🦈"];
 
 const FLOW_STEPS = [
-  { id: "court", label: "Quadra" },
   { id: "date", label: "Data" },
   { id: "slot", label: "Horário" },
   { id: "dados", label: "Dados" },
-  { id: "comprovante", label: "Comprovante" },
+  { id: "review", label: "Revisão" },
+  { id: "confirm", label: "Confirmar" },
 ];
 
+function isSlotAvailable(slot) {
+  if (!slot) return false;
+  return slot.status === "available" || slot.status === "free";
+}
+function isSlotReserved(slot) {
+  return slot?.status === "reserved" || slot?.status === "occupied";
+}
+function isSlotUnavailable(slot) {
+  return slot?.status === "unavailable";
+}
+function slotLabel(slot, isPicked) {
+  if (isPicked) return "Selecionado";
+  if (isSlotAvailable(slot)) return "Disponível";
+  if (isSlotReserved(slot)) return "Reservado";
+  return "Indisponível";
+}
+
 function flowIndex(step, hasCourt, hasDate, hasSlot) {
-  if (step === "identify" || step === "matchmaking") return 3;
   if (step === "pix" || step === "awaiting" || step === "done") return 4;
-  if (hasSlot) return 2;
-  if (hasDate && hasCourt) return 2;
-  if (hasCourt) return 1;
+  if (step === "review" || step === "matchmaking") return 3;
+  if (step === "identify") return 2;
+  if (hasSlot) return 1;
+  if (hasDate) return 0;
   return 0;
 }
 
@@ -100,7 +117,7 @@ export default function Booking() {
   }, [selectedCourt, date]);
 
   const pickSlot = (slot) => {
-    if (slot.status !== "free") return;
+    if (!isSlotAvailable(slot)) return;
     setPickedSlot(slot);
     setStep("identify");
     setErr("");
@@ -112,7 +129,7 @@ export default function Booking() {
     if (!validateCPF(cpf)) { setErr("CPF inválido."); return; }
     if (name.trim().length < 2) { setErr("Informe seu nome completo."); return; }
     if (onlyDigits(whatsapp).length < 10) { setErr("Informe um WhatsApp válido (com DDD)."); return; }
-    setStep("matchmaking");
+    setStep("review");
   };
 
   const handleCrestUpload = async (side, file) => {
@@ -154,7 +171,18 @@ export default function Booking() {
       const { data: av } = await api.get("/courts/availability", { params: { court_id: selectedCourt.id, date } });
       setAvailability(av);
     } catch (e) {
-      setErr(formatApiErrorDetail(e.response?.data?.detail) || e.message);
+      const detail = formatApiErrorDetail(e.response?.data?.detail) || e.message;
+      if (e.response?.status === 409) {
+        setErr("Este horário acabou de ser reservado. Escolha outro.");
+        setStep("idle");
+        setPickedSlot(null);
+        try {
+          const { data: av } = await api.get("/courts/availability", { params: { court_id: selectedCourt.id, date } });
+          setAvailability(av);
+        } catch (_) {}
+      } else {
+        setErr(detail);
+      }
     } finally {
       setConfirming(false);
     }
@@ -181,7 +209,7 @@ export default function Booking() {
   };
 
   const activeFlow = flowIndex(step, !!selectedCourt, !!date, !!pickedSlot);
-  const freeSlots = availability?.slots?.filter((s) => s.status === "free")?.length ?? null;
+  const freeSlots = availability?.slots?.filter((s) => isSlotAvailable(s))?.length ?? null;
   const waHref = whatsappUrl(defaultWhatsAppPrefill());
   const m = useMotionSystem();
 
@@ -199,7 +227,7 @@ export default function Booking() {
             Reservar <span className="text-[var(--brand)]">Quadra</span>
           </motion.h1>
           <motion.p {...m.fadeUp(0.1)} className="text-white/60 mt-2 max-w-2xl">
-            Fluxo guiado: quadra → data → horário → dados → comprovante. Sem cadastro — só CPF, nome e WhatsApp.
+            Fluxo mobile-first: data → horário → dados → revisão → confirmar. Uma quadra · sem cadastro (CPF + WhatsApp).
           </motion.p>
         </div>
 
@@ -247,13 +275,23 @@ export default function Booking() {
           <span className="trust-pill"><MapPin className="w-3.5 h-3.5 text-[var(--brand)]" /> {COURT_LOCATION}</span>
           <span className="trust-pill"><ShieldCheck className="w-3.5 h-3.5 text-[var(--success)]" /> Confirmação via WhatsApp</span>
           <a href={waHref} target="_blank" rel="noopener noreferrer" className="trust-pill hover:border-[#25D366]/50 hover:text-[#25D366] transition-colors">
-            <MessageCircle className="w-3.5 h-3.5 text-[#25D366]" /> Fale no WhatsApp
+            <MessageCircle className="w-3.5 h-3.5 text-[#25D366]" /> FALAR NO WHATSAPP
           </a>
         </div>
 
-        {/* Court selector */}
+        {/* Primary CTAs */}
+        <div className="flex flex-wrap gap-3 mb-6">
+          <a href="#booking-slots" className="btn-neon" data-testid="booking-cta-reservar">
+            RESERVAR HORÁRIO <ChevronRight className="w-5 h-5" />
+          </a>
+          <a href={waHref} target="_blank" rel="noopener noreferrer" className="btn-ghost !border-[#25D366]/40 hover:!border-[#25D366] hover:!text-[#25D366]" data-testid="booking-cta-whatsapp">
+            <MessageCircle className="w-4 h-4 text-[#25D366]" /> FALAR NO WHATSAPP
+          </a>
+        </div>
+
+        {/* Single court banner */}
         <div className="mb-3 flex items-center justify-between gap-3">
-          <div className="text-[11px] tracking-[0.3em] uppercase text-[var(--brand)]">1 · Escolha a quadra</div>
+          <div className="text-[11px] tracking-[0.3em] uppercase text-[var(--brand)]">Quadra oficial</div>
         </div>
         {courtsError && (
           <div className="mb-4 px-4 py-3 text-sm border-l-2 border-[var(--danger)] bg-[var(--danger)]/10">{courtsError}</div>
@@ -313,15 +351,16 @@ export default function Booking() {
               className="w-full bg-black/40 border border-white/15 px-3 py-3 text-white focus:border-[var(--brand)] focus:outline-none font-display text-base"
             />
             <div className="mt-6 text-xs text-white/50 leading-relaxed space-y-1.5">
-              <div className="flex items-center gap-2"><span className="w-3 h-3 inline-block border-l-4 border-[var(--success)]" /> Livre</div>
-              <div className="flex items-center gap-2"><span className="w-3 h-3 inline-block border-l-4 border-[var(--danger)]" /> Ocupado</div>
+              <div className="flex items-center gap-2"><span className="w-3 h-3 inline-block border-l-4 border-[var(--success)]" /> Disponível</div>
+              <div className="flex items-center gap-2"><span className="w-3 h-3 inline-block border-l-4 border-[var(--warning)]" /> Reservado</div>
+              <div className="flex items-center gap-2"><span className="w-3 h-3 inline-block border-l-4 border-white/30" /> Indisponível</div>
               <div className="mt-4 pt-3 border-t border-white/10">
                 Calção PIX = 30% do valor. Confirmação pelo WhatsApp.
               </div>
             </div>
           </div>
 
-          <div className="glass p-4 sm:p-5 order-2">
+          <div id="booking-slots" className="glass p-4 sm:p-5 order-2 scroll-mt-24">
             <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
               <div className="text-[10px] tracking-[0.3em] uppercase text-[var(--brand)] flex items-center gap-2">
                 <Clock className="w-3 h-3" /> 3 · Horários ·{" "}
@@ -367,7 +406,9 @@ export default function Booking() {
             <div className="grid grid-cols-1 xs:grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 sm:gap-3">
               <AnimatePresence mode="popLayout">
                 {availability?.slots?.map((s, idx) => {
-                  const isFree = s.status === "free";
+                  const isFree = isSlotAvailable(s);
+                  const isReserved = isSlotReserved(s);
+                  const isUnavail = isSlotUnavailable(s);
                   const isPicked = pickedSlot?.time === s.time;
                   return (
                   <motion.button
@@ -375,6 +416,8 @@ export default function Booking() {
                     type="button"
                     layout
                     data-testid={BOOKING.slot(s.time)}
+                    disabled={!isFree}
+                    aria-disabled={!isFree}
                     initial={m.reduce ? { opacity: 0 } : { opacity: 0, scale: 0.96, y: 8 }}
                     animate={{ opacity: 1, scale: 1, y: 0 }}
                     exit={{ opacity: 0, scale: 0.96 }}
@@ -383,7 +426,7 @@ export default function Booking() {
                     whileTap={isFree && !m.reduce ? { scale: 0.98 } : {}}
                     onClick={() => pickSlot(s)}
                     className={`slot-match relative flex items-center justify-between px-4 py-3.5 bg-white/[0.03] hover:bg-white/[0.06] transition-colors text-left min-h-[72px] ${
-                      isFree ? "slot-free" : "slot-occ slot-locked"
+                      isFree ? "slot-free" : isReserved ? "slot-reserved slot-locked" : "slot-unavailable slot-locked"
                     } ${isPicked ? "slot-selected" : ""}`}
                   >
                     {isPicked && !m.reduce && (
@@ -397,9 +440,9 @@ export default function Booking() {
                     <div className="relative z-[1]">
                       <div className="font-heading text-2xl uppercase leading-none">{s.time}</div>
                       <div className={`text-[10px] uppercase tracking-[0.3em] mt-1 ${
-                        isPicked ? "text-[var(--brand)]" : "text-white/40"
+                        isPicked ? "text-[var(--brand)]" : isReserved ? "text-[var(--warning)]" : isUnavail ? "text-white/35" : "text-white/40"
                       }`}>
-                        {isPicked ? "Selecionado" : isFree ? "Disponível · Kickoff" : "Bloqueado"}
+                        {slotLabel(s, isPicked)}
                       </div>
                     </div>
                     <div className="text-right relative z-[1]">
@@ -476,7 +519,7 @@ export default function Booking() {
           </Overlay>
         )}
 
-        {step === "matchmaking" && (
+        {(step === "review" || step === "matchmaking") && (
           <Overlay onClose={closeAll}>
             <motion.div
               data-testid={BOOKING.matchmakingModal}
@@ -485,10 +528,14 @@ export default function Booking() {
             >
               <CloseBtn onClick={closeAll} />
               <StepBar current={2} />
-              <div className="text-[11px] tracking-[0.35em] uppercase text-[var(--brand)] mt-2">// Matchmaking</div>
+              <div className="text-[11px] tracking-[0.35em] uppercase text-[var(--brand)] mt-2">// 4 · Revisão</div>
               <h2 className="font-heading text-3xl sm:text-4xl md:text-5xl uppercase italic">
-                Monte sua <span className="text-[var(--brand)]">partida</span>
+                Revise e <span className="text-[var(--brand)]">confirme</span>
               </h2>
+              <div className="mt-3 glass px-4 py-3 text-sm text-white/70">
+                <strong className="text-white">{name}</strong> · CPF {cpf} · WhatsApp {whatsapp}<br />
+                {selectedCourt?.name} · {new Date(date+"T00:00:00").toLocaleDateString("pt-BR")} · {pickedSlot?.time}
+              </div>
               <p className="text-white/60 mt-1 text-sm">
                 {selectedCourt?.name} · {new Date(date+"T00:00:00").toLocaleDateString("pt-BR")} · {pickedSlot?.time}
               </p>
@@ -516,7 +563,7 @@ export default function Booking() {
                   disabled={confirming}
                   className="btn-neon justify-center"
                 >
-                  {confirming ? <Loader2 className="w-5 h-5 animate-spin" /> : <>Confirmar Reserva <ChevronRight className="w-5 h-5" /></>}
+                  {confirming ? <Loader2 className="w-5 h-5 animate-spin" /> : <>RESERVAR HORÁRIO <ChevronRight className="w-5 h-5" /></>}
                 </button>
               </div>
             </motion.div>

@@ -1,11 +1,11 @@
 import React, { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import PageShell from "@/components/PageShell";
-import api from "@/lib/api";
+import api, { API_BASE } from "@/lib/api";
 import { ADMIN } from "@/constants/testIds";
 import {
   TrendingUp, CheckCircle2, Hourglass, Activity, DollarSign, BarChart3, Save,
-  Eye, MessageCircle, FileCheck
+  Eye, MessageCircle, FileCheck, Wifi, WifiOff, QrCode, RefreshCw, LogOut, Loader2
 } from "lucide-react";
 
 function fmtBRL(n) { return (n || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }); }
@@ -74,6 +74,7 @@ export default function AdminDashboard() {
           {[
             { id: "dashboard", label: "Visão Geral" },
             { id: "bookings", label: "Reservas" },
+            { id: "whatsapp", label: "WhatsApp" },
             { id: "tournaments", label: "Campeonatos" },
           ].map(t => (
             <button key={t.id} onClick={() => setActiveTab(t.id)}
@@ -89,6 +90,7 @@ export default function AdminDashboard() {
             onConfirm={confirmAndPrepareWhatsapp}
             onCancel={cancelBooking} />
         )}
+        {activeTab === "whatsapp" && <WhatsAppAdmin />}
         {activeTab === "tournaments" && (
           <TournamentsAdmin tournaments={tournaments} selected={selectedTour} setSelected={setSelectedTour} onUpdated={refresh} />
         )}
@@ -101,22 +103,32 @@ export default function AdminDashboard() {
             <div className="text-[11px] tracking-[0.35em] uppercase text-[var(--brand)] flex items-center gap-2">
               <MessageCircle className="w-3 h-3" /> Enviar Confirmação WhatsApp
             </div>
-            <h2 className="font-heading text-3xl uppercase italic mt-1">Quase pronto — clique para enviar</h2>
+            <h2 className="font-heading text-3xl uppercase italic mt-1">
+              {waModal.whatsapp_auto ? "Confirmação enviada via Baileys" : "Quase pronto — clique para enviar"}
+            </h2>
             <p className="text-white/60 text-sm mt-2">
               Para <span className="text-white">{waModal.customer_name}</span> · WhatsApp <span className="font-mono">+{waModal.whatsapp}</span>
+              {waModal.whatsapp_auto && <span className="ml-2 text-[var(--success)]">· Auto-enviado</span>}
             </p>
             <pre className="mt-4 p-4 bg-black/50 border border-white/10 text-xs text-white/80 whitespace-pre-wrap font-mono leading-relaxed">{waModal.whatsapp_message}</pre>
             <div className="mt-6 flex items-center gap-3">
-              <a
-                data-testid={ADMIN.sendWhatsapp(waModal.id)}
-                href={waModal.whatsapp_link}
-                target="_blank" rel="noopener noreferrer"
-                onClick={() => markWhatsappSent(waModal.id)}
-                className="btn-neon flex-1 justify-center"
-              >
-                <MessageCircle className="w-4 h-4" /> Abrir WhatsApp e enviar
-              </a>
-              <button onClick={() => setWaModal(null)} className="btn-ghost">Depois</button>
+              {!waModal.whatsapp_auto && (
+                <a
+                  data-testid={ADMIN.sendWhatsapp(waModal.id)}
+                  href={waModal.whatsapp_link}
+                  target="_blank" rel="noopener noreferrer"
+                  onClick={() => markWhatsappSent(waModal.id)}
+                  className="btn-neon flex-1 justify-center"
+                >
+                  <MessageCircle className="w-4 h-4" /> Abrir WhatsApp e enviar
+                </a>
+              )}
+              {waModal.whatsapp_auto && (
+                <button onClick={() => { markWhatsappSent(waModal.id); }} className="btn-neon flex-1 justify-center">
+                  <CheckCircle2 className="w-4 h-4" /> OK
+                </button>
+              )}
+              <button onClick={() => setWaModal(null)} className="btn-ghost">Fechar</button>
             </div>
             <div className="mt-3 text-[10px] uppercase tracking-[0.3em] text-white/40">
               Ao clicar, abrimos o WhatsApp com a mensagem pronta. A reserva já está confirmada.
@@ -127,6 +139,174 @@ export default function AdminDashboard() {
     </PageShell>
   );
 }
+
+
+const WA_STATUS_STYLE = {
+  DESCONECTADO: { color: "var(--danger)", label: "DESCONECTADO" },
+  CONECTANDO: { color: "var(--warning)", label: "CONECTANDO" },
+  AGUARDANDO_QR: { color: "var(--brand)", label: "AGUARDANDO_QR" },
+  CONECTADO: { color: "var(--success)", label: "CONECTADO" },
+  ERRO: { color: "var(--danger)", label: "ERRO" },
+};
+
+function WhatsAppAdmin() {
+  const [state, setState] = useState({ status: "DESCONECTADO", qr: null, number: null });
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    let es;
+    let cancelled = false;
+    const connect = async () => {
+      try {
+        const { data } = await api.get("/admin/whatsapp/status");
+        if (!cancelled) setState(data);
+      } catch (e) {
+        if (!cancelled) setErr("Não foi possível ler status do WhatsApp.");
+      }
+      // Prefer cookie-auth SSE via fetch stream is complex; use EventSource with credentials
+      try {
+        es = new EventSource(`${API_BASE}/admin/whatsapp/events`, { withCredentials: true });
+        es.onmessage = (ev) => {
+          try {
+            const data = JSON.parse(ev.data);
+            if (data.type === "state" || data.status) {
+              setState((prev) => ({ ...prev, ...data }));
+              setErr("");
+            }
+          } catch (_) {}
+        };
+        es.onerror = () => {
+          // EventSource may fail if auth via cookie works but some proxies buffer —
+          // fall back to polling
+          es?.close();
+          es = null;
+        };
+      } catch (_) {}
+    };
+    connect();
+    const poll = setInterval(async () => {
+      try {
+        const { data } = await api.get("/admin/whatsapp/status");
+        if (!cancelled) setState(data);
+      } catch (_) {}
+    }, 4000);
+    return () => {
+      cancelled = true;
+      clearInterval(poll);
+      es?.close();
+    };
+  }, []);
+
+  const start = async () => {
+    setBusy(true); setErr("");
+    try {
+      const { data } = await api.post("/admin/whatsapp/start");
+      setState(data);
+    } catch (e) {
+      setErr(e.response?.data?.detail || e.message);
+    } finally { setBusy(false); }
+  };
+  const logout = async () => {
+    if (!window.confirm("Desconectar WhatsApp e limpar sessão?")) return;
+    setBusy(true); setErr("");
+    try {
+      const { data } = await api.post("/admin/whatsapp/logout");
+      setState(data);
+    } catch (e) {
+      setErr(e.response?.data?.detail || e.message);
+    } finally { setBusy(false); }
+  };
+
+  const st = WA_STATUS_STYLE[state.status] || WA_STATUS_STYLE.DESCONECTADO;
+
+  return (
+    <div data-testid="admin-whatsapp-panel" className="grid lg:grid-cols-[1.1fr_0.9fr] gap-6">
+      <div className="glass p-6">
+        <div className="text-[11px] uppercase tracking-[0.35em] text-[var(--brand)] mb-2 flex items-center gap-2">
+          <MessageCircle className="w-4 h-4" /> Baileys · Sessão WhatsApp
+        </div>
+        <h2 className="font-heading text-4xl uppercase italic">Conexão</h2>
+        <div className="mt-6 flex items-center gap-3">
+          {state.status === "CONECTADO" ? (
+            <Wifi className="w-6 h-6" style={{ color: st.color }} />
+          ) : (
+            <WifiOff className="w-6 h-6" style={{ color: st.color }} />
+          )}
+          <span
+            data-testid="admin-whatsapp-status"
+            className="text-sm uppercase tracking-[0.25em] px-3 py-1.5 border font-heading"
+            style={{ color: st.color, borderColor: st.color }}
+          >
+            {st.label}
+          </span>
+        </div>
+        {state.number && (
+          <div className="mt-4 text-white/70">
+            Número conectado: <span className="font-mono text-white">+{state.number}</span>
+          </div>
+        )}
+        {state.last_error && (
+          <div className="mt-3 text-sm text-[var(--danger)] border-l-2 border-[var(--danger)] pl-3">{state.last_error}</div>
+        )}
+        {state.last_disconnect_reason && state.status !== "CONECTADO" && (
+          <div className="mt-2 text-xs text-white/40 uppercase tracking-[0.2em]">
+            Último disconnect: {state.last_disconnect_reason}
+          </div>
+        )}
+        {err && <div className="mt-3 text-sm text-[var(--danger)]">{err}</div>}
+        <div className="mt-8 flex flex-wrap gap-3">
+          <button type="button" data-testid="admin-whatsapp-start" onClick={start} disabled={busy}
+            className="btn-neon !py-2 !px-4 !text-sm">
+            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+            Conectar / Gerar QR
+          </button>
+          <button type="button" data-testid="admin-whatsapp-logout" onClick={logout} disabled={busy}
+            className="btn-ghost !py-2 !px-4 !text-sm">
+            <LogOut className="w-4 h-4" /> Desconectar
+          </button>
+        </div>
+        <p className="mt-6 text-xs text-white/45 leading-relaxed max-w-lg">
+          Escaneie o QR com o WhatsApp do celular (Aparelhos conectados). A sessão é salva no MongoDB
+          e sobrevive a reinícios no Render. Credenciais nunca vão para o frontend.
+        </p>
+      </div>
+
+      <div className="glass p-6 flex flex-col items-center justify-center min-h-[360px]">
+        {state.status === "AGUARDANDO_QR" && state.qr ? (
+          <>
+            <div className="text-[11px] uppercase tracking-[0.35em] text-[var(--brand)] mb-4 flex items-center gap-2">
+              <QrCode className="w-4 h-4" /> Escaneie o QR
+            </div>
+            <img
+              data-testid="admin-whatsapp-qr"
+              src={state.qr}
+              alt="QR Code WhatsApp"
+              className="w-[280px] h-[280px] sm:w-[320px] sm:h-[320px] bg-white p-3 border border-[var(--brand)]/40"
+            />
+          </>
+        ) : state.status === "CONECTADO" ? (
+          <div className="text-center">
+            <CheckCircle2 className="w-16 h-16 text-[var(--success)] mx-auto mb-4" />
+            <div className="font-heading text-3xl uppercase text-[var(--success)]">Conectado</div>
+            <p className="text-white/50 text-sm mt-2">Confirmações de reserva serão enviadas automaticamente.</p>
+          </div>
+        ) : state.status === "CONECTANDO" ? (
+          <div className="text-center text-white/60">
+            <Loader2 className="w-10 h-10 animate-spin text-[var(--brand)] mx-auto mb-3" />
+            Conectando…
+          </div>
+        ) : (
+          <div className="text-center text-white/50 max-w-xs">
+            <QrCode className="w-12 h-12 mx-auto mb-3 opacity-40" />
+            Clique em <strong className="text-white">Conectar / Gerar QR</strong> para parear o WhatsApp da arena.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 
 function KPI({ icon, label, value, accent = "var(--brand)", testId }) {
   return (

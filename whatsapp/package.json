@@ -1,0 +1,22 @@
+{
+  "name": "pedra-azul-whatsapp",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Baileys WhatsApp sidecar for Pedra Azul arena booking",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "6.7.24",
+    "express": "4.21.2",
+    "mongodb": "6.12.0",
+    "pino": "9.6.0",
+    "qrcode": "1.5.4"
+  }
+}

@@ -169,6 +169,8 @@ h1, h2, h3, h4 { font-family: 'Teko', 'Rajdhani', sans-serif; letter-spacing: -0
 /* ----- Slot states ----- */
 .slot-free   { border-left: 4px solid var(--success); }
 .slot-occ    { border-left: 4px solid var(--danger); opacity: 0.55; cursor: not-allowed; }
+.slot-reserved { border-left: 4px solid var(--warning); opacity: 0.7; cursor: not-allowed; }
+.slot-unavailable { border-left: 4px solid rgba(255,255,255,0.25); opacity: 0.4; cursor: not-allowed; }
 
 /* ----- Selection ----- */
 ::selection { background: rgba(0,229,255,0.45); color: white; }
@@ -448,6 +450,11 @@ h1, h2, h3, h4 { font-family: 'Teko', 'Rajdhani', sans-serif; letter-spacing: -0
 
 /* ----- Baleys arena video / HUD ticker ----- */
 .hero-baleys-video {
+  /* Mobile-safe cinematic hero: GPU layer, no interaction, contain paint */
+  pointer-events: none;
+  transform: translateZ(0);
+  will-change: opacity;
+
   transform: scale(1.02);
 }
 .hud-ticker {
@@ -488,6 +495,11 @@ h1, h2, h3, h4 { font-family: 'Teko', 'Rajdhani', sans-serif; letter-spacing: -0
     animation: none !important;
   }
   .hero-baleys-video {
+  /* Mobile-safe cinematic hero: GPU layer, no interaction, contain paint */
+  pointer-events: none;
+  transform: translateZ(0);
+  will-change: opacity;
+
     display: none !important;
   }
   .scanlines {

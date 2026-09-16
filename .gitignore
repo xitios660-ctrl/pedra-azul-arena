@@ -91,3 +91,8 @@ credentials.json
 backend/uploads/**/*
 !backend/uploads/**/
 !backend/uploads/**/.gitkeep
+
+# WhatsApp sidecar
+whatsapp/node_modules/
+whatsapp/auth_info*/
+whatsapp/*.session

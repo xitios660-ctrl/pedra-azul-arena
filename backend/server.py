@@ -13,12 +13,18 @@ from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Literal
 from urllib.parse import quote
 
-from fastapi import FastAPI, APIRouter, Depends, HTTPException, Response, UploadFile, File, Form
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, APIRouter, Depends, HTTPException, Response, UploadFile, File, Form, Request
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
+from pymongo.errors import DuplicateKeyError
 from pydantic import BaseModel, EmailStr, Field
+import asyncio
+import httpx
+from zoneinfo import ZoneInfo
+
+import whatsapp_bridge
 
 from auth_utils import (
     hash_password,
@@ -53,7 +59,16 @@ api = APIRouter(prefix="/api")
 
 @api.get("/health")
 async def health():
-    return {"ok": True, "service": "arena-futsal"}
+    """Public health — no secrets. Used by Render healthCheckPath."""
+    db_ok = False
+    try:
+        await db.command("ping")
+        db_ok = True
+    except Exception:
+        db_ok = False
+    wa = await whatsapp_bridge.health_label()
+    ok = db_ok
+    return {"ok": ok, "db": "ok" if db_ok else "error", "whatsapp": wa}
 
 
 
@@ -162,11 +177,33 @@ async def court_availability(court_id: str, date: str):
     taken = {b["start_time"]: b for b in bookings}
     slots = []
     court = COURT_BY_ID[court_id]
+    tz = ZoneInfo("America/Sao_Paulo")
+    now_local = datetime.now(tz)
+    today_local = now_local.strftime("%Y-%m-%d")
     for t in TIME_SLOTS:
         b = taken.get(t)
+        if b:
+            status = "reserved"
+        elif date < today_local:
+            status = "unavailable"
+        elif date == today_local:
+            try:
+                hour = int(t.split(":")[0])
+                # Slot starts at :00; mark past kickoffs unavailable
+                if hour < now_local.hour or (hour == now_local.hour and now_local.minute > 0):
+                    status = "unavailable"
+                else:
+                    status = "available"
+            except Exception:
+                status = "available"
+        else:
+            status = "available"
+        # Backward-compatible aliases for older FE builds
+        legacy = "occupied" if status == "reserved" else ("free" if status == "available" else "unavailable")
         slots.append({
             "time": t,
-            "status": "occupied" if b else "free",
+            "status": status,
+            "legacy_status": legacy,
             "booking_status": b["status"] if b else None,
             "price": court["price_per_hour"],
         })
@@ -214,15 +251,20 @@ async def create_booking(payload: BookingCreate):
     cpf_masked = mask_cpf(payload.cpf)
     whatsapp_digits = normalize_whatsapp(payload.whatsapp)
 
-    # Concurrency: deny if a non-cancelled booking exists for same slot
-    clash = await db.bookings.find_one({
-        "court_id": payload.court_id,
-        "date": payload.date,
-        "start_time": payload.start_time,
-        "status": {"$in": ["pending", "awaiting_admin", "confirmed"]},
-    })
-    if clash:
-        raise HTTPException(status_code=409, detail="Horário já reservado")
+    # Reject past dates / past slots (America/Sao_Paulo)
+    try:
+        datetime.strptime(payload.date, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Data inválida")
+    tz = ZoneInfo("America/Sao_Paulo")
+    now_local = datetime.now(tz)
+    today_local = now_local.strftime("%Y-%m-%d")
+    if payload.date < today_local:
+        raise HTTPException(status_code=400, detail="Data já passou")
+    if payload.date == today_local:
+        hour = int(payload.start_time.split(":")[0])
+        if hour < now_local.hour or (hour == now_local.hour and now_local.minute > 0):
+            raise HTTPException(status_code=400, detail="Horário indisponível")
 
     court = COURT_BY_ID[payload.court_id]
     total = court["price_per_hour"] * (payload.duration_minutes / 60)
@@ -260,8 +302,14 @@ async def create_booking(payload: BookingCreate):
         "whatsapp_sent": False,
         "whatsapp_sent_at": None,
         "created_at": _now_iso(),
+        # Compound uniqueness for active bookings (partial unique index)
+        "slot_key": f"{payload.court_id}|{payload.date}|{payload.start_time}",
     }
-    await db.bookings.insert_one(booking)
+    # Atomic double-booking prevention: unique partial index on slot_key for active statuses
+    try:
+        await db.bookings.insert_one(booking)
+    except DuplicateKeyError:
+        raise HTTPException(status_code=409, detail="Horário já reservado")
     booking.pop("_id", None)
     return booking
 
@@ -472,7 +520,7 @@ async def admin_list_bookings(admin: dict = Depends(require_admin), status: Opti
 @api.post("/admin/bookings/{booking_id}/confirm")
 async def admin_confirm_booking(booking_id: str, admin: dict = Depends(require_admin)):
     """Confirms the booking (after admin verified the comprovante).
-    Returns the WhatsApp Click-to-Send link the admin can use to notify the customer."""
+    Tries Baileys auto-send when connected; always returns wa.me fallback link."""
     b = await db.bookings.find_one({"id": booking_id})
     if not b:
         raise HTTPException(status_code=404, detail="Reserva não encontrada")
@@ -489,6 +537,17 @@ async def admin_confirm_booking(booking_id: str, admin: dict = Depends(require_a
     wa_link = f"https://wa.me/{updated['whatsapp']}?text={quote(msg)}"
     updated["whatsapp_link"] = wa_link
     updated["whatsapp_message"] = msg
+
+    sent = await whatsapp_bridge.send_text(updated["whatsapp"], msg)
+    if sent:
+        await db.bookings.update_one(
+            {"id": booking_id},
+            {"$set": {"whatsapp_sent": True, "whatsapp_sent_at": _now_iso(), "whatsapp_auto": True}},
+        )
+        updated["whatsapp_sent"] = True
+        updated["whatsapp_auto"] = True
+    else:
+        updated["whatsapp_auto"] = False
     return updated
 
 
@@ -508,6 +567,66 @@ async def admin_cancel_booking(booking_id: str, admin: dict = Depends(require_ad
         {"$set": {"status": "cancelled", "payment.status": "cancelled"}},
     )
     return {"ok": True}
+
+
+
+
+# =============================================================================
+# ADMIN — WhatsApp (Baileys sidecar proxy + SSE)
+# =============================================================================
+@api.get("/admin/whatsapp/status")
+async def admin_whatsapp_status(admin: dict = Depends(require_admin)):
+    return await whatsapp_bridge.get_status()
+
+
+@api.post("/admin/whatsapp/start")
+async def admin_whatsapp_start(admin: dict = Depends(require_admin)):
+    try:
+        return await whatsapp_bridge.start_session()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@api.post("/admin/whatsapp/logout")
+async def admin_whatsapp_logout(admin: dict = Depends(require_admin)):
+    try:
+        return await whatsapp_bridge.logout_session()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@api.get("/admin/whatsapp/events")
+async def admin_whatsapp_events(request: Request, admin: dict = Depends(require_admin)):
+    """SSE stream of WhatsApp connection state for Admin QR UI."""
+    url = f"{whatsapp_bridge.WHATSAPP_SERVICE_URL}/events"
+    headers = whatsapp_bridge._headers()
+
+    async def event_gen():
+        try:
+            async with httpx.AsyncClient(timeout=None) as client:
+                async with client.stream("GET", url, headers=headers) as resp:
+                    async for line in resp.aiter_lines():
+                        if await request.is_disconnected():
+                            break
+                        yield (line + "\n").encode("utf-8")
+        except Exception as e:
+            # Fallback: poll status every 2s if sidecar SSE unavailable
+            logger.warning("whatsapp SSE proxy failed, falling back to poll: %s", e)
+            while not await request.is_disconnected():
+                st = await whatsapp_bridge.get_status()
+                payload = {"type": "state", **st, "at": _now_iso()}
+                yield f"data: {__import__('json').dumps(payload)}\n\n".encode("utf-8")
+                await asyncio.sleep(2)
+
+    return StreamingResponse(
+        event_gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @api.post("/admin/tournaments/{tid}/matches/{mid}/score")
@@ -558,9 +677,32 @@ async def startup():
     await db.users.create_index("email", unique=True)
     await db.bookings.create_index([("court_id", 1), ("date", 1), ("start_time", 1)])
     await db.bookings.create_index("cpf")
+    # Atomic anti-double-booking: only one active booking per court+date+slot
+    try:
+        await db.bookings.create_index(
+            [("slot_key", 1)],
+            unique=True,
+            partialFilterExpression={
+                "status": {"$in": ["pending", "awaiting_admin", "confirmed"]},
+                "slot_key": {"$type": "string"},
+            },
+            name="uniq_active_slot_key",
+        )
+    except Exception as e:
+        logger.warning("uniq_active_slot_key index: %s", e)
+    # Backfill slot_key for legacy docs (best-effort, non-fatal)
+    try:
+        async for b in db.bookings.find(
+            {"slot_key": {"$exists": False}, "court_id": {"$exists": True}},
+            {"_id": 1, "court_id": 1, "date": 1, "start_time": 1},
+        ):
+            sk = f"{b['court_id']}|{b['date']}|{b['start_time']}"
+            await db.bookings.update_one({"_id": b["_id"]}, {"$set": {"slot_key": sk}})
+    except Exception as e:
+        logger.warning("slot_key backfill: %s", e)
     await db.tournaments.create_index("id", unique=True)
     await run_all_seeds(db)
-    logger.info("Arena Futsal Premium API initialized (CPF-mode)")
+    logger.info("Arena Futsal Premium API initialized (CPF-mode + WhatsApp bridge)")
 
 
 @app.on_event("shutdown")
