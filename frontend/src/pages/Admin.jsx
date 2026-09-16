@@ -1068,6 +1068,15 @@ function BookingRow({ b, onConfirm, onCancel, onCancelSeries, onReject, onNoShow
               <MessageCircle className="w-2 h-2" /> WA enviado
             </div>
           )}
+          {b.status === "cancelled" && (b.payment?.method === "credits" || b.paid_with_credits) && b.credits_refunded_at && (
+            <div
+              className="text-[9px] mt-1 uppercase tracking-[0.15em] text-[var(--brand)]"
+              data-testid={`admin-credits-refunded-${b.id}`}
+            >
+              Crédito estornado
+              {b.credits_refunded_hours != null ? ` (${b.credits_refunded_hours}h)` : ""}
+            </div>
+          )}
         </div>
         <div className="flex flex-wrap gap-1">
           {b.payment?.comprovante_url && (

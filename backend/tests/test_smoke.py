@@ -3364,3 +3364,147 @@ def test_hour_credits_add_book_insufficient(admin_session, s):
     finally:
         for bid in created_ids:
             _admin_cancel_quiet(admin_session, bid)
+
+
+def test_hour_credits_refund_on_cancel(admin_session, s):
+    """Cycle 33: book with credits → cancel restores balance; second cancel no double credit."""
+    import uuid as _uuid
+
+    phone = "1198" + f"{int(_uuid.uuid4().hex[:8], 16) % 10_000_000:07d}"
+    created_ids = []
+
+    st = admin_session.get(f"{API}/admin/site-settings", timeout=10)
+    assert st.status_code == 200, st.text
+    original = st.json()
+    if original.get("credits_enabled") is False:
+        payload = {**original, "credits_enabled": True}
+        for k in list(payload.keys()):
+            if k.endswith("_resolved") or k in (
+                "amenities_text", "use_weekend_hours", "updated_at", "created_at", "id"
+            ):
+                payload.pop(k, None)
+        ur = admin_session.put(f"{API}/admin/site-settings", json=payload, timeout=15)
+        assert ur.status_code == 200, ur.text
+
+    try:
+        r_add = admin_session.post(
+            f"{API}/admin/hour-credits",
+            json={"phone": phone, "delta_hours": 2, "name": "Cycle33 Refund", "notes": "refund test"},
+            timeout=10,
+        )
+        assert r_add.status_code == 200, r_add.text
+        assert float(r_add.json()["balance_hours"]) == 2
+
+        day, free, _price = _find_day_with_n_free(s, n=1, start_off=140, end_off=280)
+        assert day and free, "need free slot for credits refund test"
+
+        cr = s.post(
+            f"{API}/bookings",
+            json={
+                "court_id": "court-1",
+                "date": day,
+                "start_time": free[0],
+                "duration_hours": 1,
+                "cpf": SMOKE_CPF,
+                "customer_name": "Credits Refund Cycle33",
+                "whatsapp": phone,
+                "your_team_name": "A",
+                "opponent_team_name": "B",
+                "pay_with_credits": True,
+            },
+            headers=_xff(),
+            timeout=15,
+        )
+        assert cr.status_code in (200, 201), cr.text
+        b = cr.json()
+        bid = b.get("id")
+        created_ids.append(bid)
+        assert b.get("payment", {}).get("method") == "credits"
+        assert float(
+            s.get(f"{API}/credits/balance", params={"phone": phone}, headers=_xff(), timeout=10).json()[
+                "balance_hours"
+            ]
+        ) == 1
+
+        # Customer cancel restores 1h → balance 2
+        rc = s.post(f"{API}/bookings/{bid}/cancel", params={"cpf": SMOKE_CPF}, timeout=10)
+        assert rc.status_code == 200, rc.text
+        assert rc.json().get("credits_refunded") is True
+        assert float(rc.json().get("credits_refunded_hours") or 0) == 1
+        bal = float(
+            s.get(f"{API}/credits/balance", params={"phone": phone}, headers=_xff(), timeout=10).json()[
+                "balance_hours"
+            ]
+        )
+        assert bal == 2, bal
+
+        got = admin_session.get(f"{API}/admin/bookings", params={"limit": 50}, timeout=15)
+        assert got.status_code == 200
+        row = next((x for x in got.json() if x.get("id") == bid), None)
+        assert row is not None
+        assert row.get("status") == "cancelled"
+        assert row.get("credits_refunded_at")
+        assert float(row.get("credits_refunded_hours") or 0) == 1
+
+        # Second cancel (admin idempotent) must not double-credit
+        ra = admin_session.post(f"{API}/admin/bookings/{bid}/cancel", timeout=10)
+        assert ra.status_code == 200, ra.text
+        bal2 = float(
+            s.get(f"{API}/credits/balance", params={"phone": phone}, headers=_xff(), timeout=10).json()[
+                "balance_hours"
+            ]
+        )
+        assert bal2 == 2, f"double refund? bal={bal2}"
+
+        # Audit on first admin path may not fire for idempotent re-cancel;
+        # book+admin-cancel to assert audit note includes crédito estornado
+        day2, free2, _ = _find_day_with_n_free(s, n=1, start_off=200, end_off=320)
+        assert day2 and free2
+        cr2 = s.post(
+            f"{API}/bookings",
+            json={
+                "court_id": "court-1",
+                "date": day2,
+                "start_time": free2[0],
+                "duration_hours": 1,
+                "cpf": SMOKE_CPF,
+                "customer_name": "Credits Admin Refund",
+                "whatsapp": phone,
+                "your_team_name": "A",
+                "opponent_team_name": "B",
+                "pay_with_credits": True,
+            },
+            headers=_xff(),
+            timeout=15,
+        )
+        assert cr2.status_code in (200, 201), cr2.text
+        bid2 = cr2.json()["id"]
+        created_ids.append(bid2)
+        assert float(
+            s.get(f"{API}/credits/balance", params={"phone": phone}, headers=_xff(), timeout=10).json()[
+                "balance_hours"
+            ]
+        ) == 1
+
+        ra2 = admin_session.post(f"{API}/admin/bookings/{bid2}/cancel", timeout=10)
+        assert ra2.status_code == 200, ra2.text
+        assert ra2.json().get("credits_refunded") is True
+        assert float(
+            s.get(f"{API}/credits/balance", params={"phone": phone}, headers=_xff(), timeout=10).json()[
+                "balance_hours"
+            ]
+        ) == 2
+
+        raud = admin_session.get(
+            f"{API}/admin/audit", params={"limit": 30, "action": "booking_cancel"}, timeout=10
+        )
+        assert raud.status_code == 200
+        items = raud.json().get("items") or []
+        hit = next((it for it in items if it.get("entity_id") == bid2), None)
+        assert hit is not None, items[:5]
+        assert "crédito" in (hit.get("summary") or "").lower() or "credito" in (hit.get("summary") or "").lower()
+        assert (hit.get("meta") or {}).get("credits_refunded") is True
+    finally:
+        for bid in created_ids:
+            _admin_cancel_quiet(admin_session, bid)
+

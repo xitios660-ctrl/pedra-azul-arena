@@ -131,6 +131,7 @@ function helpFallback() {
     `Posso te ajudar com:\n` +
     `• horários (hoje, amanhã, sábado à noite, depois das 20…)\n` +
     `• preço, duração, PIX e estacionamento\n` +
+    `• saldo do pacote / crédito de horas\n` +
     `• cancelamento, chuva / políticas\n` +
     `• endereço / maps\n` +
     `• reservar (ex.: "quero reservar amanhã às 20h")\n` +
@@ -299,6 +300,26 @@ export function createBot(deps) {
               `Pelo WhatsApp você também pode reservar; se já tiver PIX pendente, mande a *imagem* do comprovante.\n` +
               `PIX do site expira em ~45 min se não pagar.`
           );
+          return;
+        }
+
+        case "credits_balance": {
+          try {
+            const data = await api.creditsBalance(phone);
+            const bal = Number(data?.balance_hours);
+            const hours = Number.isFinite(bal) ? bal : 0;
+            const label =
+              hours === 1 ? "1 hora" :
+              (Number.isInteger(hours) ? `${hours} horas` : `${hours} horas`);
+            if (hours <= 0) {
+              await reply(`Você não tem horas de crédito no pacote agora (saldo *0h*).`);
+            } else {
+              await reply(`Seu pacote tem *${label}* restantes 🙂`);
+            }
+          } catch (e) {
+            logger.warn({ err: String(e?.message || e) }, "credits_balance lookup failed");
+            await reply(`Não consegui consultar seu crédito agora. Tente de novo em instantes.`);
+          }
           return;
         }
 

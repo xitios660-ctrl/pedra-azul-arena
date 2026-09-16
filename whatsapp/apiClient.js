@@ -89,5 +89,7 @@ export const api = {
   markReminderSent: (bookingId) =>
     req("POST", `/internal/whatsapp/reminders/${bookingId}/sent`, {}),
   siteSettings: () => req("GET", "/site-settings"),
+  creditsBalance: (phone) =>
+    req("GET", `/credits/balance?phone=${encodeURIComponent(phone)}`),
   uploadComprovante,
 };

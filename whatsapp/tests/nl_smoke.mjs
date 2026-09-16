@@ -68,6 +68,19 @@ check("cancel action still works", cancelAction.intent === "cancel");
 const politica = detectIntent("política", { state: "idle" });
 check("policy all", politica.intent === "policy_all");
 
+const credit1 = detectIntent("quanto crédito?", { state: "idle" });
+check("credits quanto credito", credit1.intent === "credits_balance");
+
+const credit2 = detectIntent("meu pacote", { state: "idle" });
+check("credits meu pacote", credit2.intent === "credits_balance");
+
+const credit3 = detectIntent("horas restantes", { state: "idle" });
+check("credits horas restantes", credit3.intent === "credits_balance");
+
+const priceStill = detectIntent("quanto custa?", { state: "idle" });
+check("price still works", priceStill.intent === "price");
+
+
 if (fail) {
   console.error(`\n${fail} failed`);
   process.exit(1);

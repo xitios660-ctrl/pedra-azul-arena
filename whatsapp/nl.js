@@ -316,6 +316,11 @@ export function detectIntent(text, conversationState) {
     return { intent: "pix_howto" };
   }
 
+  // Hour credits / pacote balance (Cycle 33) — before price (both use "quanto")
+  if (/\b(quanto credito|quanto crédito|meu pacote|horas restantes|meu credito|meu crédito|saldo (de )?horas|saldo do pacote|credito restante|crédito restante|quantas horas (eu )?tenho|tenho credito|tenho crédito)\b/.test(t)) {
+    return { intent: "credits_balance" };
+  }
+
   // Price
   if (/\b(preco|preço|valor|quanto custa|quanto e|quanto é|taxa)\b/.test(t)) {
     return { intent: "price" };

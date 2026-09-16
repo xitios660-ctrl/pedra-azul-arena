@@ -454,6 +454,30 @@ async def _after_booking_freed(booking: dict) -> None:
         logger.warning("waitlist after free: %s", e)
 
 
+
+async def _maybe_refund_credits(booking: dict, *, source: str = "") -> Optional[dict]:
+    """Restore prepaid hour credits on cancel (idempotent). Not for no_show."""
+    if not booking:
+        return None
+    try:
+        info = await credits_svc.refund_credits_on_cancel(db, booking)
+    except Exception as e:
+        logger.warning(
+            "credits refund error source=%s booking=%s: %s",
+            source,
+            str((booking or {}).get("id") or "")[:8],
+            e,
+        )
+        return None
+    if info:
+        logger.info(
+            "event=credits_refund_ok source=%s booking_id=%s hours=%s",
+            source,
+            str(booking.get("id") or "")[:8],
+            info.get("hours"),
+        )
+    return info
+
 async def _notify_cancel_wa(booking: dict, *, source: str) -> bool:
     """Best-effort short natural cancel message to customer if WA connected."""
     phone = (booking.get("whatsapp") or "").strip()
@@ -732,6 +756,7 @@ async def cancel_series_future_customer(series_id: str, payload: SeriesCancelIn)
         await daily_metrics.note_cancelled(db)
         b = await db.bookings.find_one({"id": bid}, {"_id": 0})
         if b:
+            await _maybe_refund_credits(b, source="customer_series")
             await _notify_cancel_wa(b, source="customer")
             await _after_booking_freed(b)
     logger.info(
@@ -809,16 +834,22 @@ async def cancel_booking(booking_id: str, cpf: str):
     if res.modified_count != 1:
         raise HTTPException(status_code=409, detail="Não foi possível cancelar (já alterada)")
     await bsvc.release_slot_locks(db, booking_id)
+    refund = await _maybe_refund_credits(b, source="customer")
     ops_metrics.note_booking_cancel("customer")
     await daily_metrics.note_cancelled(db)
     wa_ok = await _notify_cancel_wa(b, source="customer")
     await _after_booking_freed(b)
     logger.info(
-        "event=booking_cancel source=customer booking_id=%s wa=%s",
+        "event=booking_cancel source=customer booking_id=%s wa=%s refund=%s",
         booking_id[:8],
         wa_ok,
+        bool(refund),
     )
-    return {"ok": True, "whatsapp_notified": wa_ok}
+    out = {"ok": True, "whatsapp_notified": wa_ok}
+    if refund:
+        out["credits_refunded"] = True
+        out["credits_refunded_hours"] = refund.get("hours")
+    return out
 
 
 class CustomerRescheduleIn(BaseModel):
@@ -1626,21 +1657,44 @@ async def admin_cancel_booking(booking_id: str, admin: dict = Depends(require_ad
         # already cancelled/expired — still ok for idempotent admin UX
         if b.get("status") in ("cancelled", "expired"):
             await bsvc.release_slot_locks(db, booking_id)
-            return {"ok": True, "status": b["status"], "whatsapp_notified": False}
+            refund = await _maybe_refund_credits(b, source="admin_idempotent")
+            out = {"ok": True, "status": b["status"], "whatsapp_notified": False}
+            if refund:
+                out["credits_refunded"] = True
+                out["credits_refunded_hours"] = refund.get("hours")
+            return out
         raise HTTPException(status_code=409, detail="Não foi possível cancelar")
     await bsvc.release_slot_locks(db, booking_id)
+    refund = await _maybe_refund_credits(b, source="admin")
     ops_metrics.note_booking_cancel("admin")
     await daily_metrics.note_cancelled(db)
     wa_ok = await _notify_cancel_wa(b, source="admin")
     await _after_booking_freed(b)
-    logger.info("event=booking_cancel source=admin booking_id=%s wa=%s", booking_id[:8], wa_ok)
+    logger.info(
+        "event=booking_cancel source=admin booking_id=%s wa=%s refund=%s",
+        booking_id[:8],
+        wa_ok,
+        bool(refund),
+    )
+    summary = f"Reserva cancelada · {b.get('date')} {b.get('start_time')} · {b.get('customer_name') or ''}"
+    meta = {"date": b.get("date"), "start_time": b.get("start_time")}
+    if refund:
+        hrs = refund.get("hours")
+        summary += f" · crédito estornado {hrs}h"
+        meta["credits_refunded"] = True
+        meta["credits_refunded_hours"] = hrs
+        meta["credits_balance_after"] = refund.get("balance_hours")
     await audit_log.audit(
         db, admin, "booking_cancel",
         entity_type="booking", entity_id=booking_id,
-        summary=f"Reserva cancelada · {b.get('date')} {b.get('start_time')} · {b.get('customer_name') or ''}",
-        meta={"date": b.get("date"), "start_time": b.get("start_time")},
+        summary=summary,
+        meta=meta,
     )
-    return {"ok": True, "whatsapp_notified": wa_ok}
+    out = {"ok": True, "whatsapp_notified": wa_ok}
+    if refund:
+        out["credits_refunded"] = True
+        out["credits_refunded_hours"] = refund.get("hours")
+    return out
 
 
 @api.post("/admin/bookings/{booking_id}/no-show")
@@ -2070,22 +2124,31 @@ async def internal_wa_cancel(request: Request, payload: WaCancelIn):
     if res.modified_count != 1:
         return {"cancelled": False, "message": "Nenhuma reserva ativa neste número"}
     await bsvc.release_slot_locks(db, b["id"])
+    refund = await _maybe_refund_credits(b, source="whatsapp")
     ops_metrics.note_booking_cancel("whatsapp")
     await daily_metrics.note_cancelled(db)
     await _after_booking_freed(b)
     logger.info(
-        "event=booking_cancel source=whatsapp booking_id=%s date=%s time=%s",
+        "event=booking_cancel source=whatsapp booking_id=%s date=%s time=%s refund=%s",
         b["id"][:8],
         b["date"],
         b["start_time"],
+        bool(refund),
     )
-    return {
+    msg = f"Reserva cancelada: {b['date']} às {b['start_time']}. Horário liberado."
+    if refund:
+        msg += f" Crédito de {refund.get('hours')}h estornado."
+    out = {
         "cancelled": True,
         "id": b["id"],
         "date": b["date"],
         "start_time": b["start_time"],
-        "message": f"Reserva cancelada: {b['date']} às {b['start_time']}. Horário liberado.",
+        "message": msg,
     }
+    if refund:
+        out["credits_refunded"] = True
+        out["credits_refunded_hours"] = refund.get("hours")
+    return out
 
 
 class WaRescheduleIn(BaseModel):
@@ -2555,6 +2618,7 @@ async def admin_cancel_series_future(series_id: str, admin: dict = Depends(requi
         await daily_metrics.note_cancelled(db)
         b = await db.bookings.find_one({"id": bid}, {"_id": 0})
         if b:
+            await _maybe_refund_credits(b, source="admin_series")
             await _notify_cancel_wa(b, source="admin")
             await _after_booking_freed(b)
     logger.info(

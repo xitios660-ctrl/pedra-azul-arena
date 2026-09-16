@@ -254,3 +254,139 @@ async def restore_hours(db, phone: str, hours: float) -> None:
         )
     except Exception as e:
         logger.warning("credits restore_hours failed phone=%s: %s", phone, e)
+
+
+def credit_hours_from_booking(booking: dict[str, Any]) -> float:
+    """Hours to restore for a credit-paid booking."""
+    if not booking:
+        return 0.0
+    pay = booking.get("payment") or {}
+    for raw in (
+        pay.get("credits_hours"),
+        booking.get("credits_hours"),
+        booking.get("duration_hours"),
+    ):
+        if raw is None:
+            continue
+        try:
+            h = float(raw)
+            if h > 0:
+                return round(h, 2)
+        except (TypeError, ValueError):
+            continue
+    mins = booking.get("duration_minutes")
+    if mins is not None:
+        try:
+            m = float(mins)
+            if m > 0:
+                return round(m / 60.0, 2)
+        except (TypeError, ValueError):
+            pass
+    return 0.0
+
+
+def is_credit_paid_booking(booking: dict[str, Any]) -> bool:
+    if not booking:
+        return False
+    if booking.get("paid_with_credits"):
+        return True
+    pay = booking.get("payment") or {}
+    method = str(pay.get("method") or "").strip().lower()
+    return method == "credits"
+
+
+async def refund_credits_on_cancel(db, booking: dict[str, Any]) -> Optional[dict[str, Any]]:
+    """Atomically restore hour credits when a credit-paid booking is cancelled.
+
+    Idempotent via ``credits_refunded_at`` on the booking (set only once).
+    Skips no_show and non-credit bookings. Returns refund info or None.
+    """
+    if not booking:
+        return None
+    if booking.get("status") == "no_show":
+        return None
+    if not is_credit_paid_booking(booking):
+        return None
+    if booking.get("credits_refunded_at"):
+        return None
+
+    bid = booking.get("id")
+    if not bid:
+        return None
+    hours = credit_hours_from_booking(booking)
+    if hours <= 0:
+        return None
+    phone = booking.get("whatsapp") or ""
+    if not phone or len(only_digits(phone)) < 10:
+        logger.warning("credits refund skipped — bad phone booking=%s", str(bid)[:8])
+        return None
+
+    now = _now_iso()
+    # Claim refund right once (race-safe)
+    claimed = await db.bookings.find_one_and_update(
+        {
+            "id": bid,
+            "$and": [
+                {
+                    "$or": [
+                        {"credits_refunded_at": {"$exists": False}},
+                        {"credits_refunded_at": None},
+                    ]
+                },
+                {
+                    "$or": [
+                        {"payment.method": "credits"},
+                        {"paid_with_credits": True},
+                    ]
+                },
+            ],
+        },
+        {
+            "$set": {
+                "credits_refunded_at": now,
+                "credits_refunded_hours": hours,
+            }
+        },
+        return_document=ReturnDocument.AFTER,
+        projection={"_id": 0},
+    )
+    if not claimed:
+        return None
+
+    try:
+        doc = await adjust_credit(
+            db,
+            phone=phone,
+            delta_hours=hours,
+            notes=f"Estorno cancelamento {str(bid)[:8]}",
+        )
+    except Exception as e:
+        logger.exception(
+            "credits refund adjust failed booking=%s hours=%s: %s",
+            str(bid)[:8],
+            hours,
+            e,
+        )
+        # Best-effort: still leave flag set to avoid double credit on retry storms;
+        # ops can manual-adjust. Log clearly.
+        return {
+            "hours": hours,
+            "phone_digits": normalize_phone(phone),
+            "balance_hours": None,
+            "credits_refunded_at": now,
+            "error": str(e),
+        }
+
+    logger.info(
+        "event=credits_refund booking_id=%s hours=%s phone=%s balance=%s",
+        str(bid)[:8],
+        hours,
+        doc.get("phone_digits"),
+        doc.get("balance_hours"),
+    )
+    return {
+        "hours": hours,
+        "phone_digits": doc.get("phone_digits"),
+        "balance_hours": doc.get("balance_hours"),
+        "credits_refunded_at": now,
+    }
