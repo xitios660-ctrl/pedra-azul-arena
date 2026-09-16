@@ -1,6 +1,7 @@
 /**
- * Periodic ~3h-before reminders. Uses reminder_sent flag in Mongo via API
- * (atomic mark) so restarts never duplicate.
+ * Periodic reminders (lead hours from site_settings.reminder_hours_before,
+ * window ±30min via GET /internal/whatsapp/reminders/due). Uses reminder_sent
+ * flag in Mongo via API (atomic mark) so restarts never duplicate.
  */
 import { api } from "./apiClient.js";
 import { formatDateBr } from "./nl.js";

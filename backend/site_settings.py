@@ -50,6 +50,7 @@ DEFAULTS: dict[str, Any] = {
     "amenities": ["Iluminação noturna", "Pelada & treino", "Copa Alto Tietê"],
     "court_name": "Quadra Pedra Azul — Núncio",
     "cancel_min_hours": 2,  # customer cancel cutoff before slot start; admin always can
+    "reminder_hours_before": 3,  # WA reminder lead time (hours before start); window ±30min
     # Admin WA alerts — empty until owner sets a real number (never invent phones)
     "admin_whatsapp_e164": "",
     "admin_alerts_enabled": True,
@@ -85,6 +86,7 @@ class SiteSettingsUpdate(BaseModel):
     amenities: list[str] = Field(default_factory=list)
     court_name: Optional[str] = Field(default=None, max_length=120)
     cancel_min_hours: int = Field(default=2, ge=0, le=168)
+    reminder_hours_before: int = Field(default=3, ge=1, le=48)
     admin_whatsapp_e164: Optional[str] = Field(default="", max_length=20)
     admin_alerts_enabled: bool = Field(default=True)
 
@@ -272,6 +274,9 @@ def public_view(doc: dict[str, Any]) -> dict[str, Any]:
         "amenities": _normalize_amenities(d.get("amenities")),
         "court_name": d.get("court_name") or DEFAULTS["court_name"],
         "cancel_min_hours": int(d.get("cancel_min_hours") if d.get("cancel_min_hours") is not None else DEFAULTS["cancel_min_hours"]),
+        "reminder_hours_before": int(
+            d.get("reminder_hours_before") if d.get("reminder_hours_before") is not None else DEFAULTS["reminder_hours_before"]
+        ),
         # admin_whatsapp_e164 stays admin-only (not in public_view)
         "admin_alerts_enabled": bool(
             d.get("admin_alerts_enabled") if d.get("admin_alerts_enabled") is not None else DEFAULTS["admin_alerts_enabled"]

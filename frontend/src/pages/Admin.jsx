@@ -21,6 +21,7 @@ const STATUS_COLORS = {
   confirmed: "var(--success)",
   cancelled: "var(--danger)",
   expired: "var(--text-3)",
+  no_show: "var(--warning)",
 };
 const STATUS_LABEL = {
   pending: "Aguardando PIX",
@@ -28,7 +29,15 @@ const STATUS_LABEL = {
   confirmed: "Confirmado",
   cancelled: "Cancelado",
   expired: "Expirado",
+  no_show: "No-show",
 };
+
+function bookingStartIsPast(b) {
+  if (!b?.date || !b?.start_time) return false;
+  const [hh, mm] = String(b.start_time).split(":").map((x) => parseInt(x, 10) || 0);
+  const start = new Date(`${b.date}T${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}:00`);
+  return !Number.isNaN(start.getTime()) && start.getTime() <= Date.now();
+}
 
 export default function AdminDashboard() {
   const [stats, setStats] = useState(null);
@@ -75,6 +84,15 @@ export default function AdminDashboard() {
     await api.post(`/admin/bookings/${id}/reject`);
     refresh();
   };
+  const markNoShow = async (id) => {
+    if (!window.confirm("Marcar esta reserva como no-show (cliente não compareceu)?")) return;
+    try {
+      await api.post(`/admin/bookings/${id}/no-show`);
+      refresh();
+    } catch (e) {
+      window.alert(e.response?.data?.detail || e.message || "Não foi possível marcar no-show");
+    }
+  };
 
   return (
     <PageShell hideWhatsApp>
@@ -120,6 +138,7 @@ export default function AdminDashboard() {
             onConfirm={confirmAndPrepareWhatsapp}
             onCancel={cancelBooking}
             onReject={rejectBooking}
+            onNoShow={markNoShow}
             onReschedule={(b) => setRescheduleTarget(b)} />
         )}
         {activeTab === "calendar" && <AdminCalendar />}
@@ -573,6 +592,7 @@ function DashboardView({ stats, bookings = [], onConfirm, onReject }) {
         <KPI testId={ADMIN.kpiOccupancy} icon={<TrendingUp className="w-4 h-4 text-[var(--success)]" />} label="Ocupação hoje" value={`${stats.occupancy_today_pct}%`} accent="var(--success)" />
         <KPI testId={ADMIN.kpiConfirmed} icon={<CheckCircle2 className="w-4 h-4 text-[var(--success)]" />} label="Confirmadas (total)" value={stats.confirmed_bookings} accent="var(--success)" />
         <KPI testId={ADMIN.kpiAwaiting} icon={<Hourglass className="w-4 h-4 text-[var(--brand)]" />} label="Informados (fila)" value={stats.awaiting_admin_bookings || awaiting.length || 0} accent="var(--brand)" />
+        <KPI testId={ADMIN.kpiNoShow} icon={<AlertCircle className="w-4 h-4 text-[var(--warning)]" />} label="No-shows (total)" value={stats.no_show_bookings || 0} accent="var(--warning)" />
       </div>
 
       <div className="grid lg:grid-cols-2 gap-4 mb-8">
@@ -653,7 +673,7 @@ function DashboardView({ stats, bookings = [], onConfirm, onReject }) {
   );
 }
 
-function BookingsAdmin({ bookings, onConfirm, onCancel, onReject, onReschedule }) {
+function BookingsAdmin({ bookings, onConfirm, onCancel, onReject, onNoShow, onReschedule }) {
   const awaitingCount = bookings.filter((b) => b.status === "awaiting_admin").length;
   const [filter, setFilter] = useState("all");
   const [dateFrom, setDateFrom] = useState("");
@@ -786,6 +806,7 @@ function BookingsAdmin({ bookings, onConfirm, onCancel, onReject, onReschedule }
           { id: "awaiting_admin", label: `Informados (${awaitingCount})`, color: "var(--brand)" },
           { id: "pending", label: "Pendentes" },
           { id: "confirmed", label: "Confirmadas" },
+          { id: "no_show", label: "No-shows", color: "var(--warning)" },
           { id: "cancelled", label: "Canceladas" },
           { id: "expired", label: "Expiradas" },
         ].map(f => (
@@ -839,7 +860,7 @@ function BookingsAdmin({ bookings, onConfirm, onCancel, onReject, onReschedule }
             )}
           </div>
         ) : filtered.map((b) => (
-          <BookingRow key={b.id} b={b} onConfirm={onConfirm} onCancel={onCancel} onReject={onReject} onReschedule={onReschedule} />
+          <BookingRow key={b.id} b={b} onConfirm={onConfirm} onCancel={onCancel} onReject={onReject} onNoShow={onNoShow} onReschedule={onReschedule} />
         ))}
       </div>
     </div>
@@ -897,7 +918,7 @@ function AwaitingPixQueue({ bookings, onConfirm, onReject }) {
   );
 }
 
-function BookingRow({ b, onConfirm, onCancel, onReject, onReschedule }) {
+function BookingRow({ b, onConfirm, onCancel, onReject, onNoShow, onReschedule }) {
   return (
     <motion.div data-testid={ADMIN.bookingRow(b.id)} initial={{ opacity: 0 }} animate={{ opacity: 1 }}
       className="min-w-[1100px] grid grid-cols-[160px_220px_1fr_100px_140px_120px_220px] px-4 py-3 items-center border-b border-white/5 hover:bg-white/[0.03] text-sm">
@@ -946,13 +967,19 @@ function BookingRow({ b, onConfirm, onCancel, onReject, onReschedule }) {
             <FileCheck className="w-3 h-3" /> Recusar PIX
           </button>
         )}
-        {b.status !== "cancelled" && b.status !== "expired" && onReschedule && (
+        {b.status !== "cancelled" && b.status !== "expired" && b.status !== "no_show" && onReschedule && (
           <button data-testid={ADMIN.rescheduleBooking(b.id)} onClick={() => onReschedule(b)}
             className="text-[10px] uppercase tracking-[0.2em] px-2 py-1 border border-[var(--brand)]/60 text-[var(--brand)] hover:bg-[var(--brand)]/15 flex items-center gap-1">
             <RefreshCw className="w-3 h-3" /> Reagendar
           </button>
         )}
-        {b.status !== "cancelled" && b.status !== "expired" && b.status !== "awaiting_admin" && (
+        {b.status === "confirmed" && bookingStartIsPast(b) && onNoShow && (
+          <button data-testid={ADMIN.noShowBooking(b.id)} onClick={() => onNoShow(b.id)}
+            className="text-[10px] uppercase tracking-[0.2em] px-2 py-1 border border-[var(--warning)]/70 text-[var(--warning)] hover:bg-[var(--warning)]/15 flex items-center gap-1">
+            <AlertCircle className="w-3 h-3" /> No-show
+          </button>
+        )}
+        {b.status !== "cancelled" && b.status !== "expired" && b.status !== "no_show" && b.status !== "awaiting_admin" && (
           <button data-testid={ADMIN.cancelBooking(b.id)} onClick={() => onCancel(b.id)}
             className="text-[10px] uppercase tracking-[0.2em] px-2 py-1 border border-[var(--danger)]/60 text-[var(--danger)] hover:bg-[var(--danger)]/15">
             Cancelar
@@ -1089,6 +1116,7 @@ function SiteSettingsAdmin() {
         open_days: Array.isArray(form.open_days) ? form.open_days.map(Number).sort((a, b) => a - b) : [0, 1, 2, 3, 4, 5, 6],
         slot_duration_minutes: Number(form.slot_duration_minutes),
         cancel_min_hours: Number(form.cancel_min_hours ?? 2),
+        reminder_hours_before: Number(form.reminder_hours_before ?? 3),
         admin_whatsapp_e164: String(form.admin_whatsapp_e164 || "").replace(/\D/g, ""),
         admin_alerts_enabled: form.admin_alerts_enabled !== false,
         has_parking: form.has_parking !== false,
@@ -1147,7 +1175,7 @@ function SiteSettingsAdmin() {
       <h2 className="font-heading text-4xl uppercase italic mb-2">Configurações</h2>
       <p className="text-white/55 text-sm mb-4">
         WhatsApp, PIX, endereço, estrutura/amenities, preço, horários e dias abertos — booking público, landing e bot WA.
-        Cancelamento/remarcação pelo cliente respeita as horas mínimas; admin cancela/remarca sempre.
+        Cancelamento/remarcação pelo cliente respeita as horas mínimas; lembrete WA usa a antecipação configurada (±30 min). Admin cancela/remarca/no-show sempre.
       </p>
       <div className="grid sm:grid-cols-2 gap-4">
         {field("WhatsApp (E.164 dígitos)", "whatsapp_e164")}
@@ -1158,6 +1186,7 @@ function SiteSettingsAdmin() {
         {field("Fecha — último slot (0–23)", "close_hour", { type: "number", min: 0, max: 23 })}
         {field("Duração do slot (min)", "slot_duration_minutes", { type: "number", min: 30, max: 180, step: 30 })}
         {field("Cancelamento cliente (horas antes)", "cancel_min_hours", { type: "number", min: 0, max: 168, step: 1 })}
+        {field("Lembrete WA (horas antes)", "reminder_hours_before", { type: "number", min: 1, max: 48, step: 1 })}
         {field("Nome da quadra", "court_name")}
       </div>
       <div className="border border-white/10 rounded-lg p-4 space-y-3 bg-black/20" data-testid="admin-open-days">

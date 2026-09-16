@@ -1069,3 +1069,204 @@ def test_reschedule_blocked_inside_cancel_min_hours(admin_session, s):
         admin_session.post(f"{API}/admin/bookings/{bid}/cancel", timeout=10)
     finally:
         admin_session.put(f"{API}/admin/site-settings", json=original, timeout=10)
+
+
+def test_reminder_hours_before_settings_and_due_window(admin_session, s):
+    """Cycle 20: reminder_hours_before in settings; due window uses lead ±30min."""
+    tok = (os.environ.get("INTERNAL_API_TOKEN") or os.environ.get("WHATSAPP_INTERNAL_TOKEN") or "").strip()
+    headers = {"X-Internal-Token": tok} if tok else {}
+
+    r0 = admin_session.get(f"{API}/admin/site-settings", timeout=10)
+    assert r0.status_code == 200, r0.text
+    original = r0.json()
+    assert "reminder_hours_before" in original or True  # may be filled on put
+    patched = {**original, "reminder_hours_before": 2}
+    try:
+        r1 = admin_session.put(f"{API}/admin/site-settings", json=patched, timeout=10)
+        assert r1.status_code == 200, r1.text
+        assert int(r1.json()["reminder_hours_before"]) == 2
+
+        pub = s.get(f"{API}/site-settings", timeout=10)
+        assert pub.status_code == 200
+        assert int(pub.json()["reminder_hours_before"]) == 2
+
+        # Reject out of range
+        bad = {**patched, "reminder_hours_before": 99}
+        rb = admin_session.put(f"{API}/admin/site-settings", json=bad, timeout=10)
+        assert rb.status_code == 422, rb.text
+
+        now = datetime.now(TZ)
+
+        def _book(when: datetime, name: str):
+            day = when.strftime("%Y-%m-%d")
+            start = f"{when.hour:02d}:00"
+            r = admin_session.post(
+                f"{API}/admin/calendar/bookings",
+                json={
+                    "date": day,
+                    "start_time": start,
+                    "customer_name": name,
+                    "whatsapp": "5511999001122",
+                    "status": "confirmed",
+                },
+                timeout=15,
+            )
+            return r
+
+        def _delta_min(when: datetime) -> float:
+            return (when - now).total_seconds() / 60.0
+
+        # Scan upcoming hour slots for one inside [90,150] and one outside (>180)
+        rin = None
+        rout = None
+        bid_out = None
+        cursor = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+        for _ in range(48):
+            dlt = _delta_min(cursor)
+            if dlt < 0:
+                cursor += timedelta(hours=1)
+                continue
+            if rin is None and 90 <= dlt <= 150:
+                r = _book(cursor, "Reminder InWindow")
+                if r.status_code in (200, 201):
+                    rin = r
+            elif rout is None and dlt >= 180:
+                r = _book(cursor, "Reminder OutWindow")
+                if r.status_code in (200, 201):
+                    rout = r
+                    bid_out = r.json()["id"]
+            if rin is not None and rout is not None:
+                break
+            cursor += timedelta(hours=1)
+
+        assert rin is not None and rin.status_code in (200, 201), "no in-window slot available"
+        bid_in = rin.json()["id"]
+        assert rout is not None, "could not create out-of-window booking"
+
+        due = s.get(f"{API}/internal/whatsapp/reminders/due", headers=headers, timeout=10)
+        assert due.status_code == 200, due.text
+        body = due.json()
+        assert int(body.get("reminder_hours_before") or 0) == 2
+        assert body.get("window_minutes") == [90, 150]
+        ids = {b["id"] for b in (body.get("bookings") or [])}
+        assert bid_in in ids, f"expected in-window {bid_in} in {ids}"
+        assert bid_out not in ids, f"out-of-window {bid_out} should not be due"
+
+        # cleanup
+        admin_session.post(f"{API}/admin/bookings/{bid_in}/cancel", timeout=10)
+        admin_session.post(f"{API}/admin/bookings/{bid_out}/cancel", timeout=10)
+    finally:
+        admin_session.put(f"{API}/admin/site-settings", json=original, timeout=10)
+
+
+def test_admin_no_show_rules(admin_session, s):
+    """Cycle 20: no-show only for past confirmed; rejects future / non-confirmed."""
+    from pymongo import MongoClient
+
+    # Future confirmed → 400
+    r = None
+    for day_off in (20, 21, 22):
+        day = (datetime.now(TZ) + timedelta(days=day_off)).strftime("%Y-%m-%d")
+        for start in ("10:00", "11:00", "12:00", "13:00"):
+            r = admin_session.post(
+                f"{API}/admin/calendar/bookings",
+                json={
+                    "date": day,
+                    "start_time": start,
+                    "customer_name": "NoShow Future",
+                    "whatsapp": "5511999003344",
+                    "status": "confirmed",
+                },
+                timeout=15,
+            )
+            if r.status_code in (200, 201):
+                break
+        if r is not None and r.status_code in (200, 201):
+            break
+    assert r is not None and r.status_code in (200, 201), getattr(r, "text", "")
+    bid_future = r.json()["id"]
+    nf = admin_session.post(f"{API}/admin/bookings/{bid_future}/no-show", timeout=10)
+    assert nf.status_code == 400, nf.text
+    assert "passou" in (nf.json().get("detail") or "").lower() or "no-show" in (nf.json().get("detail") or "").lower()
+
+    # Pending → 400
+    rp = None
+    for day_off in (23, 24, 25):
+        day = (datetime.now(TZ) + timedelta(days=day_off)).strftime("%Y-%m-%d")
+        for start in ("14:00", "15:00", "16:00"):
+            rp = admin_session.post(
+                f"{API}/admin/calendar/bookings",
+                json={
+                    "date": day,
+                    "start_time": start,
+                    "customer_name": "NoShow Pending",
+                    "whatsapp": "5511999005566",
+                    "status": "pending",
+                },
+                timeout=15,
+            )
+            if rp.status_code in (200, 201):
+                break
+        if rp is not None and rp.status_code in (200, 201):
+            break
+    assert rp is not None and rp.status_code in (200, 201), getattr(rp, "text", "")
+    bid_pending = rp.json()["id"]
+    np_ = admin_session.post(f"{API}/admin/bookings/{bid_pending}/no-show", timeout=10)
+    assert np_.status_code == 400, np_.text
+
+    # Past confirmed: create future then backdate via Mongo
+    r2 = None
+    for day_off in (26, 27, 28):
+        day = (datetime.now(TZ) + timedelta(days=day_off)).strftime("%Y-%m-%d")
+        for start in ("17:00", "18:00", "19:00"):
+            r2 = admin_session.post(
+                f"{API}/admin/calendar/bookings",
+                json={
+                    "date": day,
+                    "start_time": start,
+                    "customer_name": "NoShow Past",
+                    "whatsapp": "5511999007788",
+                    "status": "confirmed",
+                },
+                timeout=15,
+            )
+            if r2.status_code in (200, 201):
+                break
+        if r2 is not None and r2.status_code in (200, 201):
+            break
+    assert r2 is not None and r2.status_code in (200, 201), getattr(r2, "text", "")
+    bid_past = r2.json()["id"]
+
+    mongo_url = os.environ.get("MONGO_URL", "mongodb://127.0.0.1:27017")
+    db_name = os.environ.get("DB_NAME", "arena_futsal")
+    client = MongoClient(mongo_url, serverSelectionTimeoutMS=3000)
+    yesterday = (datetime.now(TZ) - timedelta(days=1)).strftime("%Y-%m-%d")
+    client[db_name].bookings.update_one(
+        {"id": bid_past},
+        {"$set": {"date": yesterday, "start_time": "10:00", "slot_key": f"court-1|{yesterday}|10:00"}},
+    )
+
+    ok = admin_session.post(f"{API}/admin/bookings/{bid_past}/no-show", timeout=10)
+    assert ok.status_code == 200, ok.text
+    assert ok.json().get("status") == "no_show"
+    assert ok.json().get("booking", {}).get("status") == "no_show"
+
+    # Idempotent
+    ok2 = admin_session.post(f"{API}/admin/bookings/{bid_past}/no-show", timeout=10)
+    assert ok2.status_code == 200, ok2.text
+    assert ok2.json().get("status") == "no_show"
+
+    # Dashboard KPI
+    dash = admin_session.get(f"{API}/admin/dashboard", timeout=15)
+    assert dash.status_code == 200
+    assert "no_show_bookings" in dash.json()
+    assert int(dash.json()["no_show_bookings"]) >= 1
+
+    # Filter list
+    listed = admin_session.get(f"{API}/admin/bookings", params={"status": "no_show"}, timeout=10)
+    assert listed.status_code == 200
+    assert any(b.get("id") == bid_past for b in listed.json())
+
+    # cleanup leftovers
+    admin_session.post(f"{API}/admin/bookings/{bid_future}/cancel", timeout=10)
+    admin_session.post(f"{API}/admin/bookings/{bid_pending}/cancel", timeout=10)

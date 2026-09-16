@@ -736,6 +736,7 @@ async def admin_dashboard(admin: dict = Depends(require_admin)):
     confirmed = [b for b in bookings if b.get("status") == "confirmed"]
     pending = [b for b in bookings if b.get("status") == "pending"]
     awaiting = [b for b in bookings if b.get("status") == "awaiting_admin"]
+    no_shows = [b for b in bookings if b.get("status") == "no_show"]
     active = bsvc.ACTIVE_STATUSES
 
     revenue = sum(float(b.get("deposit") or 0) for b in confirmed)
@@ -813,6 +814,7 @@ async def admin_dashboard(admin: dict = Depends(require_admin)):
         "confirmed_bookings": len(confirmed),
         "pending_bookings": len(pending),
         "awaiting_admin_bookings": len(awaiting),
+        "no_show_bookings": len(no_shows),
         "revenue_deposits": revenue,
         "revenue_full": full_value,
         "occupancy_today_pct": occupancy_today,
@@ -1037,6 +1039,53 @@ async def admin_cancel_booking(booking_id: str, admin: dict = Depends(require_ad
     wa_ok = await _notify_cancel_wa(b, source="admin")
     logger.info("event=booking_cancel source=admin booking_id=%s wa=%s", booking_id[:8], wa_ok)
     return {"ok": True, "whatsapp_notified": wa_ok}
+
+
+@api.post("/admin/bookings/{booking_id}/no-show")
+async def admin_mark_no_show(booking_id: str, admin: dict = Depends(require_admin)):
+    """Mark past confirmed/paid booking as no-show (metrics only; slot already past)."""
+    b = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    if not b:
+        raise HTTPException(status_code=404, detail="Reserva não encontrada")
+    if b.get("status") == "no_show":
+        return {"ok": True, "status": "no_show", "booking": b}
+    status = b.get("status")
+    pay = (b.get("payment") or {}).get("status")
+    # confirmed (admin-validated PIX) or explicitly paid
+    if status != "confirmed" and pay != "paid":
+        raise HTTPException(
+            status_code=400,
+            detail="Só reservas confirmadas/pagas podem ser marcadas como no-show",
+        )
+    if not bsvc.is_past_slot(b.get("date") or "", b.get("start_time") or ""):
+        raise HTTPException(
+            status_code=400,
+            detail="No-show só para reservas cujo horário já passou",
+        )
+    # Prefer atomic confirmed→no_show; also allow paid docs that somehow stayed pending
+    filt = {"id": booking_id}
+    if status == "confirmed":
+        filt["status"] = "confirmed"
+    else:
+        filt["payment.status"] = "paid"
+        filt["status"] = {"$nin": ["cancelled", "expired", "no_show"]}
+    res = await db.bookings.update_one(
+        filt,
+        {"$set": {
+            "status": "no_show",
+            "no_show_at": _now_iso(),
+            "no_show_by": "admin",
+        }},
+    )
+    if res.modified_count != 1:
+        b2 = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+        if b2 and b2.get("status") == "no_show":
+            return {"ok": True, "status": "no_show", "booking": b2}
+        raise HTTPException(status_code=409, detail="Não foi possível marcar no-show")
+    updated = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    await daily_metrics.note_no_show(db)
+    logger.info("event=booking_no_show source=admin booking_id=%s", booking_id[:8])
+    return {"ok": True, "status": "no_show", "booking": updated}
 
 
 class AdminRescheduleIn(BaseModel):
@@ -1430,14 +1479,23 @@ async def internal_wa_comprovante(
 
 @api.get("/internal/whatsapp/reminders/due")
 async def internal_reminders_due(request: Request):
-    """Confirmed bookings starting in ~2.5h–3.5h window, reminder not sent."""
+    """Confirmed bookings in settings reminder window (lead ±30min), reminder not sent."""
     _require_internal(request)
     tz = ZoneInfo("America/Sao_Paulo")
     now = datetime.now(tz)
-    # Window: start between now+150min and now+210min
+    settings = await sset.get_settings(db)
+    try:
+        lead_h = int(settings.get("reminder_hours_before") or 3)
+    except (TypeError, ValueError):
+        lead_h = 3
+    lead_h = max(1, min(48, lead_h))
+    # Window: start between now+(lead±0.5)h → minutes
+    lo_min = lead_h * 60 - 30
+    hi_min = lead_h * 60 + 30
     due = []
-    # Check today and tomorrow
-    for day_offset in (0, 1):
+    # Span enough days for long lead times (up to 48h)
+    day_span = max(2, (lead_h // 24) + 2)
+    for day_offset in range(0, day_span + 1):
         day = (now + timedelta(days=day_offset)).strftime("%Y-%m-%d")
         cursor = db.bookings.find(
             {
@@ -1449,17 +1507,23 @@ async def internal_reminders_due(request: Request):
         )
         async for b in cursor:
             try:
-                hour = int(b["start_time"].split(":")[0])
+                parts = str(b.get("start_time") or "0:0").split(":")
+                hour = int(parts[0])
+                minute = int(parts[1]) if len(parts) > 1 else 0
                 start_local = now.replace(
                     year=int(day[0:4]), month=int(day[5:7]), day=int(day[8:10]),
-                    hour=hour, minute=0, second=0, microsecond=0,
+                    hour=hour, minute=minute, second=0, microsecond=0,
                 )
             except Exception:
                 continue
             delta_min = (start_local - now).total_seconds() / 60.0
-            if 150 <= delta_min <= 210:
+            if lo_min <= delta_min <= hi_min:
                 due.append(b)
-    return {"bookings": due}
+    return {
+        "bookings": due,
+        "reminder_hours_before": lead_h,
+        "window_minutes": [lo_min, hi_min],
+    }
 
 
 @api.post("/internal/whatsapp/reminders/{booking_id}/sent")

@@ -2,7 +2,7 @@
 
 Collection: daily_metrics
   { day: "YYYY-MM-DD", bookings_created, bookings_confirmed, bookings_cancelled,
-    occupancy_hours, updated_at }
+    bookings_no_show, occupancy_hours, updated_at }
 
 Views intentionally skipped. Never auto-confirms payment.
 """
@@ -56,6 +56,10 @@ async def note_cancelled(db, day: Optional[str] = None) -> None:
     await _bump(db, day or today_ymd(), {"bookings_cancelled": 1})
 
 
+async def note_no_show(db, day: Optional[str] = None) -> None:
+    await _bump(db, day or today_ymd(), {"bookings_no_show": 1})
+
+
 async def last_n_days(db, n: int = 7) -> list[dict[str, Any]]:
     """Return last n calendar days (Sao Paulo), filling zeros for missing docs."""
     n = max(1, min(int(n), 31))
@@ -72,6 +76,7 @@ async def last_n_days(db, n: int = 7) -> list[dict[str, Any]]:
                 "bookings_created": int(doc.get("bookings_created") or 0),
                 "bookings_confirmed": int(doc.get("bookings_confirmed") or 0),
                 "bookings_cancelled": int(doc.get("bookings_cancelled") or 0),
+                "bookings_no_show": int(doc.get("bookings_no_show") or 0),
                 "occupancy_hours": float(doc.get("occupancy_hours") or 0),
             }
         )
@@ -87,6 +92,7 @@ async def summary_last_n(db, n: int = 7) -> dict[str, Any]:
             "bookings_created": sum(x["bookings_created"] for x in series),
             "bookings_confirmed": sum(x["bookings_confirmed"] for x in series),
             "bookings_cancelled": sum(x["bookings_cancelled"] for x in series),
+            "bookings_no_show": sum(x.get("bookings_no_show", 0) for x in series),
             "occupancy_hours": round(sum(x["occupancy_hours"] for x in series), 2),
         },
     }
