@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { ChevronRight, X, MapPin, Calendar } from "lucide-react";
 import { BALEYS_VIDEO_SRC, BALEYS_POSTER_SRC } from "@/lib/siteConfig";
 import { useSiteSettings } from "@/lib/SiteSettings";
+import FutsalArenaBackdrop from "@/components/FutsalArenaBackdrop";
 
 /**
  * INTRO VIDEO MODAL — "Até a Pedra Azul"
@@ -40,37 +41,13 @@ export default function IntroVideoModal() {
         className="fixed inset-0 z-[9999] bg-black overflow-hidden"
         data-testid="intro-video-modal"
       >
-        {/* Baleys arena video — muted autoplay; static poster if reduced-motion */}
-        {reduce ? (
-          <div
-            className="absolute inset-0"
-            style={{
-              backgroundImage: `url(${STADIUM_BG})`,
-              backgroundSize: "cover",
-              backgroundPosition: "center",
-              filter: "brightness(0.45) saturate(1.1)",
-            }}
-          />
-        ) : (
-          <motion.div
-            initial={{ scale: 1.08, opacity: 0.85 }}
-            animate={{ scale: 1.0, opacity: 1 }}
-            transition={{ duration: 8, ease: "linear" }}
-            className="absolute inset-0"
-          >
-            <video
-              className="absolute inset-0 w-full h-full object-cover"
-              src={BALEYS_VIDEO_SRC}
-              poster={BALEYS_POSTER_SRC || STADIUM_BG}
-              autoPlay
-              muted
-              loop
-              playsInline
-              preload="metadata"
-              aria-hidden="true"
-            />
-          </motion.div>
-        )}
+        {/* Live futsal background shared with the homepage hero */}
+        <FutsalArenaBackdrop
+          videoSrc={BALEYS_VIDEO_SRC}
+          posterSrc={BALEYS_POSTER_SRC || STADIUM_BG}
+          fallbackSrc={STADIUM_BG}
+          reduceMotion={reduce}
+        />
 
         {/* Heavy gradient overlays */}
         <div className="absolute inset-0 bg-black/60" />
