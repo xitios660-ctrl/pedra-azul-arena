@@ -1270,3 +1270,144 @@ def test_admin_no_show_rules(admin_session, s):
     # cleanup leftovers
     admin_session.post(f"{API}/admin/bookings/{bid_future}/cancel", timeout=10)
     admin_session.post(f"{API}/admin/bookings/{bid_pending}/cancel", timeout=10)
+
+
+def test_weekend_hours_slots_and_booking(admin_session, s):
+    """Cycle 21: weekend_open/close change Sat/Sun slots; weekday unchanged; outside fails."""
+    r = admin_session.get(f"{API}/admin/site-settings", timeout=10)
+    assert r.status_code == 200, r.text
+    original = r.json()
+
+    # Find a weekday (Mon=0) and a Saturday far enough ahead
+    base = datetime.now(TZ) + timedelta(days=21)
+    weekday_day = None
+    saturday = None
+    for i in range(21):
+        cand = base + timedelta(days=i)
+        if weekday_day is None and cand.weekday() == 0:  # Monday
+            weekday_day = cand.strftime("%Y-%m-%d")
+        if saturday is None and cand.weekday() == 5:  # Saturday
+            saturday = cand.strftime("%Y-%m-%d")
+        if weekday_day and saturday:
+            break
+    assert weekday_day and saturday
+
+    patched = {
+        **original,
+        "open_hour": 8,
+        "close_hour": 23,
+        "weekend_open_hour": 10,
+        "weekend_close_hour": 22,
+        "open_days": [0, 1, 2, 3, 4, 5, 6],
+    }
+    try:
+        rput = admin_session.put(f"{API}/admin/site-settings", json=patched, timeout=10)
+        assert rput.status_code == 200, rput.text
+        body = rput.json()
+        assert int(body["weekend_open_hour"]) == 10
+        assert int(body["weekend_close_hour"]) == 22
+
+        pub = s.get(f"{API}/site-settings", timeout=10)
+        assert pub.status_code == 200
+        assert int(pub.json()["weekend_open_hour"]) == 10
+        assert int(pub.json()["weekend_close_hour"]) == 22
+
+        # Weekday (Mon): still 08:00..23:00
+        avail_wd = s.get(
+            f"{API}/courts/availability",
+            params={"court_id": "court-1", "date": weekday_day},
+            timeout=15,
+        )
+        assert avail_wd.status_code == 200, avail_wd.text
+        wd_body = avail_wd.json()
+        wd_times = [x["time"] for x in (wd_body.get("slots") or [])]
+        assert "08:00" in wd_times
+        assert "23:00" in wd_times
+        assert wd_body.get("settings", {}).get("effective_open_hour") == 8
+        assert wd_body.get("settings", {}).get("effective_close_hour") == 23
+
+        # Saturday: 10:00..22:00 only
+        avail_we = s.get(
+            f"{API}/courts/availability",
+            params={"court_id": "court-1", "date": saturday},
+            timeout=15,
+        )
+        assert avail_we.status_code == 200, avail_we.text
+        we_body = avail_we.json()
+        we_times = [x["time"] for x in (we_body.get("slots") or [])]
+        assert "10:00" in we_times
+        assert "22:00" in we_times
+        assert "08:00" not in we_times
+        assert "09:00" not in we_times
+        assert "23:00" not in we_times
+        assert we_body.get("settings", {}).get("effective_open_hour") == 10
+        assert we_body.get("settings", {}).get("effective_close_hour") == 22
+
+        # Booking at 08:00 on Saturday must fail
+        bad = s.post(
+            f"{API}/bookings",
+            json={
+                "court_id": "court-1",
+                "date": saturday,
+                "start_time": "08:00",
+                "duration_minutes": 60,
+                "cpf": SMOKE_CPF,
+                "customer_name": "Weekend Hour Fail",
+                "whatsapp": "11977776666",
+                "your_team_name": "A",
+                "opponent_team_name": "B",
+            },
+            headers=_xff(),
+            timeout=15,
+        )
+        assert bad.status_code in (400, 409), bad.text
+        detail = str((bad.json() or {}).get("detail") or bad.text).lower()
+        assert "horário" in detail or "invalid" in detail or "indispon" in detail
+
+        # Unset weekend hours → Saturday matches weekday again
+        cleared = {**patched, "weekend_open_hour": None, "weekend_close_hour": None}
+        r2 = admin_session.put(f"{API}/admin/site-settings", json=cleared, timeout=10)
+        assert r2.status_code == 200, r2.text
+        assert r2.json().get("weekend_open_hour") in (None, -1)
+        avail3 = s.get(
+            f"{API}/courts/availability",
+            params={"court_id": "court-1", "date": saturday},
+            timeout=15,
+        )
+        assert avail3.status_code == 200
+        times3 = [x["time"] for x in (avail3.json().get("slots") or [])]
+        assert "08:00" in times3 and "23:00" in times3
+    finally:
+        admin_session.put(f"{API}/admin/site-settings", json=original, timeout=10)
+
+
+def test_weekend_hours_unit_time_slots_from():
+    """Cycle 21: pure unit — weekday vs weekend slot generation."""
+    import sys
+    from pathlib import Path as P
+    root = P(__file__).resolve().parents[1]
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    import site_settings as sset
+
+    settings = {
+        "open_hour": 8,
+        "close_hour": 23,
+        "weekend_open_hour": 10,
+        "weekend_close_hour": 22,
+        "slot_duration_minutes": 60,
+    }
+    # Monday 2026-09-21
+    mon = sset.time_slots_from(settings, "2026-09-21")
+    assert mon[0] == "08:00" and mon[-1] == "23:00"
+    # Saturday 2026-09-19
+    sat = sset.time_slots_from(settings, "2026-09-19")
+    assert sat[0] == "10:00" and sat[-1] == "22:00"
+    assert "08:00" not in sat
+    # Unset weekend
+    plain = {**settings, "weekend_open_hour": None, "weekend_close_hour": None}
+    sat2 = sset.time_slots_from(plain, "2026-09-19")
+    assert sat2[0] == "08:00" and sat2[-1] == "23:00"
+    # -1 also means unset
+    plain2 = {**settings, "weekend_open_hour": -1, "weekend_close_hour": -1}
+    assert sset.hours_for_date(plain2, "2026-09-19") == (8, 23)

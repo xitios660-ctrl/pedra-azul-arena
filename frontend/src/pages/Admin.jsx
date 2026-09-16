@@ -1078,11 +1078,19 @@ function SiteSettingsAdmin() {
     (async () => {
       try {
         const { data } = await api.get("/admin/site-settings");
+        const wo = data.weekend_open_hour;
+        const wc = data.weekend_close_hour;
+        const useWeekend =
+          wo !== null && wo !== undefined && Number(wo) !== -1 &&
+          wc !== null && wc !== undefined && Number(wc) !== -1;
         setForm({
           ...data,
           open_days: Array.isArray(data.open_days) && data.open_days.length
             ? data.open_days.map(Number)
             : [0, 1, 2, 3, 4, 5, 6],
+          weekend_open_hour: useWeekend ? Number(wo) : 10,
+          weekend_close_hour: useWeekend ? Number(wc) : 22,
+          use_weekend_hours: useWeekend,
           has_parking: data.has_parking !== false,
           accepts_pix: data.accepts_pix !== false,
           game_duration_note: data.game_duration_note || "",
@@ -1108,11 +1116,14 @@ function SiteSettingsAdmin() {
         .map((x) => x.trim())
         .filter(Boolean)
         .slice(0, 12);
+      const useWeekend = form.use_weekend_hours === true;
       const payload = {
         ...form,
         price_per_hour: Number(form.price_per_hour),
         open_hour: Number(form.open_hour),
         close_hour: Number(form.close_hour),
+        weekend_open_hour: useWeekend ? Number(form.weekend_open_hour) : null,
+        weekend_close_hour: useWeekend ? Number(form.weekend_close_hour) : null,
         open_days: Array.isArray(form.open_days) ? form.open_days.map(Number).sort((a, b) => a - b) : [0, 1, 2, 3, 4, 5, 6],
         slot_duration_minutes: Number(form.slot_duration_minutes),
         cancel_min_hours: Number(form.cancel_min_hours ?? 2),
@@ -1126,9 +1137,18 @@ function SiteSettingsAdmin() {
         amenities,
       };
       delete payload.amenities_text;
+      delete payload.use_weekend_hours;
       const { data } = await api.put("/admin/site-settings", payload);
+      const wo2 = data.weekend_open_hour;
+      const wc2 = data.weekend_close_hour;
+      const useWeekend2 =
+        wo2 !== null && wo2 !== undefined && Number(wo2) !== -1 &&
+        wc2 !== null && wc2 !== undefined && Number(wc2) !== -1;
       setForm({
         ...data,
+        weekend_open_hour: useWeekend2 ? Number(wo2) : (form.weekend_open_hour ?? 10),
+        weekend_close_hour: useWeekend2 ? Number(wc2) : (form.weekend_close_hour ?? 22),
+        use_weekend_hours: useWeekend2,
         amenities_text: Array.isArray(data.amenities) ? data.amenities.join("\n") : "",
       });
       try { await refreshPublicSettings(); } catch (_) { /* public cache best-effort */ }
@@ -1182,12 +1202,34 @@ function SiteSettingsAdmin() {
         {field("WhatsApp (exibição)", "whatsapp_display")}
         {field("Chave PIX", "pix_key")}
         {field("Preço / hora (R$)", "price_per_hour", { type: "number", min: 1, step: 1 })}
-        {field("Abre (hora 0–23)", "open_hour", { type: "number", min: 0, max: 23 })}
-        {field("Fecha — último slot (0–23)", "close_hour", { type: "number", min: 0, max: 23 })}
+        {field("Horário semana — abre (0–23)", "open_hour", { type: "number", min: 0, max: 23 })}
+        {field("Horário semana — fecha último slot (0–23)", "close_hour", { type: "number", min: 0, max: 23 })}
         {field("Duração do slot (min)", "slot_duration_minutes", { type: "number", min: 30, max: 180, step: 30 })}
         {field("Cancelamento cliente (horas antes)", "cancel_min_hours", { type: "number", min: 0, max: 168, step: 1 })}
         {field("Lembrete WA (horas antes)", "reminder_hours_before", { type: "number", min: 1, max: 48, step: 1 })}
         {field("Nome da quadra", "court_name")}
+      </div>
+      <div className="border border-white/10 rounded-lg p-4 space-y-3 bg-black/20" data-testid="admin-weekend-hours">
+        <div className="text-[10px] uppercase tracking-[0.25em] text-[var(--brand)]">Horário fim de semana (opcional)</div>
+        <p className="text-white/55 text-xs">
+          Sábado e domingo (Python weekday 5 e 6). Se desmarcado, usa o mesmo horário da semana.
+        </p>
+        <label className="flex items-center gap-3 min-h-[44px] cursor-pointer">
+          <input
+            type="checkbox"
+            className="w-5 h-5 accent-[var(--brand)]"
+            checked={form.use_weekend_hours === true}
+            onChange={(e) => set("use_weekend_hours", e.target.checked)}
+            data-testid="admin-use-weekend-hours"
+          />
+          <span className="text-sm text-white/80">Usar horário diferente sáb/dom</span>
+        </label>
+        {form.use_weekend_hours === true && (
+          <div className="grid sm:grid-cols-2 gap-4">
+            {field("Fim de semana — abre (0–23)", "weekend_open_hour", { type: "number", min: 0, max: 23 })}
+            {field("Fim de semana — fecha último slot (0–23)", "weekend_close_hour", { type: "number", min: 0, max: 23 })}
+          </div>
+        )}
       </div>
       <div className="border border-white/10 rounded-lg p-4 space-y-3 bg-black/20" data-testid="admin-open-days">
         <div className="text-[10px] uppercase tracking-[0.25em] text-[var(--brand)]">Dias abertos</div>

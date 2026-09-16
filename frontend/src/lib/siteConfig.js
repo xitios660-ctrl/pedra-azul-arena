@@ -37,6 +37,8 @@ export const DEFAULT_SITE_SETTINGS = {
   price_per_hour: 130,
   open_hour: 8,
   close_hour: 23,
+  weekend_open_hour: null,  // null = use open_hour/close_hour on Sat/Sun
+  weekend_close_hour: null,
   // Python weekday: 0=Mon .. 6=Sun (same as backend open_days)
   open_days: [0, 1, 2, 3, 4, 5, 6],
   slot_duration_minutes: 60,
@@ -125,6 +127,24 @@ export function isOpenDay(ymd, settings) {
   const wd = pythonWeekdayFromYmd(ymd);
   if (wd == null) return true;
   return days.includes(wd);
+}
+
+
+/** Effective open/close hours for a YYYY-MM-DD (weekend pair if set and Sat/Sun). */
+export function hoursForDate(ymd, settings) {
+  const s = settings || DEFAULT_SITE_SETTINGS;
+  const open = Number(s.open_hour ?? 8);
+  const close = Number(s.close_hour ?? 23);
+  const wo = s.weekend_open_hour;
+  const wc = s.weekend_close_hour;
+  const hasWeekend =
+    wo !== null && wo !== undefined && wo !== "" && Number(wo) !== -1 &&
+    wc !== null && wc !== undefined && wc !== "" && Number(wc) !== -1;
+  const wd = pythonWeekdayFromYmd(ymd);
+  if (hasWeekend && (wd === 5 || wd === 6)) {
+    return { open_hour: Number(wo), close_hour: Number(wc) };
+  }
+  return { open_hour: open, close_hour: close };
 }
 
 export const OPEN_DAY_LABELS = [

@@ -3,6 +3,9 @@
 open_days: list of Python datetime.weekday() ints — 0=Monday .. 6=Sunday
 (ISO Monday-first, zero-based). Default [0,1,2,3,4,5,6] = all week.
 
+Weekend hours (Cycle 21): optional weekend_open_hour / weekend_close_hour
+(null or -1 = use weekday open_hour/close_hour). Weekend = Sat/Sun (5,6).
+
 Amenities / FAQ (Cycle 17): has_parking, parking_note, game_duration_note,
 accepts_pix, structure_blurb, amenities — used on landing + WA FAQ.
 Do not invent street numbers; keep address_label / maps_url as-is.
@@ -35,7 +38,10 @@ DEFAULTS: dict[str, Any] = {
     ),
     "price_per_hour": 130,
     "open_hour": 8,
-    "close_hour": 23,  # inclusive last slot start hour
+    "close_hour": 23,  # inclusive last slot start hour (weekday / default)
+    # Optional Sat/Sun hours (Python weekday 5,6). None / -1 = use open_hour/close_hour.
+    "weekend_open_hour": None,
+    "weekend_close_hour": None,
     # Weekdays court is open: Python datetime.weekday() — 0=Mon .. 6=Sun (ISO Mon-first, zero-based).
     "open_days": [0, 1, 2, 3, 4, 5, 6],
     "slot_duration_minutes": 60,
@@ -76,6 +82,8 @@ class SiteSettingsUpdate(BaseModel):
     price_per_hour: float = Field(gt=0, le=10000)
     open_hour: int = Field(ge=0, le=23)
     close_hour: int = Field(ge=0, le=23)
+    weekend_open_hour: Optional[int] = Field(default=None)
+    weekend_close_hour: Optional[int] = Field(default=None)
     open_days: list[int] = Field(default_factory=lambda: [0, 1, 2, 3, 4, 5, 6])
     slot_duration_minutes: int = Field(ge=30, le=180)
     parking_note: str = Field(min_length=0, max_length=240)
@@ -170,10 +178,31 @@ class SiteSettingsUpdate(BaseModel):
     def strip_text(cls, v: str) -> str:
         return (v or "").strip()
 
+    @field_validator("weekend_open_hour", "weekend_close_hour", mode="before")
+    @classmethod
+    def optional_weekend_hour(cls, v):
+        """None / "" / -1 → unset (use weekday open/close)."""
+        if v is None or v == "":
+            return None
+        try:
+            n = int(v)
+        except (TypeError, ValueError) as e:
+            raise ValueError("hora de fim de semana inválida") from e
+        if n == -1:
+            return None
+        if n < 0 or n > 23:
+            raise ValueError("hora de fim de semana deve ser 0–23 ou -1/null")
+        return n
+
     @model_validator(mode="after")
     def hours_order(self):
         if self.close_hour < self.open_hour:
             raise ValueError("close_hour deve ser >= open_hour")
+        wo, wc = self.weekend_open_hour, self.weekend_close_hour
+        if (wo is None) != (wc is None):
+            raise ValueError("Defina ambos weekend_open_hour e weekend_close_hour, ou nenhum")
+        if wo is not None and wc is not None and wc < wo:
+            raise ValueError("weekend_close_hour deve ser >= weekend_open_hour")
         return self
 
 
@@ -261,6 +290,8 @@ def public_view(doc: dict[str, Any]) -> dict[str, Any]:
         "price_per_hour": float(d["price_per_hour"]),
         "open_hour": int(d["open_hour"]),
         "close_hour": int(d["close_hour"]),
+        "weekend_open_hour": _normalize_optional_hour(d.get("weekend_open_hour")),
+        "weekend_close_hour": _normalize_optional_hour(d.get("weekend_close_hour")),
         "open_days": _normalize_open_days(d.get("open_days")),
         "slot_duration_minutes": int(d["slot_duration_minutes"]),
         "parking_note": d.get("parking_note") if d.get("parking_note") is not None else DEFAULTS["parking_note"],
@@ -284,9 +315,62 @@ def public_view(doc: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def time_slots_from(settings: dict[str, Any]) -> list[str]:
+def _normalize_optional_hour(raw: Any) -> int | None:
+    """None / -1 / "" → unset. Valid 0–23 kept."""
+    if raw is None or raw == "":
+        return None
+    try:
+        n = int(raw)
+    except (TypeError, ValueError):
+        return None
+    if n == -1:
+        return None
+    if 0 <= n <= 23:
+        return n
+    return None
+
+
+def has_weekend_hours(settings: dict[str, Any] | None = None) -> bool:
+    s = settings or {}
+    wo = _normalize_optional_hour(s.get("weekend_open_hour"))
+    wc = _normalize_optional_hour(s.get("weekend_close_hour"))
+    return wo is not None and wc is not None
+
+
+def hours_for_date(
+    settings: dict[str, Any],
+    date_ymd: str | None = None,
+    *,
+    weekday: int | None = None,
+) -> tuple[int, int]:
+    """Effective (open_hour, close_hour) for a date or weekday.
+
+    Weekend = Python weekday 5 (Sat) or 6 (Sun). If weekend_* unset, use default pair.
+    """
     open_h = int(settings.get("open_hour", DEFAULTS["open_hour"]))
     close_h = int(settings.get("close_hour", DEFAULTS["close_hour"]))
+    wd = weekday
+    if wd is None and date_ymd:
+        try:
+            wd = datetime.strptime(date_ymd, "%Y-%m-%d").weekday()
+        except ValueError:
+            wd = None
+    if wd is not None and wd in (5, 6) and has_weekend_hours(settings):
+        return (
+            int(_normalize_optional_hour(settings.get("weekend_open_hour"))),
+            int(_normalize_optional_hour(settings.get("weekend_close_hour"))),
+        )
+    return open_h, close_h
+
+
+def time_slots_from(
+    settings: dict[str, Any],
+    date_ymd: str | None = None,
+    *,
+    weekday: int | None = None,
+) -> list[str]:
+    """Bookable start times for settings; optional date/weekday selects weekend hours."""
+    open_h, close_h = hours_for_date(settings, date_ymd, weekday=weekday)
     step = int(settings.get("slot_duration_minutes", 60))
     if step <= 0 or step % 30 != 0:
         step = 60

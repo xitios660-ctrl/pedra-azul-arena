@@ -55,7 +55,8 @@ def is_past_slot(date: str, start_time: str, now: Optional[datetime] = None) -> 
     return False
 
 
-async def get_runtime(db) -> dict[str, Any]:
+async def get_runtime(db, date: Optional[str] = None) -> dict[str, Any]:
+    """Court + settings + time slots. Pass date (YYYY-MM-DD) for weekend-aware hours."""
     settings = await sset.get_settings(db)
     court = {
         "id": COURT_ID,
@@ -64,8 +65,15 @@ async def get_runtime(db) -> dict[str, Any]:
         "price_per_hour": float(settings["price_per_hour"]),
         "color": "#2563EB",
     }
-    slots = sset.time_slots_from(settings)
-    return {"settings": settings, "court": court, "time_slots": slots}
+    slots = sset.time_slots_from(settings, date)
+    open_h, close_h = sset.hours_for_date(settings, date)
+    return {
+        "settings": settings,
+        "court": court,
+        "time_slots": slots,
+        "effective_open_hour": open_h,
+        "effective_close_hour": close_h,
+    }
 
 
 async def get_blocked_times(db, court_id: str, date: str) -> set[str]:
@@ -84,7 +92,7 @@ async def build_availability(
 ) -> dict[str, Any]:
     if court_id != COURT_ID:
         raise ValueError("court_not_found")
-    runtime = await get_runtime(db)
+    runtime = await get_runtime(db, date)
     court = runtime["court"]
     time_slots = runtime["time_slots"]
     price = court["price_per_hour"]
@@ -141,6 +149,10 @@ async def build_availability(
     return {"court": court, "date": date, "slots": slots, "day_open": day_open, "settings": {
         "open_hour": runtime["settings"]["open_hour"],
         "close_hour": runtime["settings"]["close_hour"],
+        "weekend_open_hour": runtime["settings"].get("weekend_open_hour"),
+        "weekend_close_hour": runtime["settings"].get("weekend_close_hour"),
+        "effective_open_hour": runtime["effective_open_hour"],
+        "effective_close_hour": runtime["effective_close_hour"],
         "open_days": runtime["settings"].get("open_days", [0, 1, 2, 3, 4, 5, 6]),
         "slot_duration_minutes": runtime["settings"]["slot_duration_minutes"],
         "price_per_hour": price,
@@ -191,7 +203,7 @@ async def create_booking_atomic(
     """Insert booking with unique slot_key. Raises DuplicateKeyError or ValueError."""
     if court_id != COURT_ID:
         raise ValueError("Quadra não encontrada")
-    runtime = await get_runtime(db)
+    runtime = await get_runtime(db, date)
     settings = runtime["settings"]
     court = runtime["court"]
     time_slots = runtime["time_slots"]
@@ -366,7 +378,7 @@ async def block_day(
 ) -> dict[str, Any]:
     """Block every bookable slot on a date. Skips slots with active reservations."""
     _parse_ymd(date)
-    runtime = await get_runtime(db)
+    runtime = await get_runtime(db, date)
     time_slots = runtime["time_slots"]
     reserved = await _reserved_times(db, court_id, date)
     reason_clean = (reason or "").strip()[:200] or None
@@ -490,7 +502,7 @@ async def reschedule_booking_atomic(
     except ValueError as e:
         raise ValueError("Data inválida") from e
 
-    runtime = await get_runtime(db)
+    runtime = await get_runtime(db, new_date)
     settings = runtime["settings"]
     time_slots = runtime["time_slots"]
     if new_start_time not in time_slots:

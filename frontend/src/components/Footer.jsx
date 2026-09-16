@@ -14,6 +14,14 @@ export default function Footer() {
   const priceShown = Number.isFinite(priceNum)
     ? (priceNum % 1 === 0 ? String(priceNum) : priceNum.toFixed(2))
     : "130";
+  const padH = (h) => String(Number(h)).padStart(2, "0") + ":00";
+  const weekOpen = padH(settings.open_hour ?? 8);
+  const weekClose = padH(settings.close_hour ?? 23);
+  const wo = settings.weekend_open_hour;
+  const wc = settings.weekend_close_hour;
+  const hasWeekend =
+    wo !== null && wo !== undefined && Number(wo) !== -1 &&
+    wc !== null && wc !== undefined && Number(wc) !== -1;
 
   return (
     <footer className="border-t border-white/5 mt-24 py-10 bg-black/60">
@@ -109,9 +117,18 @@ export default function Footer() {
         <div>
           <div className="text-[11px] tracking-[0.3em] uppercase text-[var(--accent)] mb-3">Horários</div>
           <div className="text-white/70 text-sm space-y-1">
-            <div>Segunda — Sexta · 08:00 — 23:00</div>
-            <div>Sábado · 09:00 — 23:00</div>
-            <div>Domingo · 09:00 — 22:00</div>
+            <div>Segunda — Sexta · {weekOpen} — {weekClose}</div>
+            {hasWeekend ? (
+              <>
+                <div>Sábado · {padH(wo)} — {padH(wc)}</div>
+                <div>Domingo · {padH(wo)} — {padH(wc)}</div>
+              </>
+            ) : (
+              <>
+                <div>Sábado · {weekOpen} — {weekClose}</div>
+                <div>Domingo · {weekOpen} — {weekClose}</div>
+              </>
+            )}
           </div>
         </div>
         <div>

@@ -749,7 +749,7 @@ async def admin_dashboard(admin: dict = Depends(require_admin)):
     ]
     today_confirmed = [b for b in today_bookings if b.get("status") == "confirmed"]
 
-    runtime = await bsvc.get_runtime(db)
+    runtime = await bsvc.get_runtime(db, today)
     time_slots = runtime["time_slots"]
     total_slots_today = len(time_slots)
     taken_today = {b.get("start_time") for b in today_bookings}
@@ -1566,7 +1566,7 @@ async def admin_calendar(
 
 @api.post("/admin/calendar/block")
 async def admin_block_slot(payload: AdminBlockIn, admin: dict = Depends(require_admin)):
-    runtime = await bsvc.get_runtime(db)
+    runtime = await bsvc.get_runtime(db, payload.date)
     if payload.start_time not in runtime["time_slots"]:
         raise HTTPException(status_code=400, detail="Horário inválido")
     sk = bsvc.slot_key(COURT_ID, payload.date, payload.start_time)

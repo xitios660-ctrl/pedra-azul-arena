@@ -35,6 +35,8 @@ const FALLBACK_SETTINGS = {
   amenities: ["Iluminação noturna", "Pelada & treino", "Copa Alto Tietê"],
   open_hour: 8,
   close_hour: 23,
+  weekend_open_hour: null,
+  weekend_close_hour: null,
 };
 
 let _settingsCache = { at: 0, data: null };
@@ -214,9 +216,18 @@ export function createBot(deps) {
           const s = await getSiteSettings();
           const mins = s.slot_duration_minutes || 60;
           const note = (s.game_duration_note || "").trim() || `${mins} minutos`;
+          const wo = s.weekend_open_hour;
+          const wc = s.weekend_close_hour;
+          const hasWe =
+            wo !== null && wo !== undefined && Number(wo) !== -1 &&
+            wc !== null && wc !== undefined && Number(wc) !== -1;
+          let hoursLine = `${String(s.open_hour).padStart(2, "0")}h–${String(s.close_hour).padStart(2, "0")}h`;
+          if (hasWe) {
+            hoursLine += ` (sáb/dom ${String(wo).padStart(2, "0")}h–${String(wc).padStart(2, "0")}h)`;
+          }
           await reply(
             `⏱️ Cada jogo/reserva dura *${note}* na *${s.court_name}*.\n` +
-              `Valor: *R$ ${s.price_per_hour}/hora*. Horário: ${String(s.open_hour).padStart(2, "0")}h–${String(s.close_hour).padStart(2, "0")}h. Quer ver vagas? Ex.: "sábado à noite".`
+              `Valor: *R$ ${s.price_per_hour}/hora*. Horário: ${hoursLine}. Quer ver vagas? Ex.: "sábado à noite".`
           );
           return;
         }
