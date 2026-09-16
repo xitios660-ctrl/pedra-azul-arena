@@ -39,6 +39,39 @@ export const DEFAULT_SITE_SETTINGS = {
   court_name: "Quadra Pedra Azul — Núncio",
 };
 
+
+/** Seed placeholders — never open public wa.me to these until admin configures real values. */
+export const PLACEHOLDER_WA_E164 = "551140028922";
+export const PLACEHOLDER_PIX_KEY = "contato@pedraazulfs.com.br";
+
+export function isWhatsAppPlaceholder(settingsOrE164, display) {
+  let e164 = "";
+  let disp = display ?? "";
+  if (settingsOrE164 && typeof settingsOrE164 === "object") {
+    e164 = String(settingsOrE164.whatsapp_e164 || "");
+    disp = String(settingsOrE164.whatsapp_display || disp || "");
+  } else {
+    e164 = String(settingsOrE164 || "");
+  }
+  const digits = e164.replace(/\D/g, "");
+  if (!digits || digits.length < 10) return true;
+  if (digits === PLACEHOLDER_WA_E164 || digits.endsWith("40028922")) return true;
+  if (!String(disp).trim() || String(disp).includes("4002-8922")) return true;
+  return false;
+}
+
+export function isPixKeyPlaceholder(settingsOrKey) {
+  const key =
+    settingsOrKey && typeof settingsOrKey === "object"
+      ? String(settingsOrKey.pix_key || "")
+      : String(settingsOrKey || "");
+  const k = key.trim().toLowerCase();
+  if (!k) return true;
+  if (k === PLACEHOLDER_PIX_KEY.toLowerCase()) return true;
+  if (k === "arena@premium") return true;
+  return false;
+}
+
 /**
  * Build a wa.me deep link with optional prefilled message.
  * @param {string} [prefillMessage]

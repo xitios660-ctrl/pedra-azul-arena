@@ -4,14 +4,13 @@ import { motion } from "framer-motion";
 import { useAuth } from "@/lib/auth";
 import { HOME } from "@/constants/testIds";
 import { Trophy, CalendarDays, ShieldCheck, LogOut, Ticket, Lock, MessageCircle } from "lucide-react";
-import { whatsappUrl, defaultWhatsAppPrefill } from "@/lib/siteConfig";
 import { useSiteSettings } from "@/lib/SiteSettings";
 
 export default function Navbar() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const { pathname } = useLocation();
-  const { settings, waHref } = useSiteSettings();
+  const { settings, waHref, waReady } = useSiteSettings();
   const waDisplay = settings.whatsapp_display;
 
   const isAdmin = user && user.role === "admin";
@@ -59,17 +58,19 @@ export default function Navbar() {
           </nav>
 
           <div className="flex items-center gap-2">
-            <a
-              href={waHref || whatsappUrl(defaultWhatsAppPrefill(), settings.whatsapp_e164)}
-              target="_blank"
-              rel="noopener noreferrer"
-              aria-label={`WhatsApp ${waDisplay}`}
-              title={`WhatsApp ${waDisplay}`}
-              data-testid="nav-whatsapp"
-              className="hidden sm:inline-flex text-[#25D366] hover:text-[#3dff82] transition-colors p-2"
-            >
-              <MessageCircle className="w-4 h-4" />
-            </a>
+            {waReady && (
+              <a
+                href={waHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label={`WhatsApp ${waDisplay}`}
+                title={`WhatsApp ${waDisplay}`}
+                data-testid="nav-whatsapp"
+                className="hidden sm:inline-flex text-[#25D366] hover:text-[#3dff82] transition-colors p-2"
+              >
+                <MessageCircle className="w-4 h-4" />
+              </a>
+            )}
             {isAdmin ? (
               <>
                 <span className="hidden md:inline text-[10px] uppercase tracking-[0.3em] text-[var(--brand)]">

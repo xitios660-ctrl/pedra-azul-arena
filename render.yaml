@@ -1,5 +1,6 @@
 # Render Blueprint — Pedra Azul / Arena Futsal
 # MongoDB is NOT provided by Render. Use MongoDB Atlas and set MONGO_URL manually.
+# Persistent disk for /uploads requires a paid instance (Starter+). Free plan loses files on restart.
 services:
   - type: web
     name: pedra-azul
@@ -8,6 +9,11 @@ services:
     dockerContext: .
     plan: free
     healthCheckPath: /api/health
+    # Attach when on Starter+ (ignored / may need dashboard attach on Free):
+    disk:
+      name: pedra-uploads
+      mountPath: /var/data/uploads
+      sizeGB: 1
     envVars:
       - key: JWT_SECRET
         generateValue: true
@@ -29,4 +35,7 @@ services:
         sync: false
       - key: WHATSAPP_ADMIN_JID
         sync: false
+      # Uploads on persistent disk (local default remains backend/uploads when unset)
+      - key: UPLOAD_DIR
+        value: /var/data/uploads
       # PORT is set automatically by Render

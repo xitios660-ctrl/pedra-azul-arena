@@ -7,8 +7,9 @@ import { ADMIN } from "@/constants/testIds";
 import {
   TrendingUp, CheckCircle2, Hourglass, Activity, DollarSign, BarChart3, Save,
   Eye, MessageCircle, FileCheck, Wifi, WifiOff, QrCode, RefreshCw, LogOut, Loader2,
-  Calendar, Clock, Ticket
+  Calendar, Clock, Ticket, X, Settings, AlertCircle
 } from "lucide-react";
+import { isWhatsAppPlaceholder, isPixKeyPlaceholder } from "@/lib/siteConfig";
 import AdminCalendar from "@/components/AdminCalendar";
 
 function fmtBRL(n) { return (n || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }); }
@@ -83,6 +84,8 @@ export default function AdminDashboard() {
           </h1>
           <p className="text-white/60 mt-2">Gestão completa da arena, reservas e campeonatos em tempo real.</p>
         </div>
+
+        <AdminOnboardingChecklist onGoTab={setActiveTab} />
 
         <div className="flex gap-1 sm:gap-2 mb-8 border-b border-white/10 overflow-x-auto scrollbar-none -mx-2 px-2">
           {[
@@ -165,6 +168,128 @@ export default function AdminDashboard() {
         </div>
       )}
     </PageShell>
+  );
+}
+
+
+
+const ONBOARDING_DISMISS_KEY = "pedra_admin_onboarding_dismissed";
+
+function AdminOnboardingChecklist({ onGoTab }) {
+  const { settings } = useSiteSettings();
+  const [waStatus, setWaStatus] = useState(null);
+  const [dismissed, setDismissed] = useState(() => {
+    try {
+      return sessionStorage.getItem(ONBOARDING_DISMISS_KEY) === "1";
+    } catch (_) {
+      return false;
+    }
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await api.get("/admin/whatsapp/status");
+        if (!cancelled) setWaStatus(data?.status || "DESCONECTADO");
+      } catch (_) {
+        if (!cancelled) setWaStatus("DESCONECTADO");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const items = [];
+  if (waStatus && waStatus !== "CONECTADO") {
+    items.push({
+      id: "wa",
+      title: "Conectar WhatsApp (Baileys)",
+      hint: waStatus === "AGUARDANDO_QR"
+        ? "QR pronto — escaneie na aba WhatsApp."
+        : `Status: ${waStatus}. Abra a aba WhatsApp e gere o QR.`,
+      tab: "whatsapp",
+      cta: "Abrir WhatsApp",
+    });
+  }
+  if (isWhatsAppPlaceholder(settings)) {
+    items.push({
+      id: "phone",
+      title: "Definir WhatsApp público",
+      hint: "Número ainda é o placeholder (4002-8922). Atualize em Configurações.",
+      tab: "settings",
+      cta: "Configurações",
+    });
+  }
+  if (isPixKeyPlaceholder(settings)) {
+    items.push({
+      id: "pix",
+      title: "Definir chave PIX real",
+      hint: "PIX ainda está no e-mail seed. Clientes precisam da chave correta.",
+      tab: "settings",
+      cta: "Configurações",
+    });
+  }
+
+  if (dismissed || items.length === 0 || waStatus === null) return null;
+
+  const dismiss = () => {
+    try { sessionStorage.setItem(ONBOARDING_DISMISS_KEY, "1"); } catch (_) {}
+    setDismissed(true);
+  };
+
+  return (
+    <div
+      data-testid="admin-onboarding-checklist"
+      className="mb-8 glass p-5 border border-[var(--brand)]/35 relative overflow-hidden"
+      role="region"
+      aria-label="Checklist de preparação do painel"
+    >
+      <div className="absolute -right-10 -top-10 w-40 h-40 rounded-full bg-[var(--brand)]/10 blur-3xl pointer-events-none" />
+      <div className="flex items-start justify-between gap-3 mb-4">
+        <div>
+          <div className="text-[11px] uppercase tracking-[0.35em] text-[var(--brand)] flex items-center gap-2">
+            <AlertCircle className="w-3.5 h-3.5" /> Primeiros passos
+          </div>
+          <h2 className="font-heading text-2xl md:text-3xl uppercase italic mt-1 leading-none">
+            Prepare a arena <span className="text-[var(--brand)]">antes do público</span>
+          </h2>
+          <p className="text-white/50 text-sm mt-2 max-w-xl">
+            Checklist rápido — some itens ao configurar. Pode dispensar nesta sessão; volta no próximo login se ainda incompleto.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={dismiss}
+          className="text-white/40 hover:text-white p-2 shrink-0"
+          aria-label="Dispensar checklist nesta sessão"
+          data-testid="admin-onboarding-dismiss"
+        >
+          <X className="w-4 h-4" />
+        </button>
+      </div>
+      <ul className="space-y-2">
+        {items.map((it) => (
+          <li
+            key={it.id}
+            className="flex flex-col sm:flex-row sm:items-center gap-3 p-3 bg-black/35 border border-white/10"
+            data-testid={`admin-onboarding-item-${it.id}`}
+          >
+            <div className="flex-1 min-w-0">
+              <div className="font-heading text-lg uppercase tracking-wide text-white">{it.title}</div>
+              <div className="text-xs text-white/50 mt-0.5">{it.hint}</div>
+            </div>
+            <button
+              type="button"
+              onClick={() => onGoTab?.(it.tab)}
+              className="btn-ghost !py-2 !px-4 !text-xs shrink-0 inline-flex items-center gap-2"
+            >
+              {it.tab === "settings" ? <Settings className="w-3.5 h-3.5" /> : <MessageCircle className="w-3.5 h-3.5" />}
+              {it.cta}
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
@@ -356,7 +481,7 @@ function WhatsAppAdmin() {
         </details>
       </div>
 
-      <div className="glass p-6 flex flex-col items-center justify-center min-h-[360px]">
+      <div className="glass p-4 sm:p-6 flex flex-col items-center justify-center min-h-[380px] sm:min-h-[420px]">
         {state.status === "AGUARDANDO_QR" && state.qr ? (
           <>
             <div className="text-[11px] uppercase tracking-[0.35em] text-[var(--brand)] mb-4 flex items-center gap-2">
@@ -368,10 +493,11 @@ function WhatsAppAdmin() {
               alt="QR Code para parear WhatsApp da arena. Escaneie em Aparelhos conectados."
               role="img"
               aria-describedby="wa-qr-help"
-              className="w-[280px] h-[280px] sm:w-[320px] sm:h-[320px] bg-white p-3 border border-[var(--brand)]/40"
+              className="w-[min(92vw,340px)] h-[min(92vw,340px)] sm:w-[360px] sm:h-[360px] max-w-full bg-white p-3 sm:p-4 border-2 border-[var(--brand)]/50 shadow-[0_0_32px_rgba(0,229,255,0.25)]"
             />
-            <p id="wa-qr-help" className="mt-3 text-xs text-white/50 text-center max-w-xs">
-              Abra o WhatsApp no celular → Aparelhos conectados → escanear este QR.
+            <p id="wa-qr-help" className="mt-4 text-sm text-white/60 text-center max-w-sm leading-relaxed px-2">
+              Abra o WhatsApp no celular → <strong className="text-white">Aparelhos conectados</strong> → escanear este QR.
+              Aproxime a câmera; o código renova se expirar — clique em Conectar de novo.
             </p>
           </>
         ) : state.status === "CONECTADO" ? (

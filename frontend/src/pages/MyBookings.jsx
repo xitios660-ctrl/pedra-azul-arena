@@ -9,6 +9,7 @@ import {
   whatsappUrl,
   defaultWhatsAppPrefill,
 } from "@/lib/siteConfig";
+import { useSiteSettings } from "@/lib/SiteSettings";
 import {
   IdCard, Search, Calendar, Clock, CheckCircle2, XCircle, Hourglass, Upload,
   FileCheck, Loader2, MessageCircle, Ticket,
@@ -34,7 +35,10 @@ export default function MyBookings() {
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
-  const waHref = whatsappUrl(defaultWhatsAppPrefill());
+  const { waReady, waHref: ctxWa, settings } = useSiteSettings();
+  const waHref = waReady
+    ? (ctxWa || whatsappUrl(defaultWhatsAppPrefill(), settings.whatsapp_e164))
+    : null;
 
   const doLookup = async (cpfValue) => {
     setErr(""); setLoading(true); setSearched(true);
@@ -135,14 +139,20 @@ export default function MyBookings() {
               <div className="glass p-8 text-center text-white/60 mt-6">
                 <Ticket className="w-10 h-10 mx-auto mb-3 text-white/25" />
                 <div className="font-heading text-2xl uppercase text-white/80">Nenhuma reserva neste CPF</div>
-                <p className="text-sm mt-2">Faça sua primeira partida ou fale conosco no WhatsApp.</p>
+                <p className="text-sm mt-2">
+                  {waReady
+                    ? "Faça sua primeira partida ou fale conosco no WhatsApp."
+                    : "Faça sua primeira partida pela página de reservas."}
+                </p>
                 <div className="mt-5 flex flex-wrap justify-center gap-3">
                   <button onClick={() => navigate("/booking")} className="btn-neon !py-2 !px-5 !text-base">
                     Reservar agora
                   </button>
-                  <a href={waHref} target="_blank" rel="noopener noreferrer" className="btn-ghost !py-2 !px-4 !text-sm">
-                    <MessageCircle className="w-4 h-4" /> Fale no WhatsApp
-                  </a>
+                  {waReady && waHref && (
+                    <a href={waHref} target="_blank" rel="noopener noreferrer" className="btn-ghost !py-2 !px-4 !text-sm">
+                      <MessageCircle className="w-4 h-4" /> Fale no WhatsApp
+                    </a>
+                  )}
                 </div>
               </div>
             ) : (

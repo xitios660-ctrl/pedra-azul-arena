@@ -26,6 +26,13 @@ _tok_state="unset"
 if [ -n "${INTERNAL_API_TOKEN:-}${WHATSAPP_INTERNAL_TOKEN:-}" ]; then
   _tok_state="set"
 fi
+
+# Ensure upload dirs exist (persistent disk mount or local path)
+UPLOAD_DIR="${UPLOAD_DIR:-/app/backend/uploads}"
+export UPLOAD_DIR
+mkdir -p "${UPLOAD_DIR}/crests" "${UPLOAD_DIR}/comprovantes" || true
+echo "[start] upload_dir=${UPLOAD_DIR}"
+
 echo "[start] WhatsApp sidecar on ${WHATSAPP_HOST}:${WHATSAPP_PORT} (API ${API_INTERNAL_URL}, internal_token=${_tok_state})"
 cd /app/whatsapp
 node server.js &

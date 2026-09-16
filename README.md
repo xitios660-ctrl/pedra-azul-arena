@@ -28,6 +28,7 @@ Reserva de **uma** quadra (Pedra Azul — Núncio), fluxo CPF + PIX + confirmaç
 | `PORT` | não | Porta HTTP pública (Render define) |
 | `BOOKING_RATE_LIMIT` | não | Max POSTs `/api/bookings` por IP/janela (default 8) |
 | `BOOKING_RATE_WINDOW_SEC` | não | Janela do rate limit em segundos (default 60) |
+| `UPLOAD_DIR` | não | Pasta de uploads (crests/comprovantes). Local: `backend/uploads`. Render: `/var/data/uploads` com disk `pedra-uploads` (Starter+; Free perde arquivos no restart) |
 
 **Nunca** commitir credenciais Baileys / `.env` / QR. Sessão fica na collection `whatsapp_auth`.
 
@@ -43,6 +44,7 @@ docker run --rm -p 8000:8000 \
 Health: `GET /api/health` → `{ ok, db, whatsapp }`.
 
 Blueprint: `render.yaml` (Docker). Configure `MONGO_URL` no dashboard.
+Uploads: disk `pedra-uploads` → `/var/data/uploads` (`UPLOAD_DIR`); Free tier is ephemeral until Starter+ disk is attached.
 
 ## Admin — login (seed)
 
@@ -122,7 +124,7 @@ Admin → aba **Calendário**: visão dia/semana, bloquear/desbloquear, criar/ca
 
 - Installable: `manifest.json` + ícones em `/icons/` + `theme-color` `#00E5FF`
 - Service worker (`/sw.js`): **network-first** para HTML/navegação (não prende deploy velho); **nunca cacheia** `/api/*`; cache-first só para `/static/*` hashed
-- SEO local: meta/OG + JSON-LD `SportsActivityLocation`/`LocalBusiness` (Núncio · Alto Tietê — **sem** inventar rua)
+- SEO local: meta/OG + JSON-LD `SportsActivityLocation`/`LocalBusiness` (Núncio · Alto Tietê — **sem** inventar rua/telefone placeholder)
 - PIX: estados **aguardando → informado → confirmado** (admin) · **cancelado** · **expirado** (~45 min). Nunca auto-confirma por texto
 
 

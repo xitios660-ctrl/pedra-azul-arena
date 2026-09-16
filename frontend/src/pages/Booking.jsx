@@ -70,7 +70,7 @@ function flowIndex(step, hasCourt, hasDate, hasSlot) {
 }
 
 export default function Booking() {
-  const { settings, priceLabel: livePriceLabel } = useSiteSettings();
+  const { settings, priceLabel: livePriceLabel, waReady, waHref: ctxWa } = useSiteSettings();
   const courtPriceLabel = livePriceLabel || priceLabel(settings?.price_per_hour);
   const navigate = useNavigate();
   const [waStatus, setWaStatus] = useState(null); // CONECTADO | AGUARDANDO_QR | DESCONECTADO | ...
@@ -233,7 +233,9 @@ export default function Booking() {
 
   const activeFlow = flowIndex(step, !!selectedCourt, !!date, !!pickedSlot);
   const freeSlots = availability?.slots?.filter((s) => isSlotAvailable(s))?.length ?? null;
-  const waHref = whatsappUrl(defaultWhatsAppPrefill(), settings?.whatsapp_e164);
+  const waHref = waReady
+    ? (ctxWa || whatsappUrl(defaultWhatsAppPrefill(), settings?.whatsapp_e164))
+    : null;
   const m = useMotionSystem();
 
   return (
@@ -297,9 +299,11 @@ export default function Booking() {
           <span className="trust-pill"><Banknote className="w-3.5 h-3.5 text-[var(--brand)]" /> <strong>{courtPriceLabel}</strong></span>
           <span className="trust-pill"><MapPin className="w-3.5 h-3.5 text-[var(--brand)]" /> {COURT_LOCATION}</span>
           <span className="trust-pill"><ShieldCheck className="w-3.5 h-3.5 text-[var(--success)]" /> Confirmação via WhatsApp</span>
-          <a href={waHref} target="_blank" rel="noopener noreferrer" className="trust-pill hover:border-[#25D366]/50 hover:text-[#25D366] transition-colors">
-            <MessageCircle className="w-3.5 h-3.5 text-[#25D366]" /> FALAR NO WHATSAPP
-          </a>
+          {waReady && waHref && (
+            <a href={waHref} target="_blank" rel="noopener noreferrer" className="trust-pill hover:border-[#25D366]/50 hover:text-[#25D366] transition-colors">
+              <MessageCircle className="w-3.5 h-3.5 text-[#25D366]" /> FALAR NO WHATSAPP
+            </a>
+          )}
         </div>
 
         {/* Primary CTAs */}
@@ -307,9 +311,11 @@ export default function Booking() {
           <a href="#booking-slots" className="btn-neon" data-testid="booking-cta-reservar">
             RESERVAR HORÁRIO <ChevronRight className="w-5 h-5" />
           </a>
-          <a href={waHref} target="_blank" rel="noopener noreferrer" className="btn-ghost !border-[#25D366]/40 hover:!border-[#25D366] hover:!text-[#25D366]" data-testid="booking-cta-whatsapp">
-            <MessageCircle className="w-4 h-4 text-[#25D366]" /> FALAR NO WHATSAPP
-          </a>
+          {waReady && waHref && (
+            <a href={waHref} target="_blank" rel="noopener noreferrer" className="btn-ghost !border-[#25D366]/40 hover:!border-[#25D366] hover:!text-[#25D366]" data-testid="booking-cta-whatsapp">
+              <MessageCircle className="w-4 h-4 text-[#25D366]" /> FALAR NO WHATSAPP
+            </a>
+          )}
         </div>
 
         {/* Single court banner */}
@@ -423,10 +429,16 @@ export default function Booking() {
               <div className="state-panel">
                 <Clock className="w-8 h-8 text-white/30 mb-3" />
                 <div className="font-heading text-2xl uppercase text-white/70">Nenhum horário neste dia</div>
-                <p className="text-sm mt-2 max-w-sm">Tente outra data ou fale conosco no WhatsApp para encaixes especiais.</p>
-                <a href={waHref} target="_blank" rel="noopener noreferrer" className="btn-ghost !py-2 !px-4 !text-sm mt-4">
-                  <MessageCircle className="w-4 h-4" /> WhatsApp
-                </a>
+                <p className="text-sm mt-2 max-w-sm">
+                  {waReady
+                    ? "Tente outra data ou fale conosco no WhatsApp para encaixes especiais."
+                    : "Tente outra data ou reserve em um dia com horários livres."}
+                </p>
+                {waReady && waHref && (
+                  <a href={waHref} target="_blank" rel="noopener noreferrer" className="btn-ghost !py-2 !px-4 !text-sm mt-4">
+                    <MessageCircle className="w-4 h-4" /> WhatsApp
+                  </a>
+                )}
               </div>
             )}
 

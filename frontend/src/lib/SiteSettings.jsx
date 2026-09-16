@@ -1,12 +1,21 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 import api from "@/lib/api";
-import { DEFAULT_SITE_SETTINGS, priceLabel, whatsappUrl, defaultWhatsAppPrefill } from "@/lib/siteConfig";
+import {
+  DEFAULT_SITE_SETTINGS,
+  priceLabel,
+  whatsappUrl,
+  defaultWhatsAppPrefill,
+  isWhatsAppPlaceholder,
+  isPixKeyPlaceholder,
+} from "@/lib/siteConfig";
 
 const Ctx = createContext({
   settings: DEFAULT_SITE_SETTINGS,
   loading: true,
   refresh: async () => {},
   waHref: whatsappUrl(defaultWhatsAppPrefill()),
+  waReady: false,
+  pixReady: false,
   priceLabel: priceLabel(130),
 });
 
@@ -29,16 +38,21 @@ export function SiteSettingsProvider({ children }) {
     refresh();
   }, []);
 
-  const value = useMemo(
-    () => ({
+  const value = useMemo(() => {
+    const waReady = !isWhatsAppPlaceholder(settings);
+    const pixReady = !isPixKeyPlaceholder(settings);
+    return {
       settings,
       loading,
       refresh,
-      waHref: whatsappUrl(defaultWhatsAppPrefill(), settings.whatsapp_e164),
+      waHref: waReady
+        ? whatsappUrl(defaultWhatsAppPrefill(), settings.whatsapp_e164)
+        : null,
+      waReady,
+      pixReady,
       priceLabel: priceLabel(settings.price_per_hour),
-    }),
-    [settings, loading]
-  );
+    };
+  }, [settings, loading]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

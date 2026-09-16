@@ -83,8 +83,9 @@ COPY --from=frontend-build /app/frontend/build /app/frontend_build
 COPY start.sh /app/start.sh
 RUN chmod +x /app/start.sh
 
-# Runtime upload dirs (ephemeral on Render unless a disk is attached)
-RUN mkdir -p /app/backend/uploads/crests /app/backend/uploads/comprovantes
+# Runtime upload dirs (ephemeral on Free; persist via disk mount + UPLOAD_DIR=/var/data/uploads)
+RUN mkdir -p /app/backend/uploads/crests /app/backend/uploads/comprovantes \
+    /var/data/uploads/crests /var/data/uploads/comprovantes
 
 WORKDIR /app/backend
 ENV PYTHONPATH=/app/backend \
@@ -94,7 +95,7 @@ ENV PYTHONPATH=/app/backend \
     WHATSAPP_AUTO_START=true
 # INTERNAL_API_TOKEN / WHATSAPP_INTERNAL_TOKEN come from the host/Render at runtime.
 # start.sh unifies them (prefer INTERNAL_API_TOKEN) so FastAPI + Node share one secret.
-# Also inherits: MONGO_URL, DB_NAME, JWT_SECRET, CORS_ORIGINS, WHATSAPP_ADMIN_JID, PORT.
+# Also inherits: MONGO_URL, DB_NAME, JWT_SECRET, CORS_ORIGINS, WHATSAPP_ADMIN_JID, PORT, UPLOAD_DIR.
 
 EXPOSE 8000
 

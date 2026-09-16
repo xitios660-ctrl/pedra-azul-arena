@@ -6,9 +6,13 @@ import { useSiteSettings } from "@/lib/SiteSettings";
 
 /**
  * Floating WhatsApp balloon (FAB) — fixed bottom-right, brand green, subtle pulse.
+ * Hidden while site WhatsApp is still the seed placeholder (avoids fake number chats).
  */
 export default function WhatsAppFab({ prefill } = {}) {
-  const { settings } = useSiteSettings();
+  const { settings, waReady } = useSiteSettings();
+
+  if (!waReady) return null;
+
   const href = whatsappUrl(prefill || defaultWhatsAppPrefill(), settings.whatsapp_e164);
   const label = `Abrir WhatsApp ${settings.whatsapp_display} — Fale no WhatsApp`;
 

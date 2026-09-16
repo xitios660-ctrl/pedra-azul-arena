@@ -128,9 +128,11 @@ export default function Landing() {
       .catch(() => {});
   }, []);
 
-  const { settings, priceLabel: COURT_PRICE_LABEL } = useSiteSettings();
+  const { settings, priceLabel: COURT_PRICE_LABEL, waReady, waHref: ctxWa } = useSiteSettings();
   const WHATSAPP_DISPLAY = settings.whatsapp_display;
-  const waHref = whatsappUrl(defaultWhatsAppPrefill(), settings.whatsapp_e164);
+  const waHref = waReady
+    ? (ctxWa || whatsappUrl(defaultWhatsAppPrefill(), settings.whatsapp_e164))
+    : null;
 
   return (
     <PageShell>
@@ -239,15 +241,17 @@ export default function Landing() {
                 RESERVAR HORÁRIO <ChevronRight className="w-5 h-5" />
               </Link>
             </MagneticCTA>
-            <a
-              href={waHref}
-              target="_blank"
-              rel="noopener noreferrer"
-              data-testid="hero-whatsapp-cta"
-              className="btn-ghost !border-[#25D366]/40 hover:!border-[#25D366] hover:!text-[#25D366]"
-            >
-              <MessageCircle className="w-4 h-4 text-[#25D366]" /> FALAR NO WHATSAPP
-            </a>
+            {waReady && waHref && (
+              <a
+                href={waHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                data-testid="hero-whatsapp-cta"
+                className="btn-ghost !border-[#25D366]/40 hover:!border-[#25D366] hover:!text-[#25D366]"
+              >
+                <MessageCircle className="w-4 h-4 text-[#25D366]" /> FALAR NO WHATSAPP
+              </a>
+            )}
             <Link to="/tournaments" data-testid={HOME.heroSecondary} className="btn-ghost">
               <Trophy className="w-4 h-4" /> Ver Campeonatos
             </Link>
@@ -396,15 +400,28 @@ export default function Landing() {
             <div className="absolute -right-16 -top-16 w-64 h-64 rounded-full bg-[#25D366]/15 blur-3xl pointer-events-none" />
             <div className="skew-tag mb-4">
               <span className="font-heading uppercase text-sm tracking-[0.35em] text-[#25D366]">
-                Contato · WhatsApp
+                {waReady ? "Contato · WhatsApp" : "Contato · Reserva"}
               </span>
             </div>
             <h2 className="font-heading text-4xl md:text-6xl uppercase italic leading-[0.95] max-w-3xl">
-              Fale no <span className="text-[#25D366]">WhatsApp</span>
+              {waReady ? (
+                <>Fale no <span className="text-[#25D366]">WhatsApp</span></>
+              ) : (
+                <>Reserve a <span className="text-[var(--brand)]">quadra</span></>
+              )}
             </h2>
             <p className="text-white/65 text-lg mt-4 max-w-2xl leading-relaxed">
-              Reservas, dúvidas de horário ou status do pagamento — nosso time responde no WhatsApp. Confirmação
-              rápida, sem burocracia. Fale agora: <strong className="text-white">{WHATSAPP_DISPLAY}</strong>.
+              {waReady ? (
+                <>
+                  Reservas, dúvidas de horário ou status do pagamento — nosso time responde no WhatsApp. Confirmação
+                  rápida, sem burocracia. Fale agora: <strong className="text-white">{WHATSAPP_DISPLAY}</strong>.
+                </>
+              ) : (
+                <>
+                  Reserve online sem cadastro (CPF + PIX). Dúvidas por e-mail:{" "}
+                  <strong className="text-white">contato@pedraazulfs.com.br</strong>.
+                </>
+              )}
             </p>
             <div className="trust-strip mt-6">
               <span className="trust-pill">
@@ -418,19 +435,29 @@ export default function Landing() {
               </span>
             </div>
             <div className="mt-8 flex flex-wrap gap-4">
-              <MagneticCTA>
+              {waReady && waHref ? (
+                <MagneticCTA>
+                  <a
+                    href={waHref}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    data-testid="landing-whatsapp-cta"
+                    className="btn-neon !bg-gradient-to-r from-[#25D366] to-[#128C7E] !shadow-[0_0_28px_rgba(37,211,102,0.45)]"
+                    aria-label={`Abrir WhatsApp ${WHATSAPP_DISPLAY}`}
+                  >
+                    <MessageCircle className="w-5 h-5" /> FALAR NO WHATSAPP
+                  </a>
+                </MagneticCTA>
+              ) : (
                 <a
-                  href={waHref}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  data-testid="landing-whatsapp-cta"
-                  className="btn-neon !bg-gradient-to-r from-[#25D366] to-[#128C7E] !shadow-[0_0_28px_rgba(37,211,102,0.45)]"
-                  aria-label={`Abrir WhatsApp ${WHATSAPP_DISPLAY}`}
+                  href="mailto:contato@pedraazulfs.com.br"
+                  data-testid="landing-email-cta"
+                  className="btn-ghost"
                 >
-                  <MessageCircle className="w-5 h-5" /> FALAR NO WHATSAPP
+                  E-mail
                 </a>
-              </MagneticCTA>
-              <Link to="/booking" className="btn-ghost">
+              )}
+              <Link to="/booking" className="btn-ghost" data-testid="landing-booking-cta-secondary">
                 RESERVAR HORÁRIO <ChevronRight className="w-4 h-4" />
               </Link>
             </div>

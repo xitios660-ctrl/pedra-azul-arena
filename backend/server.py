@@ -57,9 +57,12 @@ mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
-UPLOAD_DIR = ROOT_DIR / "uploads"
+# UPLOAD_DIR: local default ./uploads; Render disk typically /var/data/uploads
+_upload_env = (os.environ.get("UPLOAD_DIR") or "").strip()
+UPLOAD_DIR = Path(_upload_env) if _upload_env else (ROOT_DIR / "uploads")
 (UPLOAD_DIR / "crests").mkdir(parents=True, exist_ok=True)
 (UPLOAD_DIR / "comprovantes").mkdir(parents=True, exist_ok=True)
+logger.info("event=upload_dir path=%s", str(UPLOAD_DIR))
 
 app = FastAPI(title="Arena Futsal Premium API")
 api = APIRouter(prefix="/api")
@@ -243,32 +246,78 @@ async def admin_put_site_settings(payload: SiteSettingsUpdate, admin: dict = Dep
 # =============================================================================
 # UPLOADS (public — accept image uploads for crests, anyone can upload)
 # =============================================================================
+_UPLOAD_MAX_BYTES = int(os.environ.get("UPLOAD_MAX_BYTES", str(5 * 1024 * 1024)))
+_UPLOAD_ALLOWED_EXT = frozenset({"png", "jpg", "jpeg", "webp", "gif"})
+_UPLOAD_ALLOWED_CT = frozenset({
+    "image/png",
+    "image/jpeg",
+    "image/jpg",
+    "image/webp",
+    "image/gif",
+    "application/octet-stream",  # some browsers omit type; magic bytes still checked
+})
+
+
+def _sniff_image_ext(content: bytes):
+    """Return normalized extension from magic bytes, or None if not a safe raster image."""
+    if len(content) < 12:
+        return None
+    if content[:8] == b"\x89PNG\r\n\x1a\n":
+        return "png"
+    if content[:3] == b"\xff\xd8\xff":
+        return "jpg"
+    if content[:6] in (b"GIF87a", b"GIF89a"):
+        return "gif"
+    if content[:4] == b"RIFF" and content[8:12] == b"WEBP":
+        return "webp"
+    return None
+
+
 def _save_upload(file: UploadFile, subdir: str) -> str:
-    """Save uploaded image, return public URL path."""
-    ext = (file.filename or "").rsplit(".", 1)[-1].lower()
-    if ext not in {"png", "jpg", "jpeg", "webp", "gif", "svg"}:
-        raise HTTPException(status_code=400, detail="Formato de imagem inválido (use PNG, JPG, WEBP)")
+    """Save uploaded image, return public URL path. UUID filename; raster images only (no SVG)."""
+    if subdir not in {"crests", "comprovantes"}:
+        raise HTTPException(status_code=400, detail="Destino de upload inválido")
+    ct = (file.content_type or "").split(";")[0].strip().lower()
+    if ct and ct not in _UPLOAD_ALLOWED_CT:
+        raise HTTPException(status_code=400, detail="Tipo de arquivo não permitido (use PNG, JPG, WEBP ou GIF)")
+    content = file.file.read(_UPLOAD_MAX_BYTES + 1)
+    if not content:
+        raise HTTPException(status_code=400, detail="Imagem vazia")
+    if len(content) > _UPLOAD_MAX_BYTES:
+        raise HTTPException(status_code=400, detail="Imagem muito grande (máx 5MB)")
+    sniffed = _sniff_image_ext(content)
+    if not sniffed:
+        raise HTTPException(status_code=400, detail="Arquivo não é uma imagem válida (PNG/JPG/WEBP/GIF)")
+    ext = sniffed
     fname = f"{uuid.uuid4().hex}.{ext}"
     out_path = UPLOAD_DIR / subdir / fname
-    content = file.file.read()
-    if len(content) > 5 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="Imagem muito grande (máx 5MB)")
     out_path.write_bytes(content)
+    logger.info("event=upload_saved subdir=%s bytes=%s ext=%s", subdir, len(content), ext)
     return f"/api/uploads/{subdir}/{fname}"
+
 
 def _save_upload_bytes(content: bytes, subdir: str, filename: str | None = None) -> str:
     """Save raw image bytes (WhatsApp comprovante path). Reuses same public URL layout."""
-    name = filename or "comprovante.jpg"
-    ext = name.rsplit(".", 1)[-1].lower() if "." in name else "jpg"
-    if ext not in {"png", "jpg", "jpeg", "webp", "gif"}:
-        ext = "jpg"
-    if len(content) > 5 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="Imagem muito grande (máx 5MB)")
+    if subdir not in {"crests", "comprovantes"}:
+        raise HTTPException(status_code=400, detail="Destino de upload inválido")
     if not content:
         raise HTTPException(status_code=400, detail="Imagem vazia")
+    if len(content) > _UPLOAD_MAX_BYTES:
+        raise HTTPException(status_code=400, detail="Imagem muito grande (máx 5MB)")
+    sniffed = _sniff_image_ext(content)
+    if sniffed:
+        ext = sniffed
+    else:
+        name = filename or "comprovante.jpg"
+        ext = name.rsplit(".", 1)[-1].lower() if "." in name else "jpg"
+        if ext not in _UPLOAD_ALLOWED_EXT:
+            ext = "jpg"
+        # Without recognizable magic, still accept opaque bytes as jpg (WA media edge cases)
+        ext = "jpg"
     fname = f"{uuid.uuid4().hex}.{ext}"
     out_path = UPLOAD_DIR / subdir / fname
     out_path.write_bytes(content)
+    logger.info("event=upload_saved subdir=%s bytes=%s ext=%s source=bytes", subdir, len(content), ext)
     return f"/api/uploads/{subdir}/{fname}"
 
 
