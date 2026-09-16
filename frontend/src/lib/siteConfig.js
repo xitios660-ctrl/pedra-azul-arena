@@ -35,6 +35,7 @@ export const DEFAULT_SITE_SETTINGS = {
   address_label: COURT_LOCATION,
   maps_url: COURT_MAPS_URL,
   price_per_hour: 130,
+  price_weekend: null,
   open_hour: 8,
   close_hour: 23,
   weekend_open_hour: null,  // null = use open_hour/close_hour on Sat/Sun
@@ -118,6 +119,28 @@ export function pythonWeekdayFromYmd(ymd) {
   const js = d.getDay(); // 0=Sun .. 6=Sat
   return js === 0 ? 6 : js - 1;
 }
+
+/** Effective hourly price for YYYY-MM-DD. Sat/Sun use price_weekend when set (>0). */
+export function priceForDate(settings, ymd) {
+  const base = Number(settings?.price_per_hour);
+  const we = Number(settings?.price_weekend);
+  const hasWe = settings?.price_weekend != null && settings?.price_weekend !== "" && Number.isFinite(we) && we > 0;
+  if (!ymd || !hasWe) return Number.isFinite(base) ? base : 130;
+  const wd = pythonWeekdayFromYmd(ymd);
+  if (wd === 5 || wd === 6) return we;
+  return Number.isFinite(base) ? base : 130;
+}
+
+/** True when maps_url is a usable http(s) link (do not invent URLs). */
+export function mapsUrlReady(settingsOrUrl) {
+  const u =
+    settingsOrUrl && typeof settingsOrUrl === "object"
+      ? String(settingsOrUrl.maps_url || "").trim()
+      : String(settingsOrUrl || "").trim();
+  if (!u) return false;
+  return /^https?:\/\//i.test(u);
+}
+
 
 /** True if date is an open weekday per settings.open_days (default all). Explicit [] = closed. */
 export function isOpenDay(ymd, settings) {

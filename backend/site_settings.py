@@ -6,6 +6,9 @@ open_days: list of Python datetime.weekday() ints — 0=Monday .. 6=Sunday
 Weekend hours (Cycle 21): optional weekend_open_hour / weekend_close_hour
 (null or -1 = use weekday open_hour/close_hour). Weekend = Sat/Sun (5,6).
 
+Weekend price (Cycle 23): optional price_weekend (null/0 = use price_per_hour on Sat/Sun).
+maps_url may be empty — Landing/Footer hide "Como chegar" when unset.
+
 Amenities / FAQ (Cycle 17): has_parking, parking_note, game_duration_note,
 accepts_pix, structure_blurb, amenities — used on landing + WA FAQ.
 Do not invent street numbers; keep address_label / maps_url as-is.
@@ -37,6 +40,7 @@ DEFAULTS: dict[str, Any] = {
         "https://www.google.com/maps/search/?api=1&query=Pedra%20Azul%20Nuncio%20Alto%20Tiete%20SP"
     ),
     "price_per_hour": 130,
+    "price_weekend": None,  # null/0 = use price_per_hour on Sat/Sun
     "open_hour": 8,
     "close_hour": 23,  # inclusive last slot start hour (weekday / default)
     # Optional Sat/Sun hours (Python weekday 5,6). None / -1 = use open_hour/close_hour.
@@ -78,8 +82,9 @@ class SiteSettingsUpdate(BaseModel):
     pix_key: str = Field(min_length=3, max_length=120)
     pix_copy_text: str = Field(min_length=8, max_length=600)
     address_label: str = Field(min_length=3, max_length=160)
-    maps_url: str = Field(min_length=8, max_length=500)
+    maps_url: str = Field(default="", max_length=500)
     price_per_hour: float = Field(gt=0, le=10000)
+    price_weekend: Optional[float] = Field(default=None)
     open_hour: int = Field(ge=0, le=23)
     close_hour: int = Field(ge=0, le=23)
     weekend_open_hour: Optional[int] = Field(default=None)
@@ -121,9 +126,11 @@ class SiteSettingsUpdate(BaseModel):
     @classmethod
     def http_url(cls, v: str) -> str:
         u = (v or "").strip()
+        if not u:
+            return ""
         parsed = urlparse(u)
         if parsed.scheme not in ("http", "https") or not parsed.netloc:
-            raise ValueError("maps_url deve ser http(s)")
+            raise ValueError("maps_url deve ser http(s) ou vazio")
         return u
 
     @field_validator("slot_duration_minutes")
@@ -192,6 +199,22 @@ class SiteSettingsUpdate(BaseModel):
             return None
         if n < 0 or n > 23:
             raise ValueError("hora de fim de semana deve ser 0–23 ou -1/null")
+        return n
+
+    @field_validator("price_weekend", mode="before")
+    @classmethod
+    def optional_weekend_price(cls, v):
+        """None / "" / 0 → unset (use price_per_hour on weekend)."""
+        if v is None or v == "":
+            return None
+        try:
+            n = float(v)
+        except (TypeError, ValueError) as e:
+            raise ValueError("preço de fim de semana inválido") from e
+        if n <= 0:
+            return None
+        if n > 10000:
+            raise ValueError("price_weekend deve ser <= 10000")
         return n
 
     @model_validator(mode="after")
@@ -286,8 +309,9 @@ def public_view(doc: dict[str, Any]) -> dict[str, Any]:
         "pix_key": d["pix_key"],
         "pix_copy_text": d["pix_copy_text"],
         "address_label": d["address_label"],
-        "maps_url": d["maps_url"],
+        "maps_url": (d.get("maps_url") or "").strip(),
         "price_per_hour": float(d["price_per_hour"]),
+        "price_weekend": _normalize_optional_price(d.get("price_weekend")),
         "open_hour": int(d["open_hour"]),
         "close_hour": int(d["close_hour"]),
         "weekend_open_hour": _normalize_optional_hour(d.get("weekend_open_hour")),
@@ -313,6 +337,44 @@ def public_view(doc: dict[str, Any]) -> dict[str, Any]:
             d.get("admin_alerts_enabled") if d.get("admin_alerts_enabled") is not None else DEFAULTS["admin_alerts_enabled"]
         ),
     }
+
+
+
+def _normalize_optional_price(raw: Any) -> float | None:
+    """None / "" / 0 / negative → unset. Positive float kept."""
+    if raw is None or raw == "":
+        return None
+    try:
+        n = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if n <= 0:
+        return None
+    return n
+
+
+def has_weekend_price(settings: dict[str, Any] | None = None) -> bool:
+    return _normalize_optional_price((settings or {}).get("price_weekend")) is not None
+
+
+def price_for_date(
+    settings: dict[str, Any],
+    date_ymd: str | None = None,
+    *,
+    weekday: int | None = None,
+) -> float:
+    """Effective hourly price for a date. Sat/Sun use price_weekend when set."""
+    base = float(settings.get("price_per_hour", DEFAULTS["price_per_hour"]))
+    weekend = _normalize_optional_price(settings.get("price_weekend"))
+    wd = weekday
+    if wd is None and date_ymd:
+        try:
+            wd = datetime.strptime(date_ymd, "%Y-%m-%d").weekday()
+        except ValueError:
+            wd = None
+    if wd is not None and wd in (5, 6) and weekend is not None:
+        return float(weekend)
+    return base
 
 
 def _normalize_optional_hour(raw: Any) -> int | None:

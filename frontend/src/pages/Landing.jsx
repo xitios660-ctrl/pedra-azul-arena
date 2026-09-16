@@ -17,6 +17,7 @@ import {
   BALEYS_POSTER_FALLBACK,
   structureChips,
   gameDurationLabel,
+  mapsUrlReady,
 } from "@/lib/siteConfig";
 import { useSiteSettings } from "@/lib/SiteSettings";
 import { useMotionSystem } from "@/lib/motion";
@@ -364,6 +365,17 @@ export default function Landing() {
               <div>
                 <div className="text-[10px] uppercase tracking-[0.25em] text-white/45">Local</div>
                 <div className="text-sm text-white/85 mt-0.5">{settings.address_label || COURT_LOCATION}</div>
+                {mapsUrlReady(settings) && (
+                  <a
+                    href={String(settings.maps_url).trim()}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    data-testid="landing-como-chegar"
+                    className="inline-flex items-center gap-1 text-xs text-[var(--brand)] mt-1.5 hover:underline"
+                  >
+                    Como chegar
+                  </a>
+                )}
               </div>
             </div>
             <div className="glass px-4 py-3 flex items-start gap-3 border border-white/10">

@@ -58,11 +58,12 @@ def is_past_slot(date: str, start_time: str, now: Optional[datetime] = None) -> 
 async def get_runtime(db, date: Optional[str] = None) -> dict[str, Any]:
     """Court + settings + time slots. Pass date (YYYY-MM-DD) for weekend-aware hours."""
     settings = await sset.get_settings(db)
+    price = sset.price_for_date(settings, date) if date else float(settings["price_per_hour"])
     court = {
         "id": COURT_ID,
         "name": settings.get("court_name") or COURT["name"],
         "type": "Futsal · Society",
-        "price_per_hour": float(settings["price_per_hour"]),
+        "price_per_hour": float(price),
         "color": "#2563EB",
     }
     slots = sset.time_slots_from(settings, date)
@@ -157,7 +158,9 @@ async def build_availability(
         "effective_close_hour": runtime["effective_close_hour"],
         "open_days": runtime["settings"].get("open_days", [0, 1, 2, 3, 4, 5, 6]),
         "slot_duration_minutes": runtime["settings"]["slot_duration_minutes"],
-        "price_per_hour": price,
+        "price_per_hour": float(runtime["settings"]["price_per_hour"]),
+        "price_weekend": runtime["settings"].get("price_weekend"),
+        "effective_price_per_hour": price,
     }}
 
 
@@ -538,10 +541,16 @@ async def reschedule_booking_atomic(
         raise ValueError("Horário bloqueado")
 
     new_sk = slot_key(court_id, new_date, new_start_time)
+    dur = int(existing.get("duration_minutes") or settings.get("slot_duration_minutes") or 60)
+    new_price = float(sset.price_for_date(settings, new_date))
+    new_total = new_price * (dur / 60)
+    new_deposit = round(new_total * DEPOSIT_RATE, 2)
     update_fields = {
         "date": new_date,
         "start_time": new_start_time,
         "slot_key": new_sk,
+        "total": new_total,
+        "deposit": new_deposit,
         "rescheduled_at": now_iso(),
         "previous_date": old_date,
         "previous_start_time": old_time,
@@ -549,6 +558,10 @@ async def reschedule_booking_atomic(
         "reminder_sent": False,
         "reminder_sent_at": None,
     }
+    # Keep PIX amount in sync when still pending (never auto-confirm)
+    pay = existing.get("payment") or {}
+    if pay.get("status") == "pending":
+        update_fields["payment.amount"] = new_deposit
     try:
         updated = await db.bookings.find_one_and_update(
             q,

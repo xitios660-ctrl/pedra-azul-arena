@@ -71,6 +71,7 @@ export default function AdminDashboard() {
   const [bookings, setBookings] = useState([]);
   const [tournaments, setTournaments] = useState([]);
   const [activeTab, setActiveTab] = useState("dashboard");
+  const [bookingsInitialSearch, setBookingsInitialSearch] = useState("");
   const [selectedTour, setSelectedTour] = useState(null);
   const [waModal, setWaModal] = useState(null);
   const [rescheduleTarget, setRescheduleTarget] = useState(null);
@@ -166,6 +167,7 @@ export default function AdminDashboard() {
             { id: "bookings", label: "Reservas" },
             { id: "calendar", label: "Calendário" },
             { id: "whatsapp", label: "WhatsApp" },
+            { id: "customers", label: "Clientes" },
             { id: "settings", label: "Configurações" },
             { id: "tournaments", label: "Campeonatos" },
           ].map(t => (
@@ -188,6 +190,7 @@ export default function AdminDashboard() {
         )}
         {activeTab === "bookings" && (
           <BookingsAdmin bookings={bookings}
+            initialSearch={bookingsInitialSearch}
             onConfirm={confirmAndPrepareWhatsapp}
             onCancel={cancelBooking}
             onReject={rejectBooking}
@@ -199,6 +202,14 @@ export default function AdminDashboard() {
         )}
         {activeTab === "calendar" && <AdminCalendar />}
         {activeTab === "whatsapp" && <WhatsAppAdmin />}
+        {activeTab === "customers" && (
+          <CustomersAdmin
+            onOpenReservas={(q) => {
+              setBookingsInitialSearch(q || "");
+              setActiveTab("bookings");
+            }}
+          />
+        )}
         {activeTab === "settings" && <SiteSettingsAdmin />}
         {activeTab === "tournaments" && (
           <TournamentsAdmin tournaments={tournaments} selected={selectedTour} setSelected={setSelectedTour} onUpdated={refresh} />
@@ -730,12 +741,15 @@ function DashboardView({ stats, bookings = [], onConfirm, onReject }) {
   );
 }
 
-function BookingsAdmin({ bookings, onConfirm, onCancel, onReject, onNoShow, onCheckIn, onUndoCheckIn, onSaveNotes, onReschedule }) {
+function BookingsAdmin({ bookings, initialSearch = "", onConfirm, onCancel, onReject, onNoShow, onCheckIn, onUndoCheckIn, onSaveNotes, onReschedule }) {
   const awaitingCount = bookings.filter((b) => b.status === "awaiting_admin").length;
   const [filter, setFilter] = useState("all");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useState(initialSearch || "");
+  useEffect(() => {
+    if (initialSearch) setSearch(initialSearch);
+  }, [initialSearch]);
   const [exporting, setExporting] = useState(false);
   const [autoFocused, setAutoFocused] = useState(false);
   useEffect(() => {
@@ -1193,6 +1207,133 @@ function MatchEditor({ tournamentId, m, onUpdated }) {
 }
 
 
+
+function CustomersAdmin({ onOpenReservas }) {
+  const [q, setQ] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [result, setResult] = useState(null);
+  const [expanded, setExpanded] = useState(null);
+
+  const search = async (e) => {
+    e?.preventDefault?.();
+    const needle = q.trim();
+    if (needle.length < 2) {
+      setErr("Digite ao menos 2 caracteres (nome, telefone ou CPF).");
+      return;
+    }
+    setBusy(true); setErr(""); setResult(null); setExpanded(null);
+    try {
+      const { data } = await api.get("/admin/customers/lookup", { params: { q: needle } });
+      setResult(data);
+    } catch (e2) {
+      const d = e2.response?.data?.detail;
+      setErr(typeof d === "string" ? d : (e2.message || "Falha na busca"));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div data-testid="admin-customers" className="space-y-4">
+      <div>
+        <div className="text-[11px] uppercase tracking-[0.35em] text-[var(--brand)]">// CRM lite</div>
+        <h2 className="font-heading text-4xl uppercase italic mb-2">Clientes</h2>
+        <p className="text-white/55 text-sm max-w-2xl">
+          Busca clientes que já têm reservas (por nome, telefone ou CPF). Não cria cadastro — só histórico existente.
+        </p>
+      </div>
+      <form onSubmit={search} className="glass p-4 flex flex-wrap gap-3 items-end">
+        <label className="flex-1 min-w-[220px]">
+          <div className="text-[10px] uppercase tracking-[0.25em] text-white/45 mb-1">Buscar</div>
+          <input
+            type="search"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Nome, telefone ou CPF"
+            data-testid="admin-customers-search"
+            className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm min-h-[44px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--brand)]"
+          />
+        </label>
+        <button
+          type="submit"
+          disabled={busy}
+          data-testid="admin-customers-search-btn"
+          className="btn-neon inline-flex items-center gap-2 min-h-[44px]"
+        >
+          {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+          Buscar
+        </button>
+      </form>
+      {err && <div className="text-[var(--danger)] text-sm" role="alert">{err}</div>}
+      {result && (
+        <div className="space-y-3" data-testid="admin-customers-results">
+          <div className="text-white/50 text-sm">
+            {result.count === 0
+              ? "Nenhum cliente com reservas para essa busca."
+              : `${result.count} cliente(s) encontrado(s)`}
+          </div>
+          {(result.customers || []).map((c) => {
+            const key = c.key || c.whatsapp || c.customer_name;
+            const open = expanded === key;
+            const counts = c.counts || {};
+            return (
+              <div key={key} className="glass p-4 border border-white/10" data-testid="admin-customer-card">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <div className="font-heading text-xl uppercase italic">{c.customer_name || "Sem nome"}</div>
+                    <div className="text-sm text-white/60 mt-1">
+                      {c.whatsapp || "—"} · CPF {c.cpf_masked || "—"}
+                    </div>
+                    <div className="text-xs text-white/45 mt-2 flex flex-wrap gap-3">
+                      <span>Total {counts.total ?? 0}</span>
+                      <span className="text-[var(--success)]">Conf. {counts.confirmed ?? 0}</span>
+                      <span className="text-[var(--warning)]">No-show {counts.no_show ?? 0}</span>
+                      <span className="text-[var(--danger)]">Cancel. {counts.cancelled ?? 0}</span>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      className="btn-ghost !py-2 !px-3 !text-xs"
+                      onClick={() => setExpanded(open ? null : key)}
+                    >
+                      {open ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                      Histórico
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-ghost !py-2 !px-3 !text-xs"
+                      data-testid="admin-customer-open-reservas"
+                      onClick={() => onOpenReservas?.(c.whatsapp || c.customer_name || "")}
+                    >
+                      Ver em Reservas
+                    </button>
+                  </div>
+                </div>
+                {open && (
+                  <ul className="mt-4 space-y-2 border-t border-white/10 pt-3">
+                    {(c.bookings || []).map((b) => (
+                      <li key={b.id} className="flex flex-wrap items-center justify-between gap-2 text-sm">
+                        <div>
+                          <span className="text-white/85">{b.date} · {b.start_time}</span>
+                          <span className="text-white/40 ml-2">{STATUS_LABEL[b.status] || b.status}</span>
+                          {b.no_show ? <span className="ml-2 text-[var(--warning)]">no-show</span> : null}
+                        </div>
+                        <div className="text-white/50 text-xs font-mono">{String(b.id || "").slice(0, 8)}</div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SiteSettingsAdmin() {
   const { refresh: refreshPublicSettings } = useSiteSettings();
   const [form, setForm] = useState(null);
@@ -1246,6 +1387,9 @@ function SiteSettingsAdmin() {
       const payload = {
         ...form,
         price_per_hour: Number(form.price_per_hour),
+        price_weekend: (form.price_weekend === "" || form.price_weekend == null || Number(form.price_weekend) <= 0)
+          ? null
+          : Number(form.price_weekend),
         open_hour: Number(form.open_hour),
         close_hour: Number(form.close_hour),
         weekend_open_hour: useWeekend ? Number(form.weekend_open_hour) : null,
@@ -1356,6 +1500,19 @@ function SiteSettingsAdmin() {
             {field("Fim de semana — fecha último slot (0–23)", "weekend_close_hour", { type: "number", min: 0, max: 23 })}
           </div>
         )}
+        <label className="block" data-testid="admin-price-weekend">
+          <div className="text-[10px] uppercase tracking-[0.25em] text-white/55 mb-1">Preço sáb/dom (R$) — opcional</div>
+          <input
+            type="number"
+            min={0}
+            step={1}
+            className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm min-h-[44px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--brand)]"
+            value={form.price_weekend ?? ""}
+            placeholder="Vazio ou 0 = usar preço da semana"
+            onChange={(e) => set("price_weekend", e.target.value === "" ? "" : e.target.value)}
+          />
+          <p className="text-white/40 text-xs mt-1">Se vazio ou 0, sáb/dom usam o preço / hora normal.</p>
+        </label>
       </div>
       <div className="border border-white/10 rounded-lg p-4 space-y-3 bg-black/20" data-testid="admin-open-days">
         <div className="text-[10px] uppercase tracking-[0.25em] text-[var(--brand)]">Dias abertos</div>
@@ -1410,7 +1567,8 @@ function SiteSettingsAdmin() {
         </label>
       </div>
       {field("Endereço / local (label)", "address_label")}
-      {field("URL Maps", "maps_url")}
+      {field("URL Maps (vazio = oculta “Como chegar”)", "maps_url")}
+      <p className="text-white/40 text-xs -mt-2">Deixe vazio para não exibir o link no site. Não invente URL do Google Maps.</p>
       {field("PIX copia-e-cola (texto)", "pix_copy_text", { textarea: true, maxLength: 600 })}
       <div className="border border-white/10 rounded-lg p-4 space-y-3 bg-black/20" data-testid="admin-amenities">
         <div className="text-[10px] uppercase tracking-[0.25em] text-[var(--brand)]">Estrutura · FAQ</div>

@@ -10,8 +10,10 @@ import {
   defaultWhatsAppPrefill,
   COURT_LOCATION,
   priceLabel,
+  priceForDate,
   isOpenDay,
   OPEN_DAY_LABELS,
+  mapsUrlReady,
 } from "@/lib/siteConfig";
 import { useSiteSettings } from "@/lib/SiteSettings";
 import { pixPipelineLabel } from "@/lib/paymentStatus";
@@ -73,7 +75,7 @@ function flowIndex(step, hasCourt, hasDate, hasSlot) {
 
 export default function Booking() {
   const { settings, priceLabel: livePriceLabel, waReady, waHref: ctxWa } = useSiteSettings();
-  const courtPriceLabel = livePriceLabel || priceLabel(settings?.price_per_hour);
+
   const navigate = useNavigate();
   const [waStatus, setWaStatus] = useState(null); // CONECTADO | AGUARDANDO_QR | DESCONECTADO | ...
   const [courts, setCourts] = useState([]);
@@ -233,6 +235,16 @@ export default function Booking() {
     setYourTeam(""); setOppTeam(""); setYourCrest("⚽"); setOppCrest("🔥");
   };
 
+  const effectiveHourly = (() => {
+    const fromAvail = availability?.settings?.effective_price_per_hour;
+    if (fromAvail != null && Number(fromAvail) > 0) return Number(fromAvail);
+    const slotPrice = pickedSlot?.price;
+    if (slotPrice != null && Number(slotPrice) > 0) return Number(slotPrice);
+    if (availability?.court?.price_per_hour != null) return Number(availability.court.price_per_hour);
+    return priceForDate(settings, date) || Number(settings?.price_per_hour) || 0;
+  })();
+  const courtPriceLabel = priceLabel(effectiveHourly) || livePriceLabel || priceLabel(settings?.price_per_hour);
+
   const activeFlow = flowIndex(step, !!selectedCourt, !!date, !!pickedSlot);
   const dayOpen = isOpenDay(date, settings);
   const freeSlots = dayOpen
@@ -360,7 +372,10 @@ export default function Booking() {
               <div className="mt-3 flex items-end justify-between">
                 <div>
                   <div className="text-xs text-white/50">A partir de</div>
-                  <div className="font-heading text-2xl text-[var(--brand)]">{fmtBRL(c.price_per_hour)}<span className="text-sm text-white/50">/hora</span></div>
+                  <div className="font-heading text-2xl text-[var(--brand)]">{fmtBRL(effectiveHourly || c.price_per_hour)}<span className="text-sm text-white/50">/hora</span></div>
+                  {settings?.price_weekend != null && Number(settings.price_weekend) > 0 && (
+                    <div className="text-[10px] text-white/45 mt-0.5">Sáb/dom {fmtBRL(Number(settings.price_weekend))}/h · semana {fmtBRL(c.price_per_hour)}/h</div>
+                  )}
                 </div>
                 {selectedCourt?.id === c.id && (
                   <div className="text-[var(--brand)] font-display tracking-[0.3em] uppercase text-xs flex items-center gap-1">
@@ -638,7 +653,7 @@ export default function Booking() {
               <div className="mt-8 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4 glass p-4">
                 <div>
                   <div className="text-[10px] uppercase tracking-[0.3em] text-white/40">Total · Calção (30%)</div>
-                  <div className="font-heading text-2xl sm:text-3xl">{fmtBRL(selectedCourt?.price_per_hour || 0)} · <span className="text-[var(--brand)]">{fmtBRL((selectedCourt?.price_per_hour || 0) * 0.3)}</span></div>
+                  <div className="font-heading text-2xl sm:text-3xl">{fmtBRL(effectiveHourly || 0)} · <span className="text-[var(--brand)]">{fmtBRL((effectiveHourly || 0) * 0.3)}</span></div>
                 </div>
                 <button
                   data-testid={BOOKING.confirmReservation}

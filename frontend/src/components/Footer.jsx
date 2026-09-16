@@ -1,7 +1,7 @@
 import React from "react";
 import { Instagram, Phone, MapPin, Mail, MessageCircle } from "lucide-react";
 import { useSiteSettings } from "@/lib/SiteSettings";
-import { defaultWhatsAppPrefill, whatsappUrl } from "@/lib/siteConfig";
+import { defaultWhatsAppPrefill, whatsappUrl, mapsUrlReady } from "@/lib/siteConfig";
 
 export default function Footer() {
   const { settings, waHref: ctxWa, waReady } = useSiteSettings();
@@ -112,6 +112,17 @@ export default function Footer() {
             )}
             <div className="flex items-center gap-2"><Instagram className="w-3.5 h-3.5 text-[var(--brand)]" /> @pedraazulfs</div>
             <div className="flex items-center gap-2"><MapPin className="w-3.5 h-3.5 text-[var(--brand)]" /> {address}</div>
+            {mapsUrlReady(settings) && (
+              <a
+                href={String(settings.maps_url).trim()}
+                target="_blank"
+                rel="noopener noreferrer"
+                data-testid="footer-como-chegar"
+                className="flex items-center gap-2 hover:text-[var(--brand)] transition-colors text-[var(--brand)]"
+              >
+                <MapPin className="w-3.5 h-3.5" /> Como chegar
+              </a>
+            )}
           </div>
         </div>
         <div>
@@ -135,6 +146,9 @@ export default function Footer() {
           <div className="text-[11px] tracking-[0.3em] uppercase text-[var(--accent)] mb-3">Valor</div>
           <div className="text-white/70 text-sm space-y-1">
             <div className="font-heading text-3xl text-white">R$ {priceShown}<span className="text-white/50 text-sm">/h</span></div>
+            {settings.price_weekend != null && Number(settings.price_weekend) > 0 && (
+              <div className="text-white/55 text-xs">Sáb/dom R$ {Number(settings.price_weekend) % 1 === 0 ? String(Number(settings.price_weekend)) : Number(settings.price_weekend).toFixed(2)}/h</div>
+            )}
             <div className="text-white/60">{settings.court_name || "Quadra Pedra Azul · Núncio"}</div>
             <div className="text-[var(--accent)] text-xs mt-2">30% OFF de sinal no PIX</div>
           </div>

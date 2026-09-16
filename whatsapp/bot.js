@@ -16,6 +16,7 @@ const ADMIN_JID = (process.env.WHATSAPP_ADMIN_JID || "").trim();
 
 const FALLBACK_SETTINGS = {
   price_per_hour: Number(process.env.COURT_PRICE_PER_HOUR || 130),
+  price_weekend: null,
   address_label:
     process.env.COURT_LOCATION ||
     "Núncio · Alto Tietê · SP",
@@ -50,6 +51,22 @@ async function getSiteSettings() {
   } catch (_) {
     return _settingsCache.data || FALLBACK_SETTINGS;
   }
+}
+
+
+/** Effective hourly price for a YYYY-MM-DD (Sat/Sun = price_weekend when set). */
+function priceForDate(site, dateYmd) {
+  const base = Number(site?.price_per_hour) || 130;
+  const we = Number(site?.price_weekend);
+  const hasWe = site?.price_weekend != null && site?.price_weekend !== "" && Number(site.price_weekend) > 0;
+  if (!dateYmd || !hasWe) return base;
+  try {
+    const d = new Date(`${dateYmd}T12:00:00`);
+    const js = d.getDay(); // 0=Sun .. 6=Sat
+    const py = js === 0 ? 6 : js - 1;
+    if (py === 5 || py === 6) return we;
+  } catch (_) { /* fall through */ }
+  return base;
 }
 
 function phoneFromJid(jid) {
@@ -181,6 +198,8 @@ export function createBot(deps) {
     };
     const site = await getSiteSettings();
     const PRICE = site.price_per_hour;
+    const PRICE_WEEKEND = (site.price_weekend != null && Number(site.price_weekend) > 0)
+      ? Number(site.price_weekend) : null;
     const COURT_NAME = site.court_name;
     const GAME_MINUTES = site.slot_duration_minutes || 60;
 
@@ -225,9 +244,13 @@ export function createBot(deps) {
           if (hasWe) {
             hoursLine += ` (sáb/dom ${String(wo).padStart(2, "0")}h–${String(wc).padStart(2, "0")}h)`;
           }
+          const wePrice = (s.price_weekend != null && Number(s.price_weekend) > 0) ? Number(s.price_weekend) : null;
+          const priceLine = wePrice
+            ? `Valor: *R$ ${s.price_per_hour}/hora* (sáb/dom *R$ ${wePrice}/hora*).`
+            : `Valor: *R$ ${s.price_per_hour}/hora*.`;
           await reply(
             `⏱️ Cada jogo/reserva dura *${note}* na *${s.court_name}*.\n` +
-              `Valor: *R$ ${s.price_per_hour}/hora*. Horário: ${hoursLine}. Quer ver vagas? Ex.: "sábado à noite".`
+              `${priceLine} Horário: ${hoursLine}. Quer ver vagas? Ex.: "sábado à noite".`
           );
           return;
         }
@@ -257,12 +280,16 @@ export function createBot(deps) {
         case "price": {
           const s = await getSiteSettings();
           const note = (s.game_duration_note || "").trim() || `${s.slot_duration_minutes || 60} min`;
+          const wePrice = (s.price_weekend != null && Number(s.price_weekend) > 0) ? Number(s.price_weekend) : null;
+          const priceLine = wePrice
+            ? `*R$ ${s.price_per_hour}/hora* na semana · *R$ ${wePrice}/hora* sáb/dom`
+            : `*R$ ${s.price_per_hour}/hora*`;
           const pixBit =
             s.accepts_pix === false
               ? "PIX desativado nas configurações — combine o pagamento no WhatsApp."
               : "No site: calção PIX 30% + comprovante. Pelo WhatsApp combinamos o pagamento na confirmação.";
           await reply(
-            `A *${s.court_name}* custa *R$ ${s.price_per_hour}/hora* (${note}).\n` + pixBit
+            `A *${s.court_name}* custa ${priceLine} (${note}).\n` + pixBit
           );
           return;
         }
@@ -270,9 +297,10 @@ export function createBot(deps) {
         case "address": {
           const s = await getSiteSettings();
           const blurb = (s.structure_blurb || "").trim();
+          const maps = (s.maps_url || "").trim();
           await reply(
             `📍 *Local:* ${s.address_label}\n` +
-              `🗺️ Maps (busca): ${s.maps_url}\n` +
+              (maps ? `🗺️ Maps (busca): ${maps}\n` : "") +
               (blurb ? `${blurb}\n` : "") +
               `(Sem número de rua inventado no cadastro — se precisar do ponto exato, peça aqui.)`
           );
@@ -428,13 +456,14 @@ export function createBot(deps) {
             return;
           }
           await conv.set(jid, "awaiting_confirm", { date, time, name });
+          const confPrice = priceForDate(site, date);
           await reply(
             `Confirma a reserva?\n` +
               `👤 ${name}\n` +
               `📅 ${formatDateBr(date)} (${weekdayNamePt(date)})\n` +
               `⏰ ${time} · ${GAME_MINUTES} min\n` +
               `🏟 ${COURT_NAME}\n` +
-              `💰 R$ ${PRICE}/h\n\n` +
+              `💰 R$ ${confPrice}/h\n\n` +
               `Responda *sim* ou *não*. (Se mudou de ideia, diga a nova data/hora.)`
           );
           return;

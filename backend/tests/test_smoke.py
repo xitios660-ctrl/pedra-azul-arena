@@ -1643,3 +1643,212 @@ def test_admin_check_in_rules(admin_session, s):
     if bid_pending:
         admin_session.post(f"{API}/admin/bookings/{bid_pending}/cancel", timeout=10)
     admin_session.post(f"{API}/admin/bookings/{bid_today}/cancel", timeout=10)
+
+
+def test_weekend_price_applied(admin_session, s):
+    """Cycle 23: price_weekend used on Sat/Sun for availability + booking total/PIX deposit."""
+    r = admin_session.get(f"{API}/admin/site-settings", timeout=10)
+    assert r.status_code == 200, r.text
+    original = r.json()
+
+    base = datetime.now(TZ) + timedelta(days=28)
+    weekday_day = None
+    saturday = None
+    for i in range(21):
+        cand = base + timedelta(days=i)
+        if weekday_day is None and cand.weekday() == 1:  # Tuesday
+            weekday_day = cand.strftime("%Y-%m-%d")
+        if saturday is None and cand.weekday() == 5:
+            saturday = cand.strftime("%Y-%m-%d")
+        if weekday_day and saturday:
+            break
+    assert weekday_day and saturday
+
+    patched = {
+        **original,
+        "price_per_hour": 130,
+        "price_weekend": 160,
+        "open_days": [0, 1, 2, 3, 4, 5, 6],
+    }
+    bids = []
+    try:
+        rput = admin_session.put(f"{API}/admin/site-settings", json=patched, timeout=10)
+        assert rput.status_code == 200, rput.text
+        assert float(rput.json()["price_weekend"]) == 160
+
+        pub = s.get(f"{API}/site-settings", timeout=10)
+        assert pub.status_code == 200
+        assert float(pub.json()["price_weekend"]) == 160
+
+        avail_wd = s.get(
+            f"{API}/courts/availability",
+            params={"court_id": "court-1", "date": weekday_day},
+            timeout=15,
+        )
+        assert avail_wd.status_code == 200, avail_wd.text
+        wd = avail_wd.json()
+        assert float(wd["settings"]["effective_price_per_hour"]) == 130
+        assert float(wd["court"]["price_per_hour"]) == 130
+        slots_wd = [x for x in (wd.get("slots") or []) if x.get("status") == "available"]
+        assert slots_wd
+        assert float(slots_wd[0]["price"]) == 130
+
+        avail_we = s.get(
+            f"{API}/courts/availability",
+            params={"court_id": "court-1", "date": saturday},
+            timeout=15,
+        )
+        assert avail_we.status_code == 200, avail_we.text
+        we = avail_we.json()
+        assert float(we["settings"]["effective_price_per_hour"]) == 160
+        assert float(we["court"]["price_per_hour"]) == 160
+        slots_we = [x for x in (we.get("slots") or []) if x.get("status") == "available"]
+        assert slots_we
+        assert float(slots_we[0]["price"]) == 160
+
+        # Book Saturday → total/deposit use weekend price (PIX amount = 30% deposit)
+        start = slots_we[0]["time"]
+        created = s.post(
+            f"{API}/bookings",
+            json={
+                "court_id": "court-1",
+                "date": saturday,
+                "start_time": start,
+                "duration_minutes": 60,
+                "cpf": SMOKE_CPF,
+                "customer_name": "Weekend Price Customer",
+                "whatsapp": "11988887777",
+                "your_team_name": "A",
+                "opponent_team_name": "B",
+            },
+            headers=_xff(),
+            timeout=15,
+        )
+        assert created.status_code in (200, 201), created.text
+        body = created.json()
+        bids.append(body["id"])
+        assert float(body["total"]) == 160.0
+        assert float(body["deposit"]) == 48.0  # 30% of 160
+        assert float((body.get("payment") or {}).get("amount") or 0) == 48.0
+        assert body.get("status") == "pending"  # PIX never auto-confirm
+
+        # Null/0 weekend price falls back
+        cleared = {**patched, "price_weekend": None}
+        r2 = admin_session.put(f"{API}/admin/site-settings", json=cleared, timeout=10)
+        assert r2.status_code == 200, r2.text
+        assert r2.json().get("price_weekend") in (None, 0)
+        avail3 = s.get(
+            f"{API}/courts/availability",
+            params={"court_id": "court-1", "date": saturday},
+            timeout=15,
+        )
+        assert avail3.status_code == 200
+        assert float(avail3.json()["settings"]["effective_price_per_hour"]) == 130
+    finally:
+        for bid in bids:
+            admin_session.post(f"{API}/admin/bookings/{bid}/cancel", timeout=10)
+        admin_session.put(f"{API}/admin/site-settings", json=original, timeout=10)
+
+
+def test_weekend_price_unit_price_for_date():
+    """Cycle 23: pure unit — weekday vs weekend price helper."""
+    import sys
+    from pathlib import Path as P
+    root = P(__file__).resolve().parents[1]
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    import site_settings as sset
+
+    settings = {"price_per_hour": 130, "price_weekend": 160}
+    # Monday 2026-09-21
+    assert sset.price_for_date(settings, "2026-09-21") == 130
+    # Saturday 2026-09-19
+    assert sset.price_for_date(settings, "2026-09-19") == 160
+    # Sunday 2026-09-20
+    assert sset.price_for_date(settings, "2026-09-20") == 160
+    plain = {"price_per_hour": 130, "price_weekend": None}
+    assert sset.price_for_date(plain, "2026-09-19") == 130
+    zero = {"price_per_hour": 130, "price_weekend": 0}
+    assert sset.price_for_date(zero, "2026-09-19") == 130
+
+
+def test_admin_customers_lookup(admin_session, s):
+    """Cycle 23: CRM lite lookup by phone/name returns bookings + counts."""
+    # Create two bookings for same customer
+    bids = []
+    phone = "5511987654321"
+    name = "CRM Lite Cliente Cycle23"
+    for day_off, start in ((40, "14:00"), (41, "15:00")):
+        day = (datetime.now(TZ) + timedelta(days=day_off)).strftime("%Y-%m-%d")
+        r = admin_session.post(
+            f"{API}/admin/calendar/bookings",
+            json={
+                "date": day,
+                "start_time": start,
+                "customer_name": name,
+                "whatsapp": phone,
+            },
+            timeout=15,
+        )
+        if r.status_code in (200, 201):
+            bids.append(r.json()["id"])
+        else:
+            # slot conflict — try other times
+            for alt in ("16:00", "17:00", "18:00"):
+                r = admin_session.post(
+                    f"{API}/admin/calendar/bookings",
+                    json={
+                        "date": day,
+                        "start_time": alt,
+                        "customer_name": name,
+                        "whatsapp": phone,
+                    },
+                    timeout=15,
+                )
+                if r.status_code in (200, 201):
+                    bids.append(r.json()["id"])
+                    break
+    assert len(bids) >= 1, "could not create bookings for lookup test"
+
+    try:
+        # Auth required
+        anon = s.get(f"{API}/admin/customers/lookup", params={"q": name}, headers=_xff(), timeout=10)
+        assert anon.status_code in (401, 403), anon.text
+
+        # Too short
+        short = admin_session.get(f"{API}/admin/customers/lookup", params={"q": "a"}, timeout=10)
+        assert short.status_code == 400, short.text
+
+        # By name
+        by_name = admin_session.get(f"{API}/admin/customers/lookup", params={"q": "CRM Lite"}, timeout=15)
+        assert by_name.status_code == 200, by_name.text
+        data = by_name.json()
+        assert data["count"] >= 1
+        cust = next((c for c in data["customers"] if name.lower() in (c.get("customer_name") or "").lower()), None)
+        assert cust is not None
+        assert cust["counts"]["total"] >= 1
+        assert isinstance(cust["bookings"], list) and len(cust["bookings"]) >= 1
+        assert cust["bookings"][0].get("id")
+        assert "status" in cust["bookings"][0]
+
+        # By phone digits
+        by_phone = admin_session.get(
+            f"{API}/admin/customers/lookup",
+            params={"q": "987654321"},
+            timeout=15,
+        )
+        assert by_phone.status_code == 200, by_phone.text
+        assert by_phone.json()["count"] >= 1
+
+        # No invented customers
+        miss = admin_session.get(
+            f"{API}/admin/customers/lookup",
+            params={"q": "zzzznobodyxyzqqq"},
+            timeout=10,
+        )
+        assert miss.status_code == 200
+        assert miss.json()["count"] == 0
+        assert miss.json()["customers"] == []
+    finally:
+        for bid in bids:
+            admin_session.post(f"{API}/admin/bookings/{bid}/cancel", timeout=10)

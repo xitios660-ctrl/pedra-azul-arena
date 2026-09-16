@@ -997,6 +997,139 @@ async def admin_export_bookings_csv(
     )
 
 
+
+def _admin_mask_cpf_display(b: dict) -> str:
+    """Admin CRM: show last 5 digits only (never invent customers)."""
+    stored = (b.get("cpf_masked") or "").strip()
+    d = only_digits(b.get("cpf") or "")
+    if len(d) == 11:
+        return f"***.***.{d[6:9]}-{d[9:11]}"
+    if stored and not stored.lower().startswith("wa") and not stored.lower().startswith("ad"):
+        # Prefer partially masking a formatted stored value
+        dd = only_digits(stored)
+        if len(dd) == 11:
+            return f"***.***.{dd[6:9]}-{dd[9:11]}"
+        return stored
+    return stored or "—"
+
+
+@api.get("/admin/customers/lookup")
+async def admin_customers_lookup(
+    admin: dict = Depends(require_admin),
+    q: str = "",
+    limit: int = 20,
+):
+    """CRM lite: search customers that already have bookings (phone / CPF / name).
+
+    Does not invent customers without bookings. Returns summary + recent bookings.
+    """
+    needle = (q or "").strip()
+    if len(needle) < 2:
+        raise HTTPException(status_code=400, detail="Informe ao menos 2 caracteres para buscar")
+    lim = max(1, min(int(limit or 20), 50))
+    digits = only_digits(needle)
+    or_clause = [
+        {"customer_name": {"$regex": needle, "$options": "i"}},
+        {"whatsapp": {"$regex": needle, "$options": "i"}},
+    ]
+    # Digit search only with enough digits to avoid accidental broad matches (e.g. "999")
+    if len(digits) >= 8:
+        or_clause.append({"whatsapp": {"$regex": digits}})
+    if len(digits) == 11:
+        or_clause.append({"cpf": digits})
+    elif len(digits) >= 8:
+        or_clause.append({"cpf": {"$regex": digits}})
+        or_clause.append({"cpf_masked": {"$regex": digits}})
+    rows = await db.bookings.find(
+        {"$or": or_clause},
+        {"_id": 0},
+    ).sort("date", -1).to_list(800)
+
+    # Group by normalized phone (fallback: cpf / name key)
+    groups: dict[str, dict] = {}
+    for b in rows:
+        phone = only_digits(b.get("whatsapp") or "")
+        cpf_d = only_digits(b.get("cpf") or "")
+        if phone:
+            key = f"p:{phone}"
+        elif cpf_d and len(cpf_d) == 11 and not cpf_d.startswith("0" * 3):
+            # skip synthetic wa/ad padded cpfs when possible
+            key = f"c:{cpf_d}"
+        else:
+            key = f"n:{(b.get('customer_name') or '').strip().lower()}"
+        g = groups.get(key)
+        if not g:
+            g = {
+                "key": key,
+                "customer_name": b.get("customer_name") or "",
+                "whatsapp": b.get("whatsapp") or "",
+                "cpf_masked": _admin_mask_cpf_display(b),
+                "bookings": [],
+                "counts": {
+                    "total": 0,
+                    "confirmed": 0,
+                    "pending": 0,
+                    "awaiting_admin": 0,
+                    "cancelled": 0,
+                    "no_show": 0,
+                    "expired": 0,
+                    "rejected": 0,
+                },
+            }
+            groups[key] = g
+        # Prefer a real-looking name / phone from newer rows
+        if b.get("customer_name") and (
+            not g["customer_name"] or len(str(b.get("customer_name"))) > len(g["customer_name"])
+        ):
+            g["customer_name"] = b["customer_name"]
+        if b.get("whatsapp") and not g["whatsapp"]:
+            g["whatsapp"] = b["whatsapp"]
+        if g["cpf_masked"] in ("—", "", None):
+            g["cpf_masked"] = _admin_mask_cpf_display(b)
+        st = (b.get("status") or "unknown").strip()
+        g["counts"]["total"] += 1
+        if st in g["counts"]:
+            g["counts"][st] += 1
+        elif st == "no-show":
+            g["counts"]["no_show"] += 1
+        g["bookings"].append({
+            "id": b.get("id"),
+            "date": b.get("date"),
+            "start_time": b.get("start_time"),
+            "status": b.get("status"),
+            "total": b.get("total"),
+            "deposit": b.get("deposit"),
+            "payment_status": (b.get("payment") or {}).get("status"),
+            "source": b.get("source"),
+            "court_name": b.get("court_name"),
+            "checked_in_at": b.get("checked_in_at"),
+            "no_show": st in ("no_show", "no-show"),
+        })
+
+    # Sort bookings recent first within each group; sort groups by most recent booking date
+    customers = list(groups.values())
+    for c in customers:
+        c["bookings"].sort(
+            key=lambda x: (x.get("date") or "", x.get("start_time") or ""),
+            reverse=True,
+        )
+        # Cap per-customer booking list
+        c["bookings"] = c["bookings"][:30]
+    customers.sort(
+        key=lambda c: (
+            (c["bookings"][0].get("date") if c["bookings"] else "") or "",
+            (c["bookings"][0].get("start_time") if c["bookings"] else "") or "",
+        ),
+        reverse=True,
+    )
+    customers = customers[:lim]
+    return {
+        "query": needle,
+        "count": len(customers),
+        "customers": customers,
+    }
+
+
 @api.post("/admin/bookings/{booking_id}/confirm")
 async def admin_confirm_booking(booking_id: str, admin: dict = Depends(require_admin)):
     """Confirms the booking (after admin verified the comprovante).
