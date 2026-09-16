@@ -11,6 +11,7 @@ import {
   COURT_PRICE_LABEL,
   COURT_LOCATION,
 } from "@/lib/siteConfig";
+import { pixPipelineLabel } from "@/lib/paymentStatus";
 import { useMotionSystem, easings } from "@/lib/motion";
 import VictoryBurst from "@/components/motion/VictoryBurst";
 import Particles from "@/components/motion/Particles";
@@ -379,9 +380,10 @@ export default function Booking() {
             )}
 
             {loading && !availability && (
-              <div className="state-panel">
-                <Loader2 className="w-7 h-7 animate-spin text-[var(--brand)] mb-3" />
-                <div className="text-sm uppercase tracking-[0.25em]">Carregando horários…</div>
+              <div className="grid grid-cols-1 xs:grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 sm:gap-3" aria-busy="true" aria-label="Carregando horários">
+                {Array.from({ length: 9 }).map((_, i) => (
+                  <div key={i} className="skeleton-slot h-[72px] sm:h-[80px]" />
+                ))}
               </div>
             )}
 
@@ -576,46 +578,44 @@ export default function Booking() {
               data-testid={BOOKING.pixModal}
               {...m.modalMotion}
               className="relative glass-strong booking-modal-sheet w-[min(780px,95vw)] p-5 sm:p-8 md:p-10 max-h-[92vh] overflow-y-auto"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="pix-title"
             >
               <CloseBtn onClick={closeAll} />
               <StepBar current={3} />
               <div className="text-[11px] tracking-[0.35em] uppercase text-[var(--brand)] mt-2">// 5 · Pagamento PIX</div>
-              <h2 className="font-heading text-3xl sm:text-4xl uppercase italic">Calção via <span className="text-[var(--brand)]">PIX</span></h2>
+              <h2 id="pix-title" className="font-heading text-3xl sm:text-4xl uppercase italic">Calção via <span className="text-[var(--brand)]">PIX</span></h2>
+              <div className="mt-3 inline-flex items-center gap-2 text-[10px] uppercase tracking-[0.25em] px-2.5 py-1.5 border border-[var(--warning)]/50 text-[var(--warning)]">
+                <span className="w-1.5 h-1.5 rounded-full bg-[var(--warning)] animate-pulse" aria-hidden />
+                Status: {pixPipelineLabel(booking)} · aguardando pagamento
+              </div>
 
               <div className="grid md:grid-cols-[200px_1fr] gap-6 md:gap-8 mt-6 items-start">
-                <div className="w-[160px] h-[160px] sm:w-[200px] sm:h-[200px] mx-auto md:mx-0 glass grid place-items-center relative">
-                  <QrCode className="w-28 h-28 sm:w-32 sm:h-32 text-[var(--brand)]" strokeWidth={1} />
-                  <div className="absolute inset-4 border border-[var(--brand)]/30" />
+                <div className="w-[160px] h-[160px] sm:w-[200px] sm:h-[200px] mx-auto md:mx-0 glass grid place-items-center relative" aria-label="QR Code PIX simulado">
+                  <QrCode className="w-28 h-28 sm:w-32 sm:h-32 text-[var(--brand)]" strokeWidth={1} aria-hidden />
+                  <div className="absolute inset-4 border border-[var(--brand)]/30" aria-hidden />
                   <div className="absolute top-2 right-2 text-[8px] uppercase tracking-[0.3em] text-[var(--brand)]">MOCK</div>
                 </div>
                 <div>
-                  <div className="text-[10px] uppercase tracking-[0.3em] text-white/40">Valor</div>
+                  <div className="text-[10px] uppercase tracking-[0.3em] text-white/40">Valor do calção (30%)</div>
                   <div className="font-heading text-4xl sm:text-5xl text-[var(--brand)]">{fmtBRL(booking.deposit)}</div>
-                  <div className="text-xs text-white/50 mt-1">Calção (30%) · Restante na quadra</div>
-
-                  <div className="mt-5">
-                    <div className="text-[10px] uppercase tracking-[0.3em] text-white/40">PIX Copia-e-Cola</div>
-                    <div className="flex items-stretch mt-1">
-                      <input
-                        data-testid={BOOKING.pixCopy}
-                        readOnly value={booking.payment.pix_copy_paste}
-                        className="flex-1 bg-black/40 border border-white/10 px-3 py-2 text-xs text-white/70 focus:outline-none truncate min-w-0"
-                      />
-                      <button
-                        onClick={() => navigator.clipboard?.writeText(booking.payment.pix_copy_paste)}
-                        className="px-3 border border-l-0 border-white/10 hover:border-[var(--brand)] hover:text-[var(--brand)] transition-colors shrink-0"
-                        type="button" aria-label="Copiar PIX"
-                      >
-                        <Copy className="w-4 h-4" />
-                      </button>
+                  <div className="text-xs text-white/50 mt-1">Restante na quadra · {COURT_PRICE_LABEL}</div>
+                  {booking.payment?.expires_at && (
+                    <div className="text-xs text-white/45 mt-2">
+                      PIX válido até {new Date(booking.payment.expires_at).toLocaleString("pt-BR")} — após isso a reserva expira.
                     </div>
-                  </div>
+                  )}
+
+                  <PixCopyPaste value={booking.payment.pix_copy_paste} />
 
                   <div className="mt-6 border-t border-white/10 pt-5">
                     <div className="text-[11px] uppercase tracking-[0.3em] text-[var(--brand)] flex items-center gap-2">
                       <Upload className="w-3 h-3" /> Após pagar, envie o comprovante
                     </div>
-                    <p className="text-white/60 text-xs mt-1">Envie a imagem/print do PIX para nossa equipe confirmar via WhatsApp.</p>
+                    <p className="text-white/60 text-xs mt-1">
+                      Envie a imagem/print do PIX. A confirmação é <strong className="text-white">manual pelo admin</strong> — não confirmamos só por mensagem de texto.
+                    </p>
                     <FileUploadButton
                       testId={BOOKING.uploadComprovante}
                       inputTestId={BOOKING.comprovanteFileInput}
@@ -625,9 +625,9 @@ export default function Booking() {
                   </div>
                 </div>
               </div>
-              {err && <div className="mt-4 text-sm text-[var(--danger)]">{err}</div>}
+              {err && <div className="mt-4 text-sm text-[var(--danger)]" role="alert">{err}</div>}
               <div className="text-[10px] text-white/30 mt-4 uppercase tracking-[0.25em]">
-                * Integração PIX simulada para demonstração — em produção, webhook automatiza confirmação.
+                * PIX simulado para demonstração. Fluxo: aguardando → informado (comprovante) → confirmado (admin) · ou cancelado / expirado.
               </div>
             </motion.div>
           </Overlay>
@@ -660,11 +660,11 @@ export default function Booking() {
                   Missão enviada
                 </div>
                 <h2 className="font-heading text-3xl sm:text-4xl uppercase italic mt-2">
-                  Comprovante <span className="text-[var(--success)]">recebido</span>
+                  Comprovante <span className="text-[var(--success)]">informado</span>
                 </h2>
                 <p className="text-white/70 mt-3">
-                  Nossa equipe está validando o pagamento. Você receberá a{" "}
-                  <span className="text-[var(--brand)]">confirmação no WhatsApp</span> em breve.
+                  Status: <strong className="text-white">Informado</strong>. A equipe valida o comprovante e só então marca como <strong className="text-white">Confirmado</strong>. Você receberá{" "}
+                  <span className="text-[var(--brand)]">WhatsApp</span> na confirmação.
                 </p>
                 <div className="mt-4 text-sm text-white/50 glass inline-block px-4 py-2">
                   {booking.your_team_name} <span className="text-[var(--brand)]">×</span> {booking.opponent_team_name} · {booking.court_name} · {booking.start_time}
@@ -790,6 +790,43 @@ function TeamCard({ side, name, onName, crest, onCrest, nameTestId, uploadTestId
           />
         </div>
       </div>
+    </div>
+  );
+}
+
+function PixCopyPaste({ value }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard?.writeText(value || "");
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (_) {
+      setCopied(false);
+    }
+  };
+  return (
+    <div className="mt-5">
+      <div className="text-[10px] uppercase tracking-[0.3em] text-white/40">PIX Copia-e-Cola</div>
+      <div className="flex items-stretch mt-1">
+        <input
+          data-testid={BOOKING.pixCopy}
+          readOnly
+          value={value || ""}
+          aria-label="Código PIX copia e cola"
+          className="flex-1 bg-black/40 border border-white/10 px-3 py-2.5 text-xs text-white/70 focus:outline-none focus-visible:border-[var(--brand)] truncate min-w-0 min-h-[44px]"
+        />
+        <button
+          onClick={copy}
+          className="px-4 min-w-[44px] min-h-[44px] border border-l-0 border-white/10 hover:border-[var(--brand)] hover:text-[var(--brand)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--brand)] transition-colors shrink-0"
+          type="button"
+          aria-label={copied ? "PIX copiado" : "Copiar código PIX"}
+        >
+          {copied ? <Check className="w-4 h-4 text-[var(--success)]" aria-hidden /> : <Copy className="w-4 h-4" aria-hidden />}
+        </button>
+      </div>
+      <div className="sr-only" aria-live="polite">{copied ? "Código PIX copiado" : ""}</div>
+      {copied && <div className="text-[10px] uppercase tracking-[0.2em] text-[var(--success)] mt-1">Copiado!</div>}
     </div>
   );
 }

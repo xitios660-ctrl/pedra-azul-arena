@@ -16,12 +16,14 @@ const STATUS_COLORS = {
   awaiting_admin: "var(--brand)",
   confirmed: "var(--success)",
   cancelled: "var(--danger)",
+  expired: "var(--text-3)",
 };
 const STATUS_LABEL = {
   pending: "Aguardando PIX",
-  awaiting_admin: "Validar comprovante",
-  confirmed: "Confirmada",
-  cancelled: "Cancelada",
+  awaiting_admin: "Informado (validar)",
+  confirmed: "Confirmado",
+  cancelled: "Cancelado",
+  expired: "Expirado",
 };
 
 export default function AdminDashboard() {
@@ -90,6 +92,11 @@ export default function AdminDashboard() {
           ))}
         </div>
 
+        {activeTab === "dashboard" && !stats && (
+          <div className="grid md:grid-cols-4 gap-4 mb-8" aria-busy="true" aria-label="Carregando dashboard">
+            {Array.from({ length: 4 }).map((_, i) => <div key={i} className="skeleton-card h-28" />)}
+          </div>
+        )}
         {activeTab === "dashboard" && stats && <DashboardView stats={stats} />}
         {activeTab === "bookings" && (
           <BookingsAdmin bookings={bookings}
@@ -244,6 +251,8 @@ function WhatsAppAdmin() {
             data-testid="admin-whatsapp-status"
             className="text-sm uppercase tracking-[0.25em] px-3 py-1.5 border font-heading"
             style={{ color: st.color, borderColor: st.color }}
+            role="status"
+            aria-live="polite"
           >
             {st.label}
           </span>
@@ -264,13 +273,15 @@ function WhatsAppAdmin() {
         {err && <div className="mt-3 text-sm text-[var(--danger)]">{err}</div>}
         <div className="mt-8 flex flex-wrap gap-3">
           <button type="button" data-testid="admin-whatsapp-start" onClick={start} disabled={busy}
-            className="btn-neon !py-2 !px-4 !text-sm">
-            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+            className="btn-neon !py-2 !px-4 !text-sm min-h-[44px]"
+            aria-label="Conectar WhatsApp e gerar QR Code">
+            {busy ? <Loader2 className="w-4 h-4 animate-spin" aria-hidden /> : <RefreshCw className="w-4 h-4" aria-hidden />}
             Conectar / Gerar QR
           </button>
           <button type="button" data-testid="admin-whatsapp-logout" onClick={logout} disabled={busy}
-            className="btn-ghost !py-2 !px-4 !text-sm">
-            <LogOut className="w-4 h-4" /> Desconectar
+            className="btn-ghost !py-2 !px-4 !text-sm min-h-[44px]"
+            aria-label="Desconectar WhatsApp e limpar sessão">
+            <LogOut className="w-4 h-4" aria-hidden /> Desconectar
           </button>
         </div>
         <p className="mt-6 text-xs text-white/45 leading-relaxed max-w-lg">
@@ -288,9 +299,14 @@ function WhatsAppAdmin() {
             <img
               data-testid="admin-whatsapp-qr"
               src={state.qr}
-              alt="QR Code WhatsApp"
+              alt="QR Code para parear WhatsApp da arena. Escaneie em Aparelhos conectados."
+              role="img"
+              aria-describedby="wa-qr-help"
               className="w-[280px] h-[280px] sm:w-[320px] sm:h-[320px] bg-white p-3 border border-[var(--brand)]/40"
             />
+            <p id="wa-qr-help" className="mt-3 text-xs text-white/50 text-center max-w-xs">
+              Abra o WhatsApp no celular → Aparelhos conectados → escanear este QR.
+            </p>
           </>
         ) : state.status === "CONECTADO" ? (
           <div className="text-center">
@@ -390,6 +406,7 @@ function BookingsAdmin({ bookings, onConfirm, onCancel }) {
           { id: "pending", label: "Pendentes" },
           { id: "confirmed", label: "Confirmadas" },
           { id: "cancelled", label: "Canceladas" },
+          { id: "expired", label: "Expiradas" },
         ].map(f => (
           <button key={f.id} onClick={() => setFilter(f.id)}
             className={`px-3 py-1 text-[11px] uppercase tracking-[0.2em] border ${filter === f.id
@@ -452,10 +469,10 @@ function BookingRow({ b, onConfirm, onCancel }) {
         {(b.status === "awaiting_admin" || b.status === "pending") && (
           <button data-testid={ADMIN.confirmBooking(b.id)} onClick={() => onConfirm(b.id)}
             className="text-[10px] uppercase tracking-[0.2em] px-2 py-1 border border-[var(--success)] text-[var(--success)] hover:bg-[var(--success)]/15 flex items-center gap-1">
-            <CheckCircle2 className="w-3 h-3" /> Confirmar + WhatsApp
+            <CheckCircle2 className="w-3 h-3" /> Confirmar (admin)
           </button>
         )}
-        {b.status !== "cancelled" && (
+        {b.status !== "cancelled" && b.status !== "expired" && (
           <button data-testid={ADMIN.cancelBooking(b.id)} onClick={() => onCancel(b.id)}
             className="text-[10px] uppercase tracking-[0.2em] px-2 py-1 border border-[var(--danger)]/60 text-[var(--danger)] hover:bg-[var(--danger)]/15">
             Cancelar

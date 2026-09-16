@@ -15,10 +15,11 @@ import {
 } from "lucide-react";
 
 const STATUS = {
-  pending: { label: "Pagamento pendente", color: "var(--warning)", icon: Hourglass },
-  awaiting_admin: { label: "Aguardando confirmação", color: "var(--brand)", icon: MessageCircle },
-  confirmed: { label: "Confirmada", color: "var(--success)", icon: CheckCircle2 },
-  cancelled: { label: "Cancelada", color: "var(--danger)", icon: XCircle },
+  pending: { label: "Aguardando PIX", color: "var(--warning)", icon: Hourglass },
+  awaiting_admin: { label: "Comprovante informado", color: "var(--brand)", icon: MessageCircle },
+  confirmed: { label: "Confirmado", color: "var(--success)", icon: CheckCircle2 },
+  cancelled: { label: "Cancelado", color: "var(--danger)", icon: XCircle },
+  expired: { label: "Expirado", color: "var(--text-3)", icon: XCircle },
 };
 
 function fmtBRL(n) { return (n || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }); }
@@ -95,9 +96,10 @@ export default function MyBookings() {
         </motion.form>
 
         {loading && (
-          <div className="glass state-panel mt-8">
-            <Loader2 className="w-7 h-7 animate-spin text-[var(--brand)] mb-3" />
-            <div className="text-sm uppercase tracking-[0.25em]">Buscando reservas…</div>
+          <div className="grid sm:grid-cols-2 gap-5 mt-8" aria-busy="true" aria-label="Buscando reservas">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="skeleton-card h-[220px]" />
+            ))}
           </div>
         )}
 
@@ -240,7 +242,7 @@ function BookingCard({ b, cpf, idx, onChanged }) {
 
       {b.status === "awaiting_admin" && (
         <div className="mt-5 border-t border-white/10 pt-4 text-xs text-white/60 flex items-start gap-2">
-          <FileCheck className="w-3 h-3 text-[var(--success)] mt-0.5 shrink-0" /> Comprovante recebido. Aguardando validação — você receberá WhatsApp ao ser confirmado.
+          <FileCheck className="w-3 h-3 text-[var(--success)] mt-0.5 shrink-0" /> Status Informado. Aguardando validação do admin — só então fica Confirmado (WhatsApp).
         </div>
       )}
 

@@ -43,6 +43,7 @@ function MenuCard({ to, title, subtitle, image, icon, testId, delay = 0 }) {
               alt={title}
               className="absolute inset-0 w-full h-full object-cover scale-110 group-hover:scale-125 transition-transform duration-700"
               loading="lazy"
+              decoding="async"
             />
             <div className="absolute inset-0 bg-gradient-to-t from-[#030305] via-[#030305]/70 to-transparent" />
             <div className="absolute inset-0 bg-[var(--brand)]/0 group-hover:bg-[var(--brand)]/12 transition-colors" />
@@ -140,6 +141,8 @@ export default function Landing() {
             src={STADIUM_IMG}
             alt=""
             className="absolute inset-0 w-full h-full object-cover"
+            loading="eager"
+            decoding="async"
           />
         ) : (
           <video

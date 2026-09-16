@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
@@ -19,6 +19,7 @@ COURT = {
 }
 TIME_SLOTS = [f"{h:02d}:00" for h in range(8, 24)]
 DEPOSIT_RATE = 0.30
+PIX_TTL_MINUTES = 45  # pending PIX expires; never auto-confirm from text alone
 ACTIVE_STATUSES = ["pending", "awaiting_admin", "confirmed"]
 
 
@@ -177,6 +178,11 @@ async def create_booking_atomic(
             ),
             "amount": deposit,
             "created_at": now_iso(),
+            "expires_at": (
+                (datetime.now(timezone.utc) + timedelta(minutes=PIX_TTL_MINUTES)).isoformat()
+                if pay_status == "pending" and status == "pending"
+                else None
+            ),
             "confirmed_at": now_iso() if status == "confirmed" else None,
             "comprovante_url": None,
             "comprovante_uploaded_at": None,
@@ -195,6 +201,41 @@ async def create_booking_atomic(
     booking.pop("_id", None)
     return booking
 
+
+
+
+async def expire_stale_pending(db) -> int:
+    """Mark overdue pending PIX bookings as expired (frees slot). Admin confirm is the only paid path for web."""
+    now = datetime.now(timezone.utc)
+    cursor = db.bookings.find(
+        {"status": "pending", "payment.status": "pending"},
+        {"id": 1, "payment.expires_at": 1, "created_at": 1},
+    )
+    expired_ids = []
+    async for b in cursor:
+        exp = (b.get("payment") or {}).get("expires_at")
+        created = b.get("created_at")
+        deadline = None
+        if exp:
+            try:
+                deadline = datetime.fromisoformat(exp.replace("Z", "+00:00"))
+            except Exception:
+                deadline = None
+        if deadline is None and created:
+            try:
+                created_dt = datetime.fromisoformat(created.replace("Z", "+00:00"))
+                deadline = created_dt + timedelta(minutes=PIX_TTL_MINUTES)
+            except Exception:
+                deadline = None
+        if deadline and now >= deadline:
+            expired_ids.append(b["id"])
+    if not expired_ids:
+        return 0
+    result = await db.bookings.update_many(
+        {"id": {"$in": expired_ids}, "status": "pending"},
+        {"$set": {"status": "expired", "payment.status": "expired"}},
+    )
+    return result.modified_count
 
 async def calendar_range(db, start_date: str, days: int = 7) -> dict[str, Any]:
     """Day or week view for the single court."""

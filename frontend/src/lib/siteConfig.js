@@ -1,5 +1,11 @@
 /** Site-wide contact & WhatsApp config (Pedra Azul / Copa Alto Tietê) */
 
+export const SITE_NAME = "Pedra Azul Arena";
+export const SITE_TAGLINE = "Quadra Pedra Azul · Núncio · Alto Tietê";
+export const SITE_ORG = "Pedra Azul F.S.";
+
+/** Site-wide contact & WhatsApp config (Pedra Azul / Copa Alto Tietê) */
+
 export const WHATSAPP_E164 = "551140028922";
 export const WHATSAPP_DISPLAY = "+55 (11) 4002-8922";
 

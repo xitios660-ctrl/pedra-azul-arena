@@ -166,8 +166,10 @@ export default function AdminCalendar() {
 
       {err && <div className="text-[var(--danger)] text-sm">{err}</div>}
       {loading && !data && (
-        <div className="flex justify-center py-16 text-white/50">
-          <Loader2 className="w-8 h-8 animate-spin text-[var(--brand)]" />
+        <div className="grid gap-3 grid-cols-1 md:grid-cols-7" aria-busy="true" aria-label="Carregando calendário">
+          {Array.from({ length: 7 }).map((_, i) => (
+            <div key={i} className="skeleton-card h-[280px]" />
+          ))}
         </div>
       )}
 

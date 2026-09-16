@@ -15,7 +15,7 @@ Reserva de **uma** quadra (Pedra Azul — Núncio), fluxo CPF + PIX + confirmaç
 | `MONGO_URL` | sim | Connection string MongoDB Atlas |
 | `DB_NAME` | sim | Nome do DB (ex.: `arena_futsal`) |
 | `JWT_SECRET` | sim | Segredo JWT admin |
-| `CORS_ORIGINS` | não | Default `*` |
+| `CORS_ORIGINS` | não | Default `*`. Em produção, liste origens explícitas (vírgula) |
 | `WHATSAPP_SERVICE_URL` | não | Default `http://127.0.0.1:3001` |
 | `WHATSAPP_PORT` | não | Default `3001` |
 | `WHATSAPP_HOST` | não | Default `127.0.0.1` (só localhost) |
@@ -25,6 +25,8 @@ Reserva de **uma** quadra (Pedra Azul — Núncio), fluxo CPF + PIX + confirmaç
 | `WHATSAPP_ADMIN_JID` | não | JID admin p/ notificar reservas WA (ex.: `5511999999999@s.whatsapp.net`) |
 | `API_INTERNAL_URL` | não | Default `http://127.0.0.1:$PORT` — sidecar → FastAPI |
 | `PORT` | não | Porta HTTP pública (Render define) |
+| `BOOKING_RATE_LIMIT` | não | Max POSTs `/api/bookings` por IP/janela (default 8) |
+| `BOOKING_RATE_WINDOW_SEC` | não | Janela do rate limit em segundos (default 60) |
 
 **Nunca** commitir credenciais Baileys / `.env` / QR. Sessão fica na collection `whatsapp_auth`.
 
@@ -85,3 +87,11 @@ Reservas usam o mesmo caminho atômico do site (`slot_key` + índice único).
 Lembrete ~3h antes (`reminder_sent` — sem duplicar após restart).
 
 Admin → aba **Calendário**: visão dia/semana, bloquear/desbloquear, criar/cancelar com confirmação.
+
+
+## PWA / SEO (Cycle 3)
+
+- Installable: `manifest.json` + ícones em `/icons/` + `theme-color` `#00E5FF`
+- Service worker (`/sw.js`): **network-first** para HTML/navegação (não prende deploy velho); **nunca cacheia** `/api/*`; cache-first só para `/static/*` hashed
+- SEO local: meta/OG + JSON-LD `SportsActivityLocation`/`LocalBusiness` (Núncio · Alto Tietê — **sem** inventar rua)
+- PIX: estados **aguardando → informado → confirmado** (admin) · **cancelado** · **expirado** (~45 min). Nunca auto-confirma por texto

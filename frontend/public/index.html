@@ -3,40 +3,71 @@
     <head>
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-        <meta name="theme-color" content="#000000" />
+        <meta name="theme-color" content="#00E5FF" />
+        <meta name="mobile-web-app-capable" content="yes" />
+        <meta name="apple-mobile-web-app-capable" content="yes" />
+        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+        <meta name="apple-mobile-web-app-title" content="Pedra Azul" />
+        <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
+        <link rel="apple-touch-icon" href="%PUBLIC_URL%/icons/icon-192.png" />
+        <link rel="icon" type="image/png" sizes="192x192" href="%PUBLIC_URL%/icons/icon-192.png" />
+        <link rel="icon" type="image/png" href="%PUBLIC_URL%/assets/copa-alto-tiete.png" />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@600&display=swap" rel="stylesheet" />
-        <!--
-        manifest.json provides metadata used when your web app is installed on a
-        user's mobile device or desktop. See https://developers.google.com/web/fundamentals/web-app-manifest/
-        -->
-        <!--
-        Notice the use of %PUBLIC_URL% in the tags above.
-        It will be replaced with the URL of the `public` folder during the build.
-        Only files inside the `public` folder can be referenced from the HTML.
 
-        Unlike "/favicon.ico" or "favicon.ico", "%PUBLIC_URL%/favicon.ico" will
-        work correctly both with client-side routing and a non-root public URL.
-        Learn how to configure a non-root public URL by running `npm run build`.
-        -->
-        <title>Pedra Azul F.S. · Até a Pedra Azul</title>
-        <meta name="description" content="A casa oficial do Pedra Azul F.S. — reservas de quadras, Copa Alto Tietê e a paixão pelo futsal. Fundado em 19.04.15." />
-        <link rel="icon" type="image/png" href="/assets/copa-alto-tiete.png" />
+        <title>Pedra Azul Arena · Quadra Futsal em Núncio (Alto Tietê)</title>
+        <meta name="description" content="Reserve a quadra Pedra Azul em Núncio, Alto Tietê (SP). Futsal, Copa Alto Tietê, sinal via PIX e confirmação por WhatsApp. R$ 130/h · sem cadastro." />
+        <meta name="keywords" content="Pedra Azul, futsal, Núncio, Alto Tietê, Copa Alto Tietê, reserva de quadra, PIX" />
+        <meta name="author" content="Pedra Azul F.S." />
+        <link rel="canonical" href="/" />
+
+        <meta property="og:type" content="website" />
+        <meta property="og:locale" content="pt_BR" />
+        <meta property="og:site_name" content="Pedra Azul Arena" />
+        <meta property="og:title" content="Pedra Azul Arena · Quadra Futsal em Núncio" />
+        <meta property="og:description" content="Reserve a quadra Pedra Azul (Núncio · Alto Tietê). Copa Alto Tietê, PIX e WhatsApp. R$ 130/h." />
+        <meta property="og:image" content="/assets/pedra-azul-logo.png" />
+        <meta property="og:image:alt" content="Logo Pedra Azul F.S." />
+
+        <meta name="twitter:card" content="summary_large_image" />
+        <meta name="twitter:title" content="Pedra Azul Arena · Núncio · Alto Tietê" />
+        <meta name="twitter:description" content="Reserva de quadra futsal Pedra Azul. PIX + WhatsApp. Copa Alto Tietê." />
+        <meta name="twitter:image" content="/assets/pedra-azul-logo.png" />
+
+        <script type="application/ld+json">
+        {
+          "@context": "https://schema.org",
+          "@type": ["SportsActivityLocation", "LocalBusiness"],
+          "name": "Pedra Azul Arena",
+          "alternateName": ["Pedra Azul F.S.", "Quadra Pedra Azul"],
+          "description": "Quadra de futsal Pedra Azul em Núncio, Alto Tietê (SP). Reservas online, Copa Alto Tietê, pagamento via PIX.",
+          "url": "/",
+          "image": "/assets/pedra-azul-logo.png",
+          "telephone": "+55-11-4002-8922",
+          "priceRange": "R$ 130/h",
+          "address": {
+            "@type": "PostalAddress",
+            "addressLocality": "Núncio",
+            "addressRegion": "SP",
+            "addressCountry": "BR",
+            "areaServed": "Alto Tietê"
+          },
+          "geo": {
+            "@type": "Place",
+            "name": "Núncio · Alto Tietê · SP"
+          },
+          "sport": "Futsal",
+          "amenityFeature": {
+            "@type": "LocationFeatureSpecification",
+            "name": "Quadra coberta / reserva horária"
+          }
+        }
+        </script>
         <script>window.addEventListener("error",function(e){if(e.error instanceof DOMException&&e.error.name==="DataCloneError"&&e.message&&e.message.includes("PerformanceServerTiming")){e.stopImmediatePropagation();e.preventDefault()}},true);</script>
     </head>
     <body>
-        <noscript>You need to enable JavaScript to run this app.</noscript>
+        <noscript>Ative o JavaScript para reservar a Quadra Pedra Azul (Núncio · Alto Tietê).</noscript>
         <div id="root"></div>
-        <!--
-      This HTML file is a template.
-      If you open it directly in the browser, you will see an empty page.
-
-      You can add webfonts, meta tags, or analytics to this file.
-      The build step will place the bundled scripts into the <body> tag.
-
-      To begin the development, run `npm start` or `yarn start`.
-      To create a production bundle, use `npm run build` or `yarn build`.
-    -->
-</body>
+    </body>
 </html>

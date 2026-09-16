@@ -9,6 +9,8 @@ load_dotenv(ROOT_DIR / '.env')
 import os
 import uuid
 import logging
+import time
+from collections import defaultdict
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Literal
 from urllib.parse import quote
@@ -58,6 +60,37 @@ UPLOAD_DIR = ROOT_DIR / "uploads"
 app = FastAPI(title="Arena Futsal Premium API")
 api = APIRouter(prefix="/api")
 
+
+
+# -----------------------------------------------------------------------------
+# Light rate limit — public booking create (per IP, in-memory)
+# -----------------------------------------------------------------------------
+_BOOKING_HITS: dict[str, list[float]] = defaultdict(list)
+_BOOKING_LIMIT = int(os.environ.get("BOOKING_RATE_LIMIT", "8"))
+_BOOKING_WINDOW = int(os.environ.get("BOOKING_RATE_WINDOW_SEC", "60"))
+
+
+def _client_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    if request.client and request.client.host:
+        return request.client.host
+    return "unknown"
+
+
+def _rate_limit_booking(request: Request) -> None:
+    ip = _client_ip(request)
+    now = time.time()
+    hits = [t for t in _BOOKING_HITS[ip] if now - t < _BOOKING_WINDOW]
+    if len(hits) >= _BOOKING_LIMIT:
+        _BOOKING_HITS[ip] = hits
+        raise HTTPException(
+            status_code=429,
+            detail="Muitas reservas em pouco tempo. Aguarde um minuto e tente novamente.",
+        )
+    hits.append(now)
+    _BOOKING_HITS[ip] = hits
 
 @api.get("/health")
 async def health():
@@ -173,6 +206,7 @@ async def list_courts():
 
 @api.get("/courts/availability")
 async def court_availability(court_id: str, date: str):
+    await bsvc.expire_stale_pending(db)
     if court_id not in COURT_BY_ID:
         raise HTTPException(status_code=404, detail="Quadra não encontrada")
     try:
@@ -208,7 +242,9 @@ async def upload_crest(file: UploadFile = File(...)):
 # BOOKINGS — CUSTOMER (public, CPF-based)
 # =============================================================================
 @api.post("/bookings")
-async def create_booking(payload: BookingCreate):
+async def create_booking(payload: BookingCreate, request: Request):
+    _rate_limit_booking(request)
+    await bsvc.expire_stale_pending(db)
     if payload.court_id not in COURT_BY_ID:
         raise HTTPException(status_code=404, detail="Quadra não encontrada")
     if not validate_cpf(payload.cpf):
@@ -249,12 +285,16 @@ async def create_booking(payload: BookingCreate):
 
 @api.post("/bookings/{booking_id}/comprovante")
 async def upload_comprovante(booking_id: str, file: UploadFile = File(...)):
-    """Customer uploads PIX payment proof. Marks booking as awaiting_admin."""
+    """Customer uploads PIX payment proof. Marks booking as awaiting_admin.
+    Never auto-confirms — only admin confirm path sets payment paid."""
+    await bsvc.expire_stale_pending(db)
     b = await db.bookings.find_one({"id": booking_id})
     if not b:
         raise HTTPException(status_code=404, detail="Reserva não encontrada")
-    if b["status"] == "cancelled":
-        raise HTTPException(status_code=400, detail="Reserva cancelada")
+    if b["status"] in ("cancelled", "expired"):
+        raise HTTPException(status_code=400, detail="Reserva cancelada ou expirada")
+    if b["status"] not in ("pending", "awaiting_admin"):
+        raise HTTPException(status_code=400, detail="Reserva não aceita comprovante neste estado")
     url = _save_upload(file, "comprovantes")
     await db.bookings.update_one(
         {"id": booking_id},
@@ -271,6 +311,7 @@ async def upload_comprovante(booking_id: str, file: UploadFile = File(...)):
 
 @api.get("/bookings/{booking_id}")
 async def get_booking(booking_id: str):
+    await bsvc.expire_stale_pending(db)
     b = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
     if not b:
         raise HTTPException(status_code=404, detail="Reserva não encontrada")
@@ -280,6 +321,7 @@ async def get_booking(booking_id: str):
 @api.post("/bookings/lookup")
 async def lookup_by_cpf(payload: LookupIn):
     """Public: look up a customer's bookings by CPF (no login)."""
+    await bsvc.expire_stale_pending(db)
     if not validate_cpf(payload.cpf):
         raise HTTPException(status_code=400, detail="CPF inválido")
     cpf_d = only_digits(payload.cpf)
@@ -933,15 +975,29 @@ if FRONTEND_BUILD:
             raise HTTPException(status_code=404, detail="Not found")
         candidate = FRONTEND_BUILD / full_path
         if full_path and candidate.is_file():
-            return FileResponse(candidate)
-        return FileResponse(FRONTEND_BUILD / "index.html")
+            # Hashed /static/* can be cached long; HTML/SW must revalidate for deploys
+            headers = {}
+            name = candidate.name
+            if name in ("index.html", "sw.js", "manifest.json") or name.endswith(".html"):
+                headers = {"Cache-Control": "no-cache, no-store, must-revalidate"}
+            elif full_path.startswith("static/"):
+                headers = {"Cache-Control": "public, max-age=31536000, immutable"}
+            return FileResponse(candidate, headers=headers)
+        return FileResponse(
+            FRONTEND_BUILD / "index.html",
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+        )
 
     logger.info("Serving frontend from %s", FRONTEND_BUILD)
 
+# CORS: set CORS_ORIGINS to explicit origins in production (comma-separated).
+# Default "*" remains for same-origin Docker; credentials + wildcard is browser-limited.
+_cors_raw = os.environ.get("CORS_ORIGINS", "*").strip() or "*"
+_cors_origins = [o.strip() for o in _cors_raw.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
-    allow_methods=["*"],
+    allow_origins=_cors_origins,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
