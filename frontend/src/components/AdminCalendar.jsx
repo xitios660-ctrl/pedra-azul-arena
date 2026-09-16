@@ -149,6 +149,76 @@ export default function AdminCalendar() {
   };
 
   const [createForm, setCreateForm] = useState({ customer_name: "", whatsapp: "" });
+  const [rangeForm, setRangeForm] = useState({
+    date_from: todayYmd(),
+    date_to: todayYmd(),
+    reason: "",
+  });
+  const [dayBusy, setDayBusy] = useState(false);
+  const [toast, setToast] = useState("");
+
+  const focusDate = mode === "month" ? loadStart : start;
+
+  const doBlockDay = async (ymd) => {
+    if (!ymd) return;
+    const reason = window.prompt(`Motivo do bloqueio de ${ymd} (opcional — ex: manutenção, feriado):`, "") ?? null;
+    if (reason === null) return;
+    if (!window.confirm(`Bloquear o dia inteiro ${ymd}?\nReservas existentes NÃO serão canceladas.`)) return;
+    setDayBusy(true); setToast("");
+    try {
+      const { data: res } = await api.post("/admin/calendar/block-day", {
+        date: ymd,
+        reason: reason.trim() || undefined,
+      });
+      setToast(`Dia ${ymd}: ${res.blocked || 0} bloqueados · ${res.skipped_reserved || 0} com reserva`);
+      load();
+    } catch (ex) {
+      alert(ex.response?.data?.detail || ex.message);
+    } finally {
+      setDayBusy(false);
+    }
+  };
+
+  const doUnblockDay = async (ymd) => {
+    if (!ymd) return;
+    if (!window.confirm(`Desbloquear todos os horários bloqueados de ${ymd}?\nReservas não são alteradas.`)) return;
+    setDayBusy(true); setToast("");
+    try {
+      const { data: res } = await api.post("/admin/calendar/unblock-day", { date: ymd });
+      setToast(`Dia ${ymd}: ${res.removed || 0} bloqueios removidos`);
+      load();
+    } catch (ex) {
+      alert(ex.response?.data?.detail || ex.message);
+    } finally {
+      setDayBusy(false);
+    }
+  };
+
+  const submitRangeBlock = async (e) => {
+    e.preventDefault();
+    const { date_from, date_to, reason } = rangeForm;
+    if (!date_from || !date_to) return;
+    if (!window.confirm(
+      `Bloquear de ${date_from} até ${date_to} (inclusive)?\nMáx. 31 dias. Reservas existentes não serão canceladas.`
+    )) return;
+    setDayBusy(true); setToast("");
+    try {
+      const { data: res } = await api.post("/admin/calendar/block-range", {
+        date_from,
+        date_to,
+        reason: (reason || "").trim() || undefined,
+      });
+      setToast(
+        `Período: ${res.blocked || 0} bloqueados · ${res.skipped_reserved || 0} com reserva · ${res.days || 0} dias`
+      );
+      load();
+    } catch (ex) {
+      alert(ex.response?.data?.detail || ex.message);
+    } finally {
+      setDayBusy(false);
+    }
+  };
+
   const openCreate = () => {
     setCreateForm({ customer_name: "", whatsapp: "" });
     setDialog((d) => ({ ...d, type: "create" }));
@@ -265,6 +335,79 @@ export default function AdminCalendar() {
         )}
       </div>
 
+      <div data-testid="admin-calendar-block-toolbar" className="glass p-3 space-y-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[10px] uppercase tracking-[0.3em] text-white/40 mr-1">Dia focado</span>
+          <span className="text-sm text-[var(--brand)] font-heading">{focusDate}</span>
+          <button
+            type="button"
+            data-testid="admin-calendar-block-day"
+            disabled={dayBusy || mode === "month"}
+            onClick={() => doBlockDay(start)}
+            className="btn-ghost !py-2 !px-3 !text-xs inline-flex items-center gap-1 disabled:opacity-40"
+            title={mode === "month" ? "Abra a visão Dia para bloquear" : "Bloquear dia inteiro"}
+          >
+            <Lock className="w-3.5 h-3.5" /> Bloquear dia
+          </button>
+          <button
+            type="button"
+            data-testid="admin-calendar-unblock-day"
+            disabled={dayBusy || mode === "month"}
+            onClick={() => doUnblockDay(start)}
+            className="btn-ghost !py-2 !px-3 !text-xs inline-flex items-center gap-1 disabled:opacity-40"
+          >
+            <Unlock className="w-3.5 h-3.5" /> Desbloquear dia
+          </button>
+        </div>
+        <form onSubmit={submitRangeBlock} className="flex flex-wrap items-end gap-2 border-t border-white/10 pt-3">
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.3em] text-white/40 block mb-1">De</label>
+            <input
+              type="date"
+              required
+              value={rangeForm.date_from}
+              onChange={(e) => setRangeForm((f) => ({ ...f, date_from: e.target.value }))}
+              className="bg-black/40 border border-white/15 px-2 py-2 text-sm text-white"
+              data-testid="admin-calendar-range-from"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-[0.3em] text-white/40 block mb-1">Até</label>
+            <input
+              type="date"
+              required
+              value={rangeForm.date_to}
+              onChange={(e) => setRangeForm((f) => ({ ...f, date_to: e.target.value }))}
+              className="bg-black/40 border border-white/15 px-2 py-2 text-sm text-white"
+              data-testid="admin-calendar-range-to"
+            />
+          </div>
+          <div className="flex-1 min-w-[140px]">
+            <label className="text-[10px] uppercase tracking-[0.3em] text-white/40 block mb-1">Motivo</label>
+            <input
+              type="text"
+              maxLength={200}
+              placeholder="manutenção / feriado…"
+              value={rangeForm.reason}
+              onChange={(e) => setRangeForm((f) => ({ ...f, reason: e.target.value }))}
+              className="w-full bg-black/40 border border-white/15 px-2 py-2 text-sm text-white focus:border-[var(--brand)] focus:outline-none"
+              data-testid="admin-calendar-range-reason"
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={dayBusy}
+            data-testid="admin-calendar-block-range"
+            className="btn-neon !py-2 !px-3 !text-xs inline-flex items-center gap-1 disabled:opacity-40"
+          >
+            <Lock className="w-3.5 h-3.5" /> Bloquear período
+          </button>
+        </form>
+        {toast && (
+          <p className="text-xs text-[var(--brand)]" data-testid="admin-calendar-block-toast">{toast}</p>
+        )}
+      </div>
+
       {err && <div className="text-[var(--danger)] text-sm">{err}</div>}
       {loading && !data && (
         <div className="grid gap-3 grid-cols-1 md:grid-cols-7" aria-busy="true" aria-label="Carregando calendário">
@@ -292,29 +435,53 @@ export default function AdminCalendar() {
               const st = densityStyle(dens);
               const isToday = day.date === todayYmd();
               return (
-                <button
+                <div
                   key={day.date}
-                  type="button"
                   data-testid={`admin-calendar-day-${day.date}`}
-                  onClick={() => openDayFromMonth(day.date)}
-                  className={`min-h-[72px] sm:min-h-[88px] text-left p-2 border transition hover:brightness-110 ${st.bg} ${st.border} ${
+                  className={`min-h-[72px] sm:min-h-[88px] text-left p-2 border transition ${st.bg} ${st.border} ${
                     isToday ? "ring-1 ring-[var(--brand)]" : ""
                   }`}
                 >
-                  <div className="font-heading text-lg text-[var(--brand)]">{formatBr(day.date).split("/")[0]}</div>
-                  <div className="mt-1 text-[9px] uppercase tracking-[0.12em] text-white/55 leading-tight">
-                    <span className="text-[var(--brand)]">{dens.occupied || 0} oc</span>
-                    {" · "}
-                    <span className="text-[var(--danger)]">{dens.blocked || 0} bl</span>
-                    {" · "}
-                    <span>{dens.free || 0} lv</span>
+                  <button
+                    type="button"
+                    onClick={() => openDayFromMonth(day.date)}
+                    className="w-full text-left hover:brightness-110"
+                  >
+                    <div className="font-heading text-lg text-[var(--brand)]">{formatBr(day.date).split("/")[0]}</div>
+                    <div className="mt-1 text-[9px] uppercase tracking-[0.12em] text-white/55 leading-tight">
+                      <span className="text-[var(--brand)]">{dens.occupied || 0} oc</span>
+                      {" · "}
+                      <span className="text-[var(--danger)]">{dens.blocked || 0} bl</span>
+                      {" · "}
+                      <span>{dens.free || 0} lv</span>
+                    </div>
+                  </button>
+                  <div className="mt-1.5 flex gap-1">
+                    <button
+                      type="button"
+                      title="Bloquear dia"
+                      disabled={dayBusy}
+                      onClick={(e) => { e.stopPropagation(); doBlockDay(day.date); }}
+                      className="text-[9px] uppercase tracking-wider px-1 py-0.5 border border-[var(--danger)]/40 text-[var(--danger)] hover:bg-[var(--danger)]/10 disabled:opacity-40"
+                    >
+                      Blq
+                    </button>
+                    <button
+                      type="button"
+                      title="Desbloquear dia"
+                      disabled={dayBusy}
+                      onClick={(e) => { e.stopPropagation(); doUnblockDay(day.date); }}
+                      className="text-[9px] uppercase tracking-wider px-1 py-0.5 border border-white/20 text-white/50 hover:bg-white/5 disabled:opacity-40"
+                    >
+                      Lib
+                    </button>
                   </div>
-                </button>
+                </div>
               );
             })}
           </div>
           <p className="text-[10px] text-white/40 mt-3 uppercase tracking-[0.2em]">
-            Clique no dia para ver horários · oc=ocupado · bl=bloqueado · lv=livre
+            Clique no dia para ver horários · Blq/Lib = bloquear/desbloquear dia · oc=ocupado · bl=bloqueado · lv=livre
           </p>
         </div>
       )}
@@ -323,9 +490,33 @@ export default function AdminCalendar() {
         <div className={`grid gap-3 ${mode === "week" ? "grid-cols-1 md:grid-cols-7 overflow-x-auto" : "grid-cols-1"}`}>
           {days.map((day) => (
             <div key={day.date} className="glass p-3 min-w-0">
-              <div className="sticky top-0 bg-transparent pb-2 mb-2 border-b border-white/10">
-                <div className="text-[10px] uppercase tracking-[0.25em] text-white/40">{weekdayShort(day.date)}</div>
-                <div className="font-heading text-2xl text-[var(--brand)]">{formatBr(day.date)}</div>
+              <div className="sticky top-0 bg-transparent pb-2 mb-2 border-b border-white/10 flex items-start justify-between gap-2">
+                <div>
+                  <div className="text-[10px] uppercase tracking-[0.25em] text-white/40">{weekdayShort(day.date)}</div>
+                  <div className="font-heading text-2xl text-[var(--brand)]">{formatBr(day.date)}</div>
+                </div>
+                {mode === "day" && (
+                  <div className="flex flex-col gap-1 shrink-0">
+                    <button
+                      type="button"
+                      data-testid="admin-calendar-day-block-btn"
+                      disabled={dayBusy}
+                      onClick={() => doBlockDay(day.date)}
+                      className="btn-ghost !py-1 !px-2 !text-[10px] inline-flex items-center gap-1"
+                    >
+                      <Lock className="w-3 h-3" /> Bloquear dia
+                    </button>
+                    <button
+                      type="button"
+                      data-testid="admin-calendar-day-unblock-btn"
+                      disabled={dayBusy}
+                      onClick={() => doUnblockDay(day.date)}
+                      className="btn-ghost !py-1 !px-2 !text-[10px] inline-flex items-center gap-1"
+                    >
+                      <Unlock className="w-3 h-3" /> Desbloquear dia
+                    </button>
+                  </div>
+                )}
               </div>
               <div className={`grid gap-1.5 ${mode === "day" ? "grid-cols-2 sm:grid-cols-4 md:grid-cols-6" : "grid-cols-1"}`}>
                 {day.slots.map((slot) => {

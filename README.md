@@ -119,7 +119,7 @@ Estado da conversa por JID em Mongo (`whatsapp_conversations`).
 Reservas usam o mesmo caminho atômico do site (`slot_key` + índice único).
 Lembrete ~3h antes (`reminder_sent` — sem duplicar após restart).
 
-Admin → aba **Calendário**: visão dia/semana, bloquear/desbloquear, criar/cancelar com confirmação.
+Admin → aba **Calendário**: visão dia/semana/mês, bloquear horário ou **dia/período** (manutenção/feriado), desbloquear, criar/cancelar com confirmação.
 
 
 ## PWA / SEO (Cycle 3)
@@ -178,3 +178,10 @@ Prod smoke: `GET /api/health`, `/api/courts`, `/api/site-settings`, WhatsApp `AG
 - Booking: data local (não UTC via `toISOString`); preço das settings no UI; aviso **confirmação manual / WhatsApp pendente** se WA ≠ `CONECTADO`.
 - Admin calendário mês: semana começa na **segunda** (pt-BR); Configurações refrescam o provider público ao salvar.
 - `scripts/prod_smoke.sh` contra Render.
+
+## Cycle 15 notes
+- Admin: `POST /api/admin/calendar/block-day`, `block-range` (máx. 31 dias), `unblock-day`.
+- Bloqueio preenche `blocked_slots` para cada horário livre (`open_hour`..`close_hour`); **não cancela** reservas ativas (conta `skipped_reserved`).
+- Campo opcional `reason` (manutenção / feriado) nos docs de bloqueio.
+- UI calendário (pt-BR, neon): Bloquear/Desbloquear dia + formulário de período na toolbar.
+- Disponibilidade pública e bot WA já respeitam `get_blocked_times` / status `blocked`.

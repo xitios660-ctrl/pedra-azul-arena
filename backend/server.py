@@ -1045,6 +1045,22 @@ class WaCancelIn(BaseModel):
 class AdminBlockIn(BaseModel):
     date: str
     start_time: str
+    reason: Optional[str] = Field(default=None, max_length=200)
+
+
+class AdminBlockDayIn(BaseModel):
+    date: str
+    reason: Optional[str] = Field(default=None, max_length=200)
+
+
+class AdminBlockRangeIn(BaseModel):
+    date_from: str
+    date_to: str
+    reason: Optional[str] = Field(default=None, max_length=200)
+
+
+class AdminUnblockDayIn(BaseModel):
+    date: str
 
 
 class AdminBookingIn(BaseModel):
@@ -1316,6 +1332,7 @@ async def admin_block_slot(payload: AdminBlockIn, admin: dict = Depends(require_
     )
     if existing:
         raise HTTPException(status_code=409, detail="Já existe reserva neste horário")
+    reason_clean = (payload.reason or "").strip()[:200] or None
     doc = {
         "id": str(uuid.uuid4()),
         "court_id": COURT_ID,
@@ -1325,6 +1342,8 @@ async def admin_block_slot(payload: AdminBlockIn, admin: dict = Depends(require_
         "created_at": _now_iso(),
         "created_by": admin.get("email"),
     }
+    if reason_clean:
+        doc["reason"] = reason_clean
     try:
         await db.blocked_slots.update_one(
             {"slot_key": sk},
@@ -1341,6 +1360,41 @@ async def admin_unblock_slot(payload: AdminBlockIn, admin: dict = Depends(requir
     sk = bsvc.slot_key(COURT_ID, payload.date, payload.start_time)
     await db.blocked_slots.delete_one({"slot_key": sk})
     return {"ok": True}
+
+
+@api.post("/admin/calendar/block-day")
+async def admin_block_day(payload: AdminBlockDayIn, admin: dict = Depends(require_admin)):
+    try:
+        return await bsvc.block_day(
+            db,
+            date=payload.date,
+            reason=payload.reason,
+            created_by=admin.get("email"),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@api.post("/admin/calendar/block-range")
+async def admin_block_range(payload: AdminBlockRangeIn, admin: dict = Depends(require_admin)):
+    try:
+        return await bsvc.block_date_range(
+            db,
+            date_from=payload.date_from,
+            date_to=payload.date_to,
+            reason=payload.reason,
+            created_by=admin.get("email"),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@api.post("/admin/calendar/unblock-day")
+async def admin_unblock_day(payload: AdminUnblockDayIn, admin: dict = Depends(require_admin)):
+    try:
+        return await bsvc.unblock_day(db, date=payload.date)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @api.post("/admin/calendar/bookings")

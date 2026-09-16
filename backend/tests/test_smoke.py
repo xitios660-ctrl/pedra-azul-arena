@@ -664,3 +664,115 @@ def test_reminder_mark_atomic(admin_session, s):
     m2 = s.post(f"{API}/internal/whatsapp/reminders/{bid}/sent", headers=headers, timeout=10)
     assert m2.status_code == 200, m2.text
     assert m2.json().get("ok") is False
+
+
+def test_admin_block_day_and_unblock(admin_session, s):
+    """Cycle 15: block full day → slots blocked; booking 400/409; unblock frees."""
+    bare = requests.Session()
+    assert bare.post(f"{API}/admin/calendar/block-day", json={"date": "2099-01-01"}, timeout=10).status_code in (
+        401,
+        403,
+    )
+
+    # Far-future day to avoid colliding with live bookings
+    day = (datetime.now(TZ) + timedelta(days=60)).strftime("%Y-%m-%d")
+    # Clean slate
+    admin_session.post(f"{API}/admin/calendar/unblock-day", json={"date": day}, timeout=15)
+
+    # Seed one reservation so block-day must skip it
+    reserved_slot = "18:00"
+    br = admin_session.post(
+        f"{API}/admin/calendar/bookings",
+        json={
+            "date": day,
+            "start_time": reserved_slot,
+            "customer_name": "Block Day Keep",
+            "whatsapp": "5511999001122",
+            "status": "confirmed",
+        },
+        timeout=15,
+    )
+    assert br.status_code in (200, 201), br.text
+    booking_id = br.json()["id"]
+
+    try:
+        r = admin_session.post(
+            f"{API}/admin/calendar/block-day",
+            json={"date": day, "reason": "manutenção"},
+            timeout=30,
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body.get("ok") is True
+        assert body.get("blocked", 0) >= 1
+        assert body.get("skipped_reserved", 0) >= 1
+        assert body.get("reason") == "manutenção"
+
+        # Availability shows blocked (except reserved slot)
+        avail = s.get(f"{API}/courts/availability", params={"court_id": "court-1", "date": day}, timeout=15)
+        assert avail.status_code == 200, avail.text
+        slots = {x["time"]: x["status"] for x in avail.json().get("slots") or []}
+        assert slots.get(reserved_slot) == "reserved"
+        free_or_blocked = [t for t, st in slots.items() if st in ("blocked", "available")]
+        assert any(slots[t] == "blocked" for t in free_or_blocked), slots
+
+        # Public booking of a blocked free slot must fail
+        target = next((t for t, st in slots.items() if st == "blocked"), None)
+        assert target, "expected at least one blocked slot"
+        bad = s.post(
+            f"{API}/bookings",
+            json={
+                "court_id": "court-1",
+                "date": day,
+                "start_time": target,
+                "duration_minutes": 60,
+                "cpf": SMOKE_CPF,
+                "customer_name": "Should Fail Block",
+                "whatsapp": "11977776666",
+                "your_team_name": "A",
+                "opponent_team_name": "B",
+            },
+            headers=_xff(),
+            timeout=15,
+        )
+        assert bad.status_code in (400, 409), bad.text
+        detail = (bad.json() or {}).get("detail") or bad.text
+        assert "bloqueado" in str(detail).lower() or bad.status_code == 409
+
+        # Unblock day frees blocked slots; reservation remains
+        u = admin_session.post(f"{API}/admin/calendar/unblock-day", json={"date": day}, timeout=15)
+        assert u.status_code == 200, u.text
+        assert u.json().get("removed", 0) >= 1
+
+        avail2 = s.get(f"{API}/courts/availability", params={"court_id": "court-1", "date": day}, timeout=15)
+        assert avail2.status_code == 200
+        slots2 = {x["time"]: x["status"] for x in avail2.json().get("slots") or []}
+        assert slots2.get(reserved_slot) == "reserved"
+        assert slots2.get(target) == "available", slots2.get(target)
+
+        # Range: 2 days, cap validation
+        day2 = (datetime.now(TZ) + timedelta(days=61)).strftime("%Y-%m-%d")
+        admin_session.post(f"{API}/admin/calendar/unblock-day", json={"date": day2}, timeout=15)
+        rr = admin_session.post(
+            f"{API}/admin/calendar/block-range",
+            json={"date_from": day, "date_to": day2, "reason": "feriado"},
+            timeout=30,
+        )
+        assert rr.status_code == 200, rr.text
+        assert rr.json().get("days") == 2
+        assert rr.json().get("blocked", 0) >= 1
+
+        # Cap > 31 days
+        far = (datetime.now(TZ) + timedelta(days=100)).strftime("%Y-%m-%d")
+        far2 = (datetime.now(TZ) + timedelta(days=140)).strftime("%Y-%m-%d")
+        cap = admin_session.post(
+            f"{API}/admin/calendar/block-range",
+            json={"date_from": far, "date_to": far2},
+            timeout=15,
+        )
+        assert cap.status_code == 400, cap.text
+    finally:
+        admin_session.post(f"{API}/admin/calendar/unblock-day", json={"date": day}, timeout=15)
+        day2 = (datetime.now(TZ) + timedelta(days=61)).strftime("%Y-%m-%d")
+        admin_session.post(f"{API}/admin/calendar/unblock-day", json={"date": day2}, timeout=15)
+        admin_session.post(f"{API}/admin/bookings/{booking_id}/cancel", timeout=10)

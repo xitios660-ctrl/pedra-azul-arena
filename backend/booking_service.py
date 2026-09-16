@@ -319,3 +319,138 @@ async def calendar_range(db, start_date: str, days: int = 7) -> dict[str, Any]:
         court = avail["court"]
         days_out.append(avail)
     return {"court": court or COURT, "start_date": start_date, "days": days_out}
+
+
+MAX_BLOCK_RANGE_DAYS = 31
+
+
+def _parse_ymd(date: str) -> datetime:
+    try:
+        return datetime.strptime(date, "%Y-%m-%d")
+    except ValueError as e:
+        raise ValueError("Data inválida") from e
+
+
+async def _reserved_times(db, court_id: str, date: str) -> set[str]:
+    rows = await db.bookings.find(
+        {
+            "court_id": court_id,
+            "date": date,
+            "status": {"$in": ACTIVE_STATUSES},
+        },
+        {"_id": 0, "start_time": 1},
+    ).to_list(500)
+    return {r["start_time"] for r in rows if r.get("start_time")}
+
+
+async def block_day(
+    db,
+    *,
+    date: str,
+    reason: Optional[str] = None,
+    created_by: Optional[str] = None,
+    court_id: str = COURT_ID,
+) -> dict[str, Any]:
+    """Block every bookable slot on a date. Skips slots with active reservations."""
+    _parse_ymd(date)
+    runtime = await get_runtime(db)
+    time_slots = runtime["time_slots"]
+    reserved = await _reserved_times(db, court_id, date)
+    reason_clean = (reason or "").strip()[:200] or None
+    blocked = 0
+    skipped_reserved = 0
+    already = 0
+    for t in time_slots:
+        if t in reserved:
+            skipped_reserved += 1
+            continue
+        sk = slot_key(court_id, date, t)
+        existing = await db.blocked_slots.find_one({"slot_key": sk}, {"_id": 1})
+        if existing:
+            already += 1
+            if reason_clean:
+                await db.blocked_slots.update_one(
+                    {"slot_key": sk},
+                    {"$set": {"reason": reason_clean}},
+                )
+            continue
+        doc = {
+            "id": str(uuid.uuid4()),
+            "court_id": court_id,
+            "date": date,
+            "start_time": t,
+            "slot_key": sk,
+            "created_at": now_iso(),
+            "created_by": created_by,
+        }
+        if reason_clean:
+            doc["reason"] = reason_clean
+        try:
+            await db.blocked_slots.update_one({"slot_key": sk}, {"$set": doc}, upsert=True)
+            blocked += 1
+        except DuplicateKeyError:
+            already += 1
+    return {
+        "ok": True,
+        "date": date,
+        "blocked": blocked,
+        "skipped_reserved": skipped_reserved,
+        "already_blocked": already,
+        "total_slots": len(time_slots),
+        "reason": reason_clean,
+    }
+
+
+async def block_date_range(
+    db,
+    *,
+    date_from: str,
+    date_to: str,
+    reason: Optional[str] = None,
+    created_by: Optional[str] = None,
+    court_id: str = COURT_ID,
+) -> dict[str, Any]:
+    """Inclusive date range; max MAX_BLOCK_RANGE_DAYS days."""
+    start = _parse_ymd(date_from)
+    end = _parse_ymd(date_to)
+    if end < start:
+        raise ValueError("date_to deve ser >= date_from")
+    n_days = (end - start).days + 1
+    if n_days > MAX_BLOCK_RANGE_DAYS:
+        raise ValueError(f"Intervalo máximo de {MAX_BLOCK_RANGE_DAYS} dias")
+    days_out: list[dict[str, Any]] = []
+    totals = {"blocked": 0, "skipped_reserved": 0, "already_blocked": 0}
+    cur = start
+    while cur <= end:
+        d = cur.strftime("%Y-%m-%d")
+        day_res = await block_day(
+            db, date=d, reason=reason, created_by=created_by, court_id=court_id
+        )
+        days_out.append(day_res)
+        totals["blocked"] += day_res["blocked"]
+        totals["skipped_reserved"] += day_res["skipped_reserved"]
+        totals["already_blocked"] += day_res["already_blocked"]
+        cur += timedelta(days=1)
+    return {
+        "ok": True,
+        "date_from": date_from,
+        "date_to": date_to,
+        "days": n_days,
+        "blocked": totals["blocked"],
+        "skipped_reserved": totals["skipped_reserved"],
+        "already_blocked": totals["already_blocked"],
+        "per_day": days_out,
+        "reason": (reason or "").strip()[:200] or None,
+    }
+
+
+async def unblock_day(
+    db,
+    *,
+    date: str,
+    court_id: str = COURT_ID,
+) -> dict[str, Any]:
+    """Remove all blocked_slots for a date (does not touch bookings)."""
+    _parse_ymd(date)
+    res = await db.blocked_slots.delete_many({"court_id": court_id, "date": date})
+    return {"ok": True, "date": date, "removed": int(res.deleted_count)}
