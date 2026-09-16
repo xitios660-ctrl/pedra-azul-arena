@@ -54,6 +54,7 @@ import waitlist_service as wls
 import audit_log
 import promo_codes as promo_svc
 import hour_credits as credits_svc
+import gallery as gallery_svc
 
 # -----------------------------------------------------------------------------
 # Setup
@@ -70,6 +71,7 @@ _upload_env = (os.environ.get("UPLOAD_DIR") or "").strip()
 UPLOAD_DIR = Path(_upload_env) if _upload_env else (ROOT_DIR / "uploads")
 (UPLOAD_DIR / "crests").mkdir(parents=True, exist_ok=True)
 (UPLOAD_DIR / "comprovantes").mkdir(parents=True, exist_ok=True)
+(UPLOAD_DIR / "gallery").mkdir(parents=True, exist_ok=True)
 logger.info("event=upload_dir path=%s", str(UPLOAD_DIR))
 
 app = FastAPI(title="Arena Futsal Premium API")
@@ -2637,6 +2639,130 @@ async def admin_cancel_series_future(series_id: str, admin: dict = Depends(requi
 
 
 # =============================================================================
+# =============================================================================
+# GALLERY (Cycle 34) — court photos via GridFS
+# =============================================================================
+class GalleryCaptionIn(BaseModel):
+    caption: str = Field(default="", max_length=200)
+
+
+class GalleryReorderIn(BaseModel):
+    ids: List[str] = Field(..., min_length=1)
+
+
+@api.get("/gallery")
+async def public_gallery():
+    """Public list for landing — empty until admin uploads (no placeholder photos)."""
+    items = await gallery_svc.list_images(db)
+    return {"items": items, "count": len(items), "max": gallery_svc.MAX_IMAGES}
+
+
+@api.get("/admin/gallery")
+async def admin_list_gallery(admin: dict = Depends(require_admin)):
+    items = await gallery_svc.list_images(db)
+    return {"items": items, "count": len(items), "max": gallery_svc.MAX_IMAGES}
+
+
+@api.post("/admin/gallery")
+async def admin_upload_gallery(
+    file: UploadFile = File(...),
+    caption: str = Form(""),
+    admin: dict = Depends(require_admin),
+):
+    # Cap before wasting GridFS write
+    if await gallery_svc.count_images(db) >= gallery_svc.MAX_IMAGES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Limite de {gallery_svc.MAX_IMAGES} fotos na galeria",
+        )
+    # Reject SVG by filename hint (magic bytes also reject non-raster)
+    name = (file.filename or "").lower()
+    if name.endswith(".svg") or (file.content_type or "").lower().startswith("image/svg"):
+        raise HTTPException(status_code=400, detail="SVG não permitido")
+    url, grid_id = await _save_upload(file, gallery_svc.SUBDIR)
+    try:
+        doc = await gallery_svc.create_image(
+            db, url=url, gridfs_id=grid_id, caption=caption or "",
+        )
+    except ValueError as e:
+        # Best-effort cleanup of orphan GridFS
+        await upload_store.delete_by_id(db, grid_id)
+        raise HTTPException(status_code=400, detail=str(e))
+    await audit_log.audit(
+        db, admin, "gallery_upload",
+        entity_type="gallery_image",
+        entity_id=doc.get("id"),
+        summary="Foto da galeria enviada",
+        meta={"url": url, "caption": (doc.get("caption") or "")[:80]},
+    )
+    return doc
+
+
+@api.patch("/admin/gallery/{image_id}")
+async def admin_patch_gallery(
+    image_id: str,
+    payload: GalleryCaptionIn,
+    admin: dict = Depends(require_admin),
+):
+    try:
+        doc = await gallery_svc.update_image(db, image_id, caption=payload.caption)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    await audit_log.audit(
+        db, admin, "gallery_caption",
+        entity_type="gallery_image",
+        entity_id=image_id,
+        summary="Legenda da galeria atualizada",
+        meta={"caption": (doc.get("caption") or "")[:80]},
+    )
+    return doc
+
+
+@api.put("/admin/gallery/reorder")
+async def admin_reorder_gallery(payload: GalleryReorderIn, admin: dict = Depends(require_admin)):
+    try:
+        items = await gallery_svc.reorder_images(db, payload.ids)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    await audit_log.audit(
+        db, admin, "gallery_reorder",
+        entity_type="gallery_image",
+        entity_id=None,
+        summary=f"Galeria reordenada ({len(payload.ids)} fotos)",
+        meta={"ids": payload.ids[:12]},
+    )
+    return {"items": items, "count": len(items)}
+
+
+@api.delete("/admin/gallery/{image_id}")
+async def admin_delete_gallery(image_id: str, admin: dict = Depends(require_admin)):
+    try:
+        doc = await gallery_svc.delete_image(db, image_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    gid = doc.get("gridfs_id")
+    if gid:
+        await upload_store.delete_by_id(db, gid)
+    # Best-effort disk cache cleanup
+    try:
+        url = doc.get("url") or ""
+        if "/uploads/gallery/" in url:
+            fname = url.rsplit("/", 1)[-1]
+            disk = UPLOAD_DIR / "gallery" / fname
+            if disk.is_file():
+                disk.unlink(missing_ok=True)
+    except Exception as e:
+        logger.warning("gallery disk cleanup: %s", e)
+    await audit_log.audit(
+        db, admin, "gallery_delete",
+        entity_type="gallery_image",
+        entity_id=image_id,
+        summary="Foto da galeria removida",
+        meta={"url": doc.get("url")},
+    )
+    return {"ok": True, "id": image_id}
+
+
 # PROMO CODES (Cycle 29) — public validate + admin CRUD
 # =============================================================================
 @api.post("/promo/validate")
@@ -3051,6 +3177,7 @@ async def startup():
     await audit_log.ensure_indexes(db)
     await promo_svc.ensure_indexes(db)
     await credits_svc.ensure_indexes(db)
+    await gallery_svc.ensure_indexes(db)
     logger.info("Arena Futsal Premium API initialized (CPF + WA bot + calendar)")
 
     # Cycle 18: lightweight localhost WA sidecar self-ping (optional).

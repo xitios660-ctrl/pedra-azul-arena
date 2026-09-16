@@ -15,7 +15,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase, AsyncIOMotorGridFSBucket
 logger = logging.getLogger("arena.uploads")
 
 BUCKET_NAME = "uploads"
-ALLOWED_SUBDIRS = frozenset({"crests", "comprovantes"})
+ALLOWED_SUBDIRS = frozenset({"crests", "comprovantes", "gallery"})
 ALLOWED_EXT = frozenset({"png", "jpg", "jpeg", "webp", "gif"})
 MAX_BYTES = int(os.environ.get("UPLOAD_MAX_BYTES", str(5 * 1024 * 1024)))
 
@@ -192,3 +192,26 @@ async def open_stream_by_id(
     ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
     ct = meta.get("content_type") or content_type_for_ext(ext)
     return grid_out, ct
+
+
+async def delete_by_id(
+    db: AsyncIOMotorDatabase,
+    file_id: str,
+) -> bool:
+    """Best-effort GridFS delete by ObjectId string. Returns True if deleted."""
+    if not file_id:
+        return False
+    fs = gridfs_bucket(db)
+    try:
+        oid = ObjectId(file_id)
+    except Exception:
+        return False
+    try:
+        await fs.delete(oid)
+        return True
+    except NoFile:
+        return False
+    except Exception as e:
+        logger.warning("event=gridfs_delete_failed id=%s err=%s", str(file_id)[:8], e)
+        return False
+

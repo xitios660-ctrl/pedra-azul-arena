@@ -3508,3 +3508,127 @@ def test_hour_credits_refund_on_cancel(admin_session, s):
         for bid in created_ids:
             _admin_cancel_quiet(admin_session, bid)
 
+
+def _tiny_png_bytes():
+    return (
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+        b"\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\xf8\x0f\x00"
+        b"\x00\x01\x01\x00\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB`\x82"
+    )
+
+
+def test_gallery_public_empty_ok(s):
+    r = s.get(f"{API}/gallery", timeout=10, headers=_xff())
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert "items" in data
+    assert isinstance(data["items"], list)
+    assert data.get("max", 12) >= 1
+
+
+def test_gallery_upload_list_delete(admin_session, s):
+    """Admin upload → public list → caption → reorder → delete; SVG rejected; audit."""
+    # Cleanup any leftover smoke gallery images from prior runs (best-effort)
+    listed = admin_session.get(f"{API}/admin/gallery", timeout=10)
+    if listed.status_code == 200:
+        for it in listed.json().get("items") or []:
+            cap = (it.get("caption") or "")
+            if cap.startswith("smoke-gallery"):
+                admin_session.delete(f"{API}/admin/gallery/{it['id']}", timeout=10)
+
+    png = _tiny_png_bytes()
+
+    # Auth required for upload
+    bare = s.post(
+        f"{API}/admin/gallery",
+        files={"file": ("g.png", io.BytesIO(png), "image/png")},
+        data={"caption": "smoke-gallery-a"},
+        headers=_xff(),
+        timeout=15,
+    )
+    assert bare.status_code in (401, 403), bare.text
+
+    # Reject SVG by content-type / name
+    svg = b'<svg xmlns="http://www.w3.org/2000/svg"><rect width="1" height="1"/></svg>'
+    rsvg = admin_session.post(
+        f"{API}/admin/gallery",
+        files={"file": ("evil.svg", io.BytesIO(svg), "image/svg+xml")},
+        data={"caption": "smoke-gallery-svg"},
+        timeout=15,
+    )
+    assert rsvg.status_code == 400, rsvg.text
+
+    # Upload two PNGs
+    created = []
+    for label in ("smoke-gallery-a", "smoke-gallery-b"):
+        r = admin_session.post(
+            f"{API}/admin/gallery",
+            files={"file": (f"{label}.png", io.BytesIO(png), "image/png")},
+            data={"caption": label},
+            timeout=15,
+        )
+        assert r.status_code == 200, r.text
+        doc = r.json()
+        assert doc.get("id")
+        assert doc.get("url", "").startswith("/api/uploads/gallery/")
+        assert doc.get("gridfs_id")
+        assert doc.get("caption") == label
+        created.append(doc)
+
+    # Public list includes them
+    pub = s.get(f"{API}/gallery", timeout=10, headers=_xff())
+    assert pub.status_code == 200
+    ids_pub = {x["id"] for x in pub.json().get("items") or []}
+    for d in created:
+        assert d["id"] in ids_pub
+
+    # Serve image bytes
+    img = s.get(f"{BASE_URL}{created[0]['url']}", timeout=10, headers=_xff())
+    assert img.status_code == 200, img.text[:120]
+    assert img.content[:8] == b"\x89PNG\r\n\x1a\n"
+
+    # Caption edit
+    rid = created[0]["id"]
+    rp = admin_session.patch(
+        f"{API}/admin/gallery/{rid}",
+        json={"caption": "smoke-gallery-a-edited"},
+        timeout=10,
+    )
+    assert rp.status_code == 200, rp.text
+    assert rp.json().get("caption") == "smoke-gallery-a-edited"
+
+    # Reorder: put B first
+    ids = [created[1]["id"], created[0]["id"]]
+    rr = admin_session.put(f"{API}/admin/gallery/reorder", json={"ids": ids}, timeout=10)
+    assert rr.status_code == 200, rr.text
+    ordered = [x["id"] for x in rr.json().get("items") or [] if x["id"] in set(ids)]
+    assert ordered[:2] == ids
+
+    # Delete both + verify gone from public
+    for d in created:
+        rd = admin_session.delete(f"{API}/admin/gallery/{d['id']}", timeout=10)
+        assert rd.status_code == 200, rd.text
+
+    pub2 = s.get(f"{API}/gallery", timeout=10, headers=_xff()).json()
+    left = {x["id"] for x in pub2.get("items") or []}
+    for d in created:
+        assert d["id"] not in left
+
+    # Audit entries exist
+    ra = admin_session.get(
+        f"{API}/admin/audit", params={"limit": 40, "action": "gallery_upload"}, timeout=10
+    )
+    assert ra.status_code == 200
+    assert any(
+        (it.get("entity_id") in {c["id"] for c in created})
+        for it in (ra.json().get("items") or [])
+    )
+    rd_audit = admin_session.get(
+        f"{API}/admin/audit", params={"limit": 40, "action": "gallery_delete"}, timeout=10
+    )
+    assert rd_audit.status_code == 200
+    assert any(
+        (it.get("entity_id") in {c["id"] for c in created})
+        for it in (rd_audit.json().get("items") or [])
+    )
+

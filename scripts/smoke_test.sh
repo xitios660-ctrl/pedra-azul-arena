@@ -60,6 +60,14 @@ if [ -n "${INTERNAL_API_TOKEN:-}${WHATSAPP_INTERNAL_TOKEN:-}" ]; then
   fi
 fi
 
+# 2d) Public gallery (may be empty)
+G=$(curl -fsS "$API/gallery" || true)
+if echo "$G" | grep -q '"items"'; then
+  ok "GET /api/gallery"
+else
+  bad "gallery" "$G"
+fi
+
 # 3) Admin auth reject
 CODE=$(curl -s -o /tmp/pa_admin.json -w "%{http_code}" "$API/admin/dashboard" || echo "000")
 if [ "$CODE" = "401" ] || [ "$CODE" = "403" ]; then

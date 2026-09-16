@@ -5,7 +5,7 @@ import PageShell from "@/components/PageShell";
 import { HOME } from "@/constants/testIds";
 import {
   ChevronRight, CalendarDays, Trophy, Ticket, Zap, Activity, Play,
-  MessageCircle, MapPin, ShieldCheck, Banknote, Car, Clock, Sparkles, CloudRain, ScrollText,
+  MessageCircle, MapPin, ShieldCheck, Banknote, Car, Clock, Sparkles, CloudRain, ScrollText, Images, X,
 } from "lucide-react";
 import api from "@/lib/api";
 import {
@@ -117,8 +117,17 @@ function CountUp({ to, suffix = "" }) {
   );
 }
 
+function galleryMediaUrl(path) {
+  if (!path) return "";
+  if (/^https?:\/\//i.test(path)) return path;
+  const base = (process.env.REACT_APP_BACKEND_URL || "").replace(/\/$/, "");
+  return `${base}${path}`;
+}
+
 export default function Landing() {
   const [stats, setStats] = useState({ courts: 1, tournaments: 0, matchesLive: 0 });
+  const [gallery, setGallery] = useState([]);
+  const [lightbox, setLightbox] = useState(null);
   const m = useMotionSystem();
 
   useEffect(() => {
@@ -132,6 +141,13 @@ export default function Landing() {
         setStats({ courts: 1, tournaments: data.length, matchesLive });
       })
       .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    api
+      .get("/gallery")
+      .then(({ data }) => setGallery(Array.isArray(data?.items) ? data.items : []))
+      .catch(() => setGallery([]));
   }, []);
 
   const { settings, priceLabel: COURT_PRICE_LABEL, waReady, waHref: ctxWa, pixReady } = useSiteSettings();
@@ -411,6 +427,94 @@ export default function Landing() {
           </div>
         </div>
       </section>
+
+      {/* ===== GALERIA / CONHEÇA A QUADRA (fotos) ===== */}
+      {gallery.length > 0 && (
+        <section
+          className="relative py-14 sm:py-20 border-b border-white/5"
+          data-testid="landing-gallery"
+          aria-label="Galeria da quadra"
+        >
+          <div className="max-w-7xl mx-auto px-6 md:px-10">
+            <div className="text-center max-w-2xl mx-auto mb-8">
+              <div className="text-[10px] sm:text-[11px] tracking-[0.45em] uppercase text-[var(--brand)] mb-3 flex items-center justify-center gap-2">
+                <Images className="w-3.5 h-3.5" aria-hidden />
+                // Galeria · Conheça a quadra
+              </div>
+              <h2 className="font-heading text-[clamp(1.75rem,5vw,3.5rem)] uppercase italic font-black leading-[0.92] tracking-tighter">
+                Fotos da <span className="text-[var(--brand)] text-glow-strong">quadra</span>
+              </h2>
+            </div>
+            <ul
+              className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 sm:gap-3"
+              data-testid="landing-gallery-grid"
+            >
+              {gallery.map((img) => (
+                <li key={img.id}>
+                  <button
+                    type="button"
+                    data-testid={`landing-gallery-thumb-${img.id}`}
+                    className="group relative block w-full aspect-[4/3] overflow-hidden rounded-lg border border-white/10 bg-black/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
+                    onClick={() => setLightbox(img)}
+                    aria-label={img.caption ? `Ampliar: ${img.caption}` : "Ampliar foto da quadra"}
+                  >
+                    <img
+                      src={galleryMediaUrl(img.url)}
+                      alt={img.caption || "Foto da quadra Pedra Azul"}
+                      className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+                      loading="lazy"
+                      decoding="async"
+                    />
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+                    {img.caption ? (
+                      <span className="absolute bottom-0 left-0 right-0 p-2 text-[10px] sm:text-xs text-white/90 line-clamp-2 text-left opacity-0 group-hover:opacity-100 transition-opacity">
+                        {img.caption}
+                      </span>
+                    ) : null}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          {lightbox && (
+            <div
+              className="fixed inset-0 z-[70] bg-black/90 backdrop-blur-sm flex items-center justify-center p-4"
+              data-testid="landing-gallery-lightbox"
+              role="dialog"
+              aria-modal="true"
+              aria-label={lightbox.caption || "Foto ampliada"}
+              onClick={() => setLightbox(null)}
+              onKeyDown={(e) => { if (e.key === "Escape") setLightbox(null); }}
+            >
+              <button
+                type="button"
+                className="absolute top-4 right-4 min-h-[44px] min-w-[44px] grid place-items-center rounded-full border border-white/20 text-white/80 hover:text-white"
+                aria-label="Fechar"
+                data-testid="landing-gallery-lightbox-close"
+                onClick={() => setLightbox(null)}
+              >
+                <X className="w-5 h-5" />
+              </button>
+              <figure
+                className="max-w-5xl w-full max-h-[85vh] flex flex-col items-center"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <img
+                  src={galleryMediaUrl(lightbox.url)}
+                  alt={lightbox.caption || "Foto da quadra"}
+                  className="max-h-[75vh] w-auto max-w-full object-contain rounded-lg"
+                />
+                {lightbox.caption ? (
+                  <figcaption className="mt-3 text-sm text-white/70 text-center px-4">
+                    {lightbox.caption}
+                  </figcaption>
+                ) : null}
+              </figure>
+            </div>
+          )}
+        </section>
+      )}
 
       {/* ===== POLÍTICAS ===== */}
       {showPolicies && (

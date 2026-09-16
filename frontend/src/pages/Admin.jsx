@@ -8,7 +8,7 @@ import {
   TrendingUp, CheckCircle2, Hourglass, Activity, DollarSign, BarChart3, Save,
   Eye, MessageCircle, FileCheck, Wifi, WifiOff, QrCode, RefreshCw, LogOut, Loader2,
   Calendar, Clock, Ticket, X, Settings, AlertCircle, Download, Search,
-  UserCheck, StickyNote, ChevronDown, ChevronUp, Printer, History
+  UserCheck, StickyNote, ChevronDown, ChevronUp, Printer, History, Images, Trash2, Upload
 } from "lucide-react";
 import { isWhatsAppPlaceholder, isPixKeyPlaceholder, OPEN_DAY_LABELS } from "@/lib/siteConfig";
 import AdminCalendar from "@/components/AdminCalendar";
@@ -231,6 +231,7 @@ export default function AdminDashboard() {
         {activeTab === "settings" && (
           <div className="space-y-8">
             <SiteSettingsAdmin />
+            <GalleryAdmin />
             <HourCreditsAdmin />
             <PromoCodesAdmin />
           </div>
@@ -1419,6 +1420,10 @@ const AUDIT_ACTION_LABELS = {
   promo_deactivate: "Cupom desativado",
   credit_add: "Crédito adicionado",
   credit_adjust: "Crédito ajustado",
+  gallery_upload: "Foto galeria",
+  gallery_delete: "Foto removida",
+  gallery_caption: "Legenda galeria",
+  gallery_reorder: "Galeria ordem",
   whatsapp_disconnect: "WhatsApp desconectado",
   waitlist_remove: "Lista de espera",
 };
@@ -1435,6 +1440,8 @@ const AUDIT_FILTER_CHIPS = [
   { id: "promo_deactivate", label: "Cupom off" },
   { id: "credit_add", label: "Crédito +" },
   { id: "credit_adjust", label: "Crédito ±" },
+  { id: "gallery_upload", label: "Galeria +" },
+  { id: "gallery_delete", label: "Galeria −" },
   { id: "whatsapp_disconnect", label: "WhatsApp" },
   { id: "booking_check_in", label: "Check-in" },
   { id: "booking_no_show", label: "No-show" },
@@ -2656,4 +2663,216 @@ function PromoCodesAdmin() {
     </div>
   );
 }
+
+function mediaUrl(path) {
+  if (!path) return "";
+  if (/^https?:\/\//i.test(path)) return path;
+  const base = (process.env.REACT_APP_BACKEND_URL || "").replace(/\/$/, "");
+  return `${base}${path}`;
+}
+
+function GalleryAdmin() {
+  const [items, setItems] = useState([]);
+  const [max, setMax] = useState(12);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [ok, setOk] = useState("");
+  const [caption, setCaption] = useState("");
+  const [editCaption, setEditCaption] = useState({});
+
+  const load = async () => {
+    setLoading(true); setErr("");
+    try {
+      const { data } = await api.get("/admin/gallery");
+      setItems(data.items || []);
+      if (data.max != null) setMax(data.max);
+    } catch (e) {
+      setErr(e.response?.data?.detail || e.message);
+      setItems([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const onUpload = async (e) => {
+    e.preventDefault();
+    const input = e.target.elements?.namedItem?.("gallery_file") || e.target.querySelector('input[type="file"]');
+    const file = input?.files?.[0];
+    if (!file) { setErr("Escolha uma imagem."); return; }
+    if (/\.svg$/i.test(file.name) || (file.type || "").includes("svg")) {
+      setErr("SVG não permitido."); return;
+    }
+    setBusy(true); setErr(""); setOk("");
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("caption", caption || "");
+      await api.post("/admin/gallery", fd);
+      setOk("Foto enviada.");
+      setCaption("");
+      if (input) input.value = "";
+      await load();
+    } catch (ex) {
+      setErr(ex.response?.data?.detail || ex.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveCaption = async (id) => {
+    setBusy(true); setErr(""); setOk("");
+    try {
+      await api.patch(`/admin/gallery/${id}`, { caption: editCaption[id] ?? "" });
+      setOk("Legenda salva.");
+      await load();
+    } catch (ex) {
+      setErr(ex.response?.data?.detail || ex.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async (id) => {
+    if (!window.confirm("Remover esta foto da galeria?")) return;
+    setBusy(true); setErr(""); setOk("");
+    try {
+      await api.delete(`/admin/gallery/${id}`);
+      setOk("Foto removida.");
+      await load();
+    } catch (ex) {
+      setErr(ex.response?.data?.detail || ex.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const move = async (index, dir) => {
+    const next = [...items];
+    const j = index + dir;
+    if (j < 0 || j >= next.length) return;
+    const tmp = next[index];
+    next[index] = next[j];
+    next[j] = tmp;
+    setBusy(true); setErr("");
+    try {
+      const { data } = await api.put("/admin/gallery/reorder", { ids: next.map((x) => x.id) });
+      setItems(data.items || next);
+      setOk("Ordem atualizada.");
+    } catch (ex) {
+      setErr(ex.response?.data?.detail || ex.message);
+      await load();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div data-testid="admin-gallery" className="glass p-5 sm:p-6 space-y-5">
+      <div className="flex items-start gap-3">
+        <Images className="w-5 h-5 text-[var(--brand)] mt-1 shrink-0" aria-hidden />
+        <div>
+          <h2 className="font-heading text-3xl uppercase italic">Galeria da quadra</h2>
+          <p className="text-white/55 text-sm mt-1">
+            Fotos na landing (máx. {max}). Armazenadas no Mongo (GridFS) — persistem no Free Render.
+            Sem fotos, a seção some no site.
+          </p>
+        </div>
+      </div>
+
+      <form onSubmit={onUpload} className="grid sm:grid-cols-[1fr_1fr_auto] gap-3 items-end" data-testid="admin-gallery-upload-form">
+        <label className="block text-sm">
+          <span className="text-[10px] uppercase tracking-[0.2em] text-white/45">Arquivo (PNG/JPG/WEBP/GIF)</span>
+          <input
+            name="gallery_file"
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/gif"
+            data-testid="admin-gallery-file"
+            className="w-full mt-1 text-sm file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:bg-[var(--brand)]/20 file:text-[var(--brand)]"
+          />
+        </label>
+        <label className="block text-sm">
+          <span className="text-[10px] uppercase tracking-[0.2em] text-white/45">Legenda (opcional)</span>
+          <input
+            data-testid="admin-gallery-caption"
+            className="w-full mt-1 bg-black/40 border border-white/10 rounded-lg px-3 py-2 min-h-[44px]"
+            value={caption}
+            maxLength={200}
+            onChange={(e) => setCaption(e.target.value)}
+            placeholder="Ex.: Quadra à noite"
+          />
+        </label>
+        <button
+          type="submit"
+          disabled={busy || items.length >= max}
+          data-testid="admin-gallery-upload"
+          className="btn-neon min-h-[44px] justify-center inline-flex items-center gap-2"
+        >
+          {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+          Enviar
+        </button>
+      </form>
+
+      {err && <div className="text-[var(--danger)] text-sm" role="alert">{err}</div>}
+      {ok && <div className="text-[var(--success)] text-sm">{ok}</div>}
+
+      {loading ? (
+        <div className="text-white/50 py-6">Carregando galeria…</div>
+      ) : items.length === 0 ? (
+        <div className="text-white/50 py-6 text-center" data-testid="admin-gallery-empty">
+          Nenhuma foto ainda — a landing fica sem seção Galeria.
+        </div>
+      ) : (
+        <ul className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4" data-testid="admin-gallery-list">
+          {items.map((img, idx) => (
+            <li key={img.id} data-testid={`admin-gallery-item-${img.id}`} className="border border-white/10 rounded-lg overflow-hidden bg-black/30">
+              <div className="aspect-[4/3] bg-black/50 relative">
+                <img
+                  src={mediaUrl(img.url)}
+                  alt={img.caption || "Foto da quadra"}
+                  className="absolute inset-0 w-full h-full object-cover"
+                  loading="lazy"
+                />
+              </div>
+              <div className="p-3 space-y-2">
+                <input
+                  data-testid={`admin-gallery-edit-caption-${img.id}`}
+                  className="w-full bg-black/40 border border-white/10 rounded-lg px-2 py-1.5 text-sm min-h-[40px]"
+                  value={editCaption[img.id] !== undefined ? editCaption[img.id] : (img.caption || "")}
+                  maxLength={200}
+                  onChange={(e) => setEditCaption((m) => ({ ...m, [img.id]: e.target.value }))}
+                  placeholder="Legenda"
+                />
+                <div className="flex flex-wrap gap-2">
+                  <button type="button" className="btn-ghost !py-1.5 !px-3 !text-xs" disabled={busy} onClick={() => saveCaption(img.id)}>
+                    Salvar legenda
+                  </button>
+                  <button type="button" className="btn-ghost !py-1.5 !px-3 !text-xs" disabled={busy || idx === 0} onClick={() => move(idx, -1)} data-testid={`admin-gallery-up-${img.id}`}>
+                    ↑
+                  </button>
+                  <button type="button" className="btn-ghost !py-1.5 !px-3 !text-xs" disabled={busy || idx === items.length - 1} onClick={() => move(idx, 1)} data-testid={`admin-gallery-down-${img.id}`}>
+                    ↓
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-ghost !py-1.5 !px-3 !text-xs text-[var(--danger)] inline-flex items-center gap-1"
+                    disabled={busy}
+                    data-testid={`admin-gallery-delete-${img.id}`}
+                    onClick={() => remove(img.id)}
+                  >
+                    <Trash2 className="w-3.5 h-3.5" /> Remover
+                  </button>
+                </div>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="text-[11px] text-white/40">{items.length}/{max} fotos</div>
+    </div>
+  );
+}
+
 

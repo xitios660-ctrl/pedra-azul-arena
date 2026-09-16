@@ -31,7 +31,7 @@ Reserva de **uma** quadra (Pedra Azul — Núncio), fluxo CPF + PIX + confirmaç
 | `AUTH_RATE_LIMIT` | não | Max POSTs `/api/auth/login` por IP/janela (default 10) |
 | `AUTH_RATE_WINDOW_SEC` | não | Janela do rate limit de login em segundos (default 60) |
 | `WA_SELF_PING_MINUTES` | não | Default `5`. Ping localhost do sidecar WA (mín. 3). `0` desliga. **Não** impede sleep do Render Free. |
-| `UPLOAD_DIR` | não | Pasta cache de uploads (crests/comprovantes). Local: `backend/uploads`. Render: `/var/data/uploads` (Starter+). **Comprovantes PIX: GridFS no Mongo (Free-safe)**; disk opcional. |
+| `UPLOAD_DIR` | não | Pasta cache de uploads (crests/comprovantes/gallery). Local: `backend/uploads`. Render: `/var/data/uploads` (Starter+). **Comprovantes PIX + galeria: GridFS no Mongo (Free-safe)**; disk opcional. |
 
 **Nunca** commitir credenciais Baileys / `.env` / QR. Sessão fica na collection `whatsapp_auth`.
 
@@ -266,3 +266,13 @@ Prod smoke: `GET /api/health`, `/api/courts`, `/api/site-settings`, WhatsApp `AG
 - Settings: `credits_enabled` (default true). Público: `GET /api/credits/balance?phone=` e `POST /api/credits/lookup`.
 - Reserva com `pay_with_credits: true`: se duração ≤ saldo, decremento atômico; `payment.method=credits`, `status=paid`, booking `confirmed` (sem PIX). Insuficiente → 400.
 - UI Booking: toggle “Usar crédito (Xh)” quando telefone tem saldo; MyBookings/recibo mostram método crédito.
+
+## Cycle 33 notes
+- Cancelamento de reserva paga com crédito devolve horas (`credits_refunded_at` idempotente); no_show sem estorno.
+- Bot WA: intent saldo do pacote; admin mostra “Crédito estornado”.
+
+## Cycle 34 notes
+- Galeria da quadra: metadata `gallery_images` + binários GridFS (`uploads` bucket, subdir `gallery`) — Free Render-safe.
+- Público `GET /api/gallery`; admin upload/legenda/reordenar/remover (máx. 12; magic bytes; sem SVG).
+- Landing: seção **Galeria / Conheça a quadra** com grid + lightbox; oculta se vazia (sem fotos inventadas).
+- Audit: `gallery_upload` / `gallery_delete` (+ caption/reorder).
