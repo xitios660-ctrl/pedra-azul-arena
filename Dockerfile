@@ -27,8 +27,8 @@ RUN npm run build
 # -----------------------------------------------------------------------------
 FROM node:20-bookworm-slim AS whatsapp-deps
 WORKDIR /app/whatsapp
-COPY whatsapp/package.json ./
-RUN npm install --omit=dev
+COPY whatsapp/package.json whatsapp/package-lock.json ./
+RUN npm ci --omit=dev
 
 # -----------------------------------------------------------------------------
 # Stage 3: Python FastAPI + static frontend + Node WhatsApp sidecar
