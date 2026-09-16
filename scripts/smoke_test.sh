@@ -209,6 +209,25 @@ else
 fi
 
 
+# 6) Security headers (Cycle 41)
+HDR_H=$(curl -sD - -o /dev/null -X GET "$API/health" || true)
+HDR_R=$(curl -sD - -o /dev/null -X GET "$BASE_URL/" || true)
+_check_sec() {
+  local label="$1" hdr="$2"
+  echo "$hdr" | grep -qi 'X-Content-Type-Options: *nosniff' \
+    && echo "$hdr" | grep -qi 'X-Frame-Options: *DENY' \
+    && echo "$hdr" | grep -qi 'Referrer-Policy: *strict-origin-when-cross-origin' \
+    && echo "$hdr" | grep -qi 'Permissions-Policy:.*camera=()' \
+    && echo "$hdr" | grep -qi 'Content-Security-Policy:.*default-src' \
+    && echo "$hdr" | grep -qi 'Content-Security-Policy:.*fonts.googleapis.com'
+}
+if _check_sec health "$HDR_H" && _check_sec root "$HDR_R"; then
+  ok "security headers on /api/health and /"
+else
+  bad "security headers" "health=$(echo "$HDR_H" | tr '\r' ' ' | head -c 200) root=$(echo "$HDR_R" | tr '\r' ' ' | head -c 200)"
+fi
+
+
 echo
 echo "Result: $PASS passed, $FAIL failed"
 if [ "$FAIL" -gt 0 ]; then

@@ -3671,6 +3671,28 @@ def test_robots_txt(s):
     assert "sitemap.xml" in body
 
 
+def test_security_headers(s):
+    """Cycle 41: safe default security headers on API + SPA shell."""
+    for path in (f"{API}/health", f"{BASE_URL}/"):
+        r = s.get(path, timeout=10, headers=_xff())
+        assert r.status_code == 200, f"{path} -> {r.status_code}"
+        h = {k.lower(): v for k, v in r.headers.items()}
+        assert h.get("x-content-type-options", "").lower() == "nosniff", path
+        assert h.get("x-frame-options", "").upper() == "DENY", path
+        assert h.get("referrer-policy") == "strict-origin-when-cross-origin", path
+        pp = h.get("permissions-policy") or ""
+        assert "camera=()" in pp and "microphone=()" in pp and "geolocation=()" in pp, path
+        csp = h.get("content-security-policy") or ""
+        assert "default-src 'self'" in csp, path
+        assert "frame-ancestors 'none'" in csp, path
+        assert "fonts.googleapis.com" in csp, path
+        assert "fonts.gstatic.com" in csp, path
+        assert "img-src" in csp and "data:" in csp and "blob:" in csp, path
+        assert "connect-src 'self'" in csp, path
+        # enforcing CSP (not report-only) — pragmatic for CRA
+        assert "content-security-policy-report-only" not in h or not h.get("content-security-policy-report-only"), path
+
+
 def test_desk_pin_checkin_flow(admin_session, s):
     """Cycle 38: desk PIN session, today check-in, wrong day rejected, bad pin 401."""
     from pymongo import MongoClient

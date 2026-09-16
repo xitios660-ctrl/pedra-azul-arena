@@ -311,3 +311,8 @@ Prod smoke: `GET /api/health`, `/api/courts`, `/api/site-settings`, WhatsApp `AG
 - Detalhe: hero com meta + CTA; abas responsivas; estados vazios nas chaves/classificação/artilharia/histórico.
 - Landing já linkava `/tournaments` (hero + menu + navbar); Presentation intocada.
 
+## Cycle 41 notes
+- Middleware ASGI de **HTTP security headers** (SSE-safe): `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy` mínimo (camera/mic/geolocation off).
+- CSP pragmática (enforcing): `self` + inline styles/scripts (CRA), Google Fonts, `img-src` data/blob (QR WhatsApp), `connect-src 'self'` (API + EventSource SSE). Links `wa.me` / Maps são navegação — não quebram.
+- Sem `/.well-known/security.txt` (contato e-mail não estava no projeto).
+

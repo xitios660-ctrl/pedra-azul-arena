@@ -22,6 +22,7 @@ from fastapi import FastAPI, APIRouter, Depends, HTTPException, Response, Upload
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.cors import CORSMiddleware
+from security_headers import SecurityHeadersMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo.errors import DuplicateKeyError
 from pydantic import BaseModel, EmailStr, Field
@@ -3554,3 +3555,6 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-Internal-Token", "Accept", "Origin", "X-Forwarded-For"],
 )
+
+# Cycle 41: security headers (outermost — pure ASGI, SSE-safe)
+app.add_middleware(SecurityHeadersMiddleware)

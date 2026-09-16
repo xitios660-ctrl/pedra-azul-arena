@@ -95,6 +95,19 @@ else
 fi
 
 
+# 6) Security headers (Cycle 41)
+HDR_H=$(curl -sD - -o /dev/null --max-time 25 -X GET "$API/health" || true)
+HDR_R=$(curl -sD - -o /dev/null --max-time 25 -X GET "$BASE_URL/" || true)
+if echo "$HDR_H" | grep -qi 'X-Content-Type-Options: *nosniff' \
+  && echo "$HDR_H" | grep -qi 'Content-Security-Policy:.*default-src' \
+  && echo "$HDR_R" | grep -qi 'X-Content-Type-Options: *nosniff' \
+  && echo "$HDR_R" | grep -qi 'X-Frame-Options: *DENY'; then
+  ok "security headers on /api/health and /"
+else
+  bad "security headers" "missing expected headers"
+fi
+
+
 echo
 echo "Result: $PASS passed, $FAIL failed"
 if [ "$FAIL" -gt 0 ]; then
