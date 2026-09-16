@@ -50,6 +50,9 @@ export const DEFAULT_SITE_SETTINGS = {
   structure_blurb: STRUCTURE_BLURB,
   amenities: DEFAULT_AMENITIES,
   court_name: "Quadra Pedra Azul — Núncio",
+  allow_multi_hour: true,
+  max_hours_per_booking: 2,
+  waitlist_enabled: true,
 };
 
 

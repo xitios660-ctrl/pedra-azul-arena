@@ -104,6 +104,12 @@ export default function Booking() {
 
   const [booking, setBooking] = useState(null);
   const [err, setErr] = useState("");
+  const [waitlistSlot, setWaitlistSlot] = useState(null);
+  const [wlName, setWlName] = useState("");
+  const [wlPhone, setWlPhone] = useState("");
+  const [wlBusy, setWlBusy] = useState(false);
+  const [wlMsg, setWlMsg] = useState("");
+  const [wlErr, setWlErr] = useState("");
 
   useEffect(() => {
     api.get("/courts")
@@ -143,6 +149,37 @@ export default function Booking() {
       })
       .finally(() => setLoading(false));
   }, [selectedCourt, date]);
+
+  const waitlistOn = settings?.waitlist_enabled !== false && (availability?.settings?.waitlist_enabled !== false);
+
+  const openWaitlist = (slot) => {
+    if (!waitlistOn || !isSlotReserved(slot)) return;
+    setWaitlistSlot(slot);
+    setWlName(name || "");
+    setWlPhone(whatsapp || "");
+    setWlMsg("");
+    setWlErr("");
+  };
+
+  const submitWaitlist = async (e) => {
+    e?.preventDefault();
+    if (!waitlistSlot || !selectedCourt) return;
+    setWlBusy(true); setWlErr(""); setWlMsg("");
+    try {
+      const { data } = await api.post("/waitlist", {
+        court_id: selectedCourt.id,
+        date,
+        start_time: waitlistSlot.time,
+        name: wlName.trim(),
+        phone: wlPhone.trim(),
+      });
+      setWlMsg(data.message || "Você entrou na lista de espera.");
+    } catch (err) {
+      setWlErr(formatApiErrorDetail(err.response?.data?.detail) || err.message || "Não foi possível entrar na lista.");
+    } finally {
+      setWlBusy(false);
+    }
+  };
 
   const pickSlot = (slot) => {
     if (!isSlotAvailable(slot)) return;
@@ -516,7 +553,7 @@ export default function Booking() {
             {!loading && dayOpen && availability?.slots?.length > 0 && freeSlots === 0 && (
               <div className="state-panel mb-4 !min-h-0 py-6">
                 <div className="font-heading text-xl uppercase text-[var(--warning)]">Lotado neste dia</div>
-                <p className="text-sm mt-1">Todos os horários estão ocupados. Escolha outra data.</p>
+                <p className="text-sm mt-1">Todos os horários estão ocupados. {waitlistOn ? "Toque em um horário reservado para entrar na lista de espera." : "Escolha outra data."}</p>
               </div>
             )}
 
@@ -534,17 +571,17 @@ export default function Booking() {
                     type="button"
                     layout
                     data-testid={BOOKING.slot(s.time)}
-                    disabled={!isFree}
-                    aria-disabled={!isFree}
+                    disabled={!isFree && !(isReserved && waitlistOn)}
+                    aria-disabled={!isFree && !(isReserved && waitlistOn)}
                     initial={m.reduce ? { opacity: 0 } : { opacity: 0, scale: 0.96, y: 8 }}
                     animate={{ opacity: 1, scale: 1, y: 0 }}
                     exit={{ opacity: 0, scale: 0.96 }}
                     transition={m.reduce ? { duration: 0.01 } : { delay: Math.min(idx * 0.03, 0.35), duration: 0.35, ease: easings.outExpo }}
-                    whileHover={isFree && !m.reduce ? { x: 4, scale: 1.015 } : {}}
-                    whileTap={isFree && !m.reduce ? { scale: 0.98 } : {}}
-                    onClick={() => pickSlot(s)}
+                    whileHover={(isFree || (isReserved && waitlistOn)) && !m.reduce ? { x: 4, scale: 1.015 } : {}}
+                    whileTap={(isFree || (isReserved && waitlistOn)) && !m.reduce ? { scale: 0.98 } : {}}
+                    onClick={() => (isFree ? pickSlot(s) : openWaitlist(s))}
                     className={`slot-match relative flex items-center justify-between px-4 py-3.5 bg-white/[0.03] hover:bg-white/[0.06] transition-colors text-left min-h-[72px] ${
-                      isFree ? "slot-free" : isReserved ? "slot-reserved slot-locked" : "slot-unavailable slot-locked"
+                      isFree ? "slot-free" : isReserved ? "slot-reserved" : "slot-unavailable slot-locked"
                     } ${isPicked ? "slot-selected" : ""}`}
                   >
                     {isPicked && !m.reduce && (
@@ -566,7 +603,11 @@ export default function Booking() {
                     <div className="text-right relative z-[1]">
                       <div className="font-display text-[var(--brand)] text-lg">{fmtBRL(s.price)}</div>
                       <div className="text-[10px] text-white/40 uppercase tracking-[0.3em]">
-                        {isFree && (s.max_consecutive || 1) > 1 ? `até ${s.max_consecutive}h` : "60min"}
+                        {isReserved && waitlistOn
+                          ? "Entrar na lista"
+                          : isFree && (s.max_consecutive || 1) > 1
+                            ? `até ${s.max_consecutive}h`
+                            : "60min"}
                       </div>
                     </div>
                   </motion.button>
@@ -580,6 +621,67 @@ export default function Booking() {
       </div>
 
       {/* ====== MODALS ====== */}
+      {/* Waitlist modal */}
+      <AnimatePresence>
+        {waitlistSlot && (
+          <Overlay onClose={() => { if (!wlBusy) setWaitlistSlot(null); }}>
+            <motion.div
+              data-testid="booking-waitlist-modal"
+              {...m.modalMotion}
+              className="relative glass-strong booking-modal-sheet w-[min(480px,95vw)] p-5 sm:p-8 max-h-[92vh] overflow-y-auto"
+            >
+              <CloseBtn onClick={() => { if (!wlBusy) setWaitlistSlot(null); }} />
+              <div className="text-[11px] tracking-[0.35em] uppercase text-[var(--brand)] mt-2">// Lista de espera</div>
+              <h2 className="font-heading text-3xl sm:text-4xl uppercase italic">
+                Horário <span className="text-[var(--warning)]">ocupado</span>
+              </h2>
+              <p className="text-white/60 mt-2 text-sm">
+                {new Date(date+"T00:00:00").toLocaleDateString("pt-BR")} · {waitlistSlot.time} — entre na fila.
+                Se liberar, avisamos no WhatsApp (primeiro da fila).
+              </p>
+              {wlMsg ? (
+                <div className="mt-6 p-4 border border-[var(--brand)]/40 bg-[var(--brand)]/10 text-sm" data-testid="booking-waitlist-ok">
+                  {wlMsg}
+                  <button type="button" className="btn-neon mt-4 w-full" onClick={() => setWaitlistSlot(null)}>Fechar</button>
+                </div>
+              ) : (
+                <form onSubmit={submitWaitlist} className="mt-6 space-y-4">
+                  <label className="block">
+                    <div className="text-[10px] uppercase tracking-[0.25em] text-white/50 mb-1">Nome</div>
+                    <input
+                      data-testid="booking-waitlist-name"
+                      className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2.5 min-h-[44px]"
+                      value={wlName}
+                      onChange={(e) => setWlName(e.target.value)}
+                      required
+                      minLength={2}
+                      maxLength={80}
+                      placeholder="Seu nome"
+                    />
+                  </label>
+                  <label className="block">
+                    <div className="text-[10px] uppercase tracking-[0.25em] text-white/50 mb-1">WhatsApp</div>
+                    <input
+                      data-testid="booking-waitlist-phone"
+                      className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2.5 min-h-[44px]"
+                      value={wlPhone}
+                      onChange={(e) => setWlPhone(e.target.value)}
+                      required
+                      placeholder="(11) 99999-9999"
+                    />
+                  </label>
+                  {wlErr && <div className="text-[var(--danger)] text-sm" data-testid="booking-waitlist-err">{wlErr}</div>}
+                  <button type="submit" disabled={wlBusy} className="btn-neon w-full" data-testid="booking-waitlist-submit">
+                    {wlBusy ? "Enviando…" : "Entrar na lista"}
+                  </button>
+                </form>
+              )}
+            </motion.div>
+          </Overlay>
+        )}
+      </AnimatePresence>
+
+
       <AnimatePresence>
         {step === "duration" && pickedSlot && (
           <Overlay onClose={closeAll}>

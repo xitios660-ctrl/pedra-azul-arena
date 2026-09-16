@@ -50,6 +50,7 @@ import daily_metrics as daily_metrics
 from seed_data import run_all_seeds
 import site_settings as sset
 from site_settings import SiteSettingsUpdate
+import waitlist_service as wls
 
 # -----------------------------------------------------------------------------
 # Setup
@@ -83,6 +84,10 @@ _BOOKING_WINDOW = int(os.environ.get("BOOKING_RATE_WINDOW_SEC", "60"))
 _AUTH_HITS: dict[str, list[float]] = defaultdict(list)
 _AUTH_LIMIT = int(os.environ.get("AUTH_RATE_LIMIT", "10"))
 _AUTH_WINDOW = int(os.environ.get("AUTH_RATE_WINDOW_SEC", "60"))
+
+_WAITLIST_HITS: dict[str, list[float]] = defaultdict(list)
+_WAITLIST_LIMIT = int(os.environ.get("WAITLIST_RATE_LIMIT", "10"))
+_WAITLIST_WINDOW = int(os.environ.get("WAITLIST_RATE_WINDOW_SEC", "60"))
 
 
 def _client_ip(request: Request) -> str:
@@ -122,6 +127,16 @@ def _rate_limit_auth(request: Request) -> None:
         _AUTH_WINDOW,
         request,
         "Muitas tentativas de login. Aguarde um minuto e tente novamente.",
+    )
+
+
+def _rate_limit_waitlist(request: Request) -> None:
+    _rate_limit(
+        _WAITLIST_HITS,
+        _WAITLIST_LIMIT,
+        _WAITLIST_WINDOW,
+        request,
+        "Muitas tentativas na lista de espera. Aguarde um minuto e tente novamente.",
     )
 
 _wa_self_ping_task = None  # Cycle 18 optional localhost WA nudge
@@ -371,6 +386,14 @@ def _customer_cancel_allowed(booking: dict, settings: dict, *, action: str = "Ca
     return True, ""
 
 
+async def _after_booking_freed(booking: dict) -> None:
+    """Best-effort waitlist FIFO notify when a booking frees slot(s)."""
+    try:
+        await wls.notify_after_booking_freed(db, booking)
+    except Exception as e:
+        logger.warning("waitlist after free: %s", e)
+
+
 async def _notify_cancel_wa(booking: dict, *, source: str) -> bool:
     """Best-effort short natural cancel message to customer if WA connected."""
     phone = (booking.get("whatsapp") or "").strip()
@@ -498,6 +521,16 @@ async def create_booking(payload: BookingCreate, request: Request):
     )
     # Best-effort admin WA alert — never fail the booking
     await admin_alerts.notify_admin_new_booking(db, booking)
+    try:
+        await wls.mark_fulfilled_on_book(
+            db,
+            court_id=booking.get("court_id") or COURT_ID,
+            date=booking["date"],
+            start_time=booking["start_time"],
+            phone=booking.get("whatsapp") or "",
+        )
+    except Exception:
+        pass
     return _public_booking(booking)
 
 
@@ -571,6 +604,7 @@ async def cancel_booking(booking_id: str, cpf: str):
     ops_metrics.note_booking_cancel("customer")
     await daily_metrics.note_cancelled(db)
     wa_ok = await _notify_cancel_wa(b, source="customer")
+    await _after_booking_freed(b)
     logger.info(
         "event=booking_cancel source=customer booking_id=%s wa=%s",
         booking_id[:8],
@@ -1203,6 +1237,7 @@ async def admin_cancel_booking(booking_id: str, admin: dict = Depends(require_ad
     ops_metrics.note_booking_cancel("admin")
     await daily_metrics.note_cancelled(db)
     wa_ok = await _notify_cancel_wa(b, source="admin")
+    await _after_booking_freed(b)
     logger.info("event=booking_cancel source=admin booking_id=%s wa=%s", booking_id[:8], wa_ok)
     return {"ok": True, "whatsapp_notified": wa_ok}
 
@@ -1421,6 +1456,7 @@ async def admin_reject_booking(booking_id: str, admin: dict = Depends(require_ad
     await bsvc.release_slot_locks(db, booking_id)
     ops_metrics.note_booking_cancel("admin_reject")
     await daily_metrics.note_cancelled(db)
+    await _after_booking_freed(b)
     logger.info("event=booking_reject source=admin booking_id=%s", booking_id[:8])
     # Best-effort WA notify customer
     msg = (
@@ -1607,6 +1643,7 @@ async def internal_wa_cancel(request: Request, payload: WaCancelIn):
     await bsvc.release_slot_locks(db, b["id"])
     ops_metrics.note_booking_cancel("whatsapp")
     await daily_metrics.note_cancelled(db)
+    await _after_booking_freed(b)
     logger.info(
         "event=booking_cancel source=whatsapp booking_id=%s date=%s time=%s",
         b["id"][:8],
@@ -1978,6 +2015,66 @@ async def admin_metrics(admin: dict = Depends(require_admin)):
     return snap
 
 
+
+# =============================================================================
+# WAITLIST — public join + admin list/remove (Cycle 25)
+# =============================================================================
+class WaitlistJoinIn(BaseModel):
+    court_id: str = Field(default="court-1")
+    date: str
+    start_time: str
+    name: str = Field(min_length=2, max_length=80)
+    phone: str = Field(min_length=8, max_length=20)
+
+
+@api.post("/waitlist")
+async def join_waitlist(payload: WaitlistJoinIn, request: Request):
+    """Join waitlist when slot is reserved/blocked. Rate-limited. FIFO notify on free."""
+    _rate_limit_waitlist(request)
+    await bsvc.expire_stale_pending(db)
+    try:
+        entry = await wls.join_waitlist(
+            db,
+            court_id=payload.court_id or COURT_ID,
+            date=payload.date,
+            start_time=payload.start_time,
+            name=payload.name,
+            phone=payload.phone,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {
+        "ok": True,
+        "id": entry["id"],
+        "date": entry["date"],
+        "start_time": entry["start_time"],
+        "status": entry["status"],
+        "position": entry.get("position"),
+        "message": (
+            f"Você entrou na lista de espera para {entry['date']} às {entry['start_time']}. "
+            f"Avisaremos no WhatsApp se o horário liberar."
+        ),
+    }
+
+
+@api.get("/admin/waitlist")
+async def admin_list_waitlist(date: str, admin: dict = Depends(require_admin)):
+    """List waitlist entries for a date (all statuses)."""
+    try:
+        rows = await wls.list_for_date(db, date)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"date": date, "entries": rows, "count": len(rows)}
+
+
+@api.delete("/admin/waitlist/{entry_id}")
+async def admin_remove_waitlist(entry_id: str, admin: dict = Depends(require_admin)):
+    """Remove (cancel) a waitlist entry."""
+    ok = await wls.remove_entry(db, entry_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Entrada não encontrada ou já removida")
+    return {"ok": True, "id": entry_id}
+
 # =============================================================================
 # ADMIN — WhatsApp (Baileys sidecar proxy + SSE)
 # =============================================================================
@@ -2139,6 +2236,7 @@ async def startup():
     await run_all_seeds(db)
     await sset.ensure_seeded(db)
     await daily_metrics.ensure_indexes(db)
+    await wls.ensure_indexes(db)
     logger.info("Arena Futsal Premium API initialized (CPF + WA bot + calendar)")
 
     # Cycle 18: lightweight localhost WA sidecar self-ping (optional).

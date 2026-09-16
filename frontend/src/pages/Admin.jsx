@@ -168,6 +168,7 @@ export default function AdminDashboard() {
             { id: "calendar", label: "Calendário" },
             { id: "whatsapp", label: "WhatsApp" },
             { id: "customers", label: "Clientes" },
+            { id: "waitlist", label: "Lista de espera" },
             { id: "settings", label: "Configurações" },
             { id: "tournaments", label: "Campeonatos" },
           ].map(t => (
@@ -210,6 +211,7 @@ export default function AdminDashboard() {
             }}
           />
         )}
+        {activeTab === "waitlist" && <WaitlistAdmin />}
         {activeTab === "settings" && <SiteSettingsAdmin />}
         {activeTab === "tournaments" && (
           <TournamentsAdmin tournaments={tournaments} selected={selectedTour} setSelected={setSelectedTour} onUpdated={refresh} />
@@ -1334,6 +1336,133 @@ function CustomersAdmin({ onOpenReservas }) {
   );
 }
 
+
+function WaitlistAdmin() {
+  const today = (() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  })();
+  const [date, setDate] = useState(today);
+  const [entries, setEntries] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState("");
+
+  const load = async (d = date) => {
+    setLoading(true); setErr("");
+    try {
+      const { data } = await api.get("/admin/waitlist", { params: { date: d } });
+      setEntries(data.entries || []);
+    } catch (e) {
+      setErr(e.response?.data?.detail || e.message);
+      setEntries([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true); setErr("");
+      try {
+        const { data } = await api.get("/admin/waitlist", { params: { date } });
+        if (!cancelled) setEntries(data.entries || []);
+      } catch (e) {
+        if (!cancelled) {
+          setErr(e.response?.data?.detail || e.message);
+          setEntries([]);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [date]);
+
+  const remove = async (id) => {
+    if (!window.confirm("Remover esta entrada da lista de espera?")) return;
+    try {
+      await api.delete(`/admin/waitlist/${id}`);
+      await load();
+    } catch (e) {
+      window.alert(e.response?.data?.detail || e.message);
+    }
+  };
+
+  const statusLabel = (s) => ({
+    waiting: "Aguardando",
+    notified: "Notificado",
+    fulfilled: "Atendido",
+    cancelled: "Removido",
+  }[s] || s);
+
+  return (
+    <div data-testid="admin-waitlist" className="glass p-5 sm:p-6 space-y-4">
+      <div className="flex flex-wrap items-end gap-4 justify-between">
+        <div>
+          <div className="text-[11px] tracking-[0.35em] uppercase text-[var(--brand)]">// Waitlist</div>
+          <h2 className="font-heading text-3xl sm:text-4xl uppercase italic">Lista de espera</h2>
+          <p className="text-white/55 text-sm mt-1">Fila por data · primeiro notificado quando o horário liberar.</p>
+        </div>
+        <label className="block">
+          <div className="text-[10px] uppercase tracking-[0.25em] text-white/50 mb-1">Data</div>
+          <input
+            type="date"
+            data-testid="admin-waitlist-date"
+            className="bg-black/40 border border-white/10 rounded-lg px-3 py-2 min-h-[44px]"
+            value={date}
+            onChange={(e) => setDate(e.target.value)}
+          />
+        </label>
+      </div>
+      {err && <div className="text-[var(--danger)] text-sm">{err}</div>}
+      {loading ? (
+        <div className="text-white/50 py-8">Carregando…</div>
+      ) : entries.length === 0 ? (
+        <div className="text-white/50 py-8 text-center" data-testid="admin-waitlist-empty">Nenhuma entrada nesta data.</div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm min-w-[640px]">
+            <thead>
+              <tr className="text-left text-[10px] uppercase tracking-[0.2em] text-white/45 border-b border-white/10">
+                <th className="py-2 pr-3">Horário</th>
+                <th className="py-2 pr-3">Nome</th>
+                <th className="py-2 pr-3">WhatsApp</th>
+                <th className="py-2 pr-3">Status</th>
+                <th className="py-2 pr-3">Entrada</th>
+                <th className="py-2"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {entries.map((e) => (
+                <tr key={e.id} data-testid={`admin-waitlist-row-${e.id}`} className="border-b border-white/5">
+                  <td className="py-3 pr-3 font-heading text-lg">{e.start_time}</td>
+                  <td className="py-3 pr-3">{e.name}</td>
+                  <td className="py-3 pr-3 text-white/70">{e.phone}</td>
+                  <td className="py-3 pr-3">{statusLabel(e.status)}</td>
+                  <td className="py-3 pr-3 text-white/45 text-xs">{(e.created_at || "").slice(0, 16).replace("T", " ")}</td>
+                  <td className="py-3 text-right">
+                    {(e.status === "waiting" || e.status === "notified") && (
+                      <button
+                        type="button"
+                        data-testid={`admin-waitlist-remove-${e.id}`}
+                        className="btn-ghost !py-1.5 !px-3 !text-xs"
+                        onClick={() => remove(e.id)}
+                      >
+                        Remover
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SiteSettingsAdmin() {
   const { refresh: refreshPublicSettings } = useSiteSettings();
   const [form, setForm] = useState(null);
@@ -1366,6 +1495,7 @@ function SiteSettingsAdmin() {
           amenities_text: Array.isArray(data.amenities) ? data.amenities.join("\n") : "",
           allow_multi_hour: data.allow_multi_hour !== false,
           max_hours_per_booking: data.max_hours_per_booking ?? 2,
+          waitlist_enabled: data.waitlist_enabled !== false,
         });
       } catch (e) {
         setErr(e.response?.data?.detail || e.message);
@@ -1400,6 +1530,7 @@ function SiteSettingsAdmin() {
         slot_duration_minutes: Number(form.slot_duration_minutes),
         allow_multi_hour: form.allow_multi_hour !== false,
         max_hours_per_booking: Math.max(1, Math.min(3, Number(form.max_hours_per_booking ?? 2) || 2)),
+        waitlist_enabled: form.waitlist_enabled !== false,
         cancel_min_hours: Number(form.cancel_min_hours ?? 2),
         reminder_hours_before: Number(form.reminder_hours_before ?? 3),
         admin_whatsapp_e164: String(form.admin_whatsapp_e164 || "").replace(/\D/g, ""),
@@ -1492,6 +1623,15 @@ function SiteSettingsAdmin() {
           onChange={(e) => set("allow_multi_hour", e.target.checked)}
         />
         <span className="text-sm text-white/80">Permitir reserva de 1–2 horas consecutivas (multi-hora)</span>
+      </label>
+      <label className="flex items-center gap-3 min-h-[44px] cursor-pointer" data-testid="admin-waitlist-enabled">
+        <input
+          type="checkbox"
+          className="w-5 h-5 accent-[var(--brand)]"
+          checked={form.waitlist_enabled !== false}
+          onChange={(e) => set("waitlist_enabled", e.target.checked)}
+        />
+        <span className="text-sm text-white/80">Lista de espera quando horário estiver ocupado (avisar no WhatsApp se liberar)</span>
       </label>
       <div className="border border-white/10 rounded-lg p-4 space-y-3 bg-black/20" data-testid="admin-weekend-hours">
         <div className="text-[10px] uppercase tracking-[0.25em] text-[var(--brand)]">Horário fim de semana (opcional)</div>

@@ -73,7 +73,7 @@ SSE: `GET /api/admin/whatsapp/events` (JWT/cookie admin).
 
 ## Admin — Configurações
 
-Aba **Configurações** edita o singleton `site_settings` (WhatsApp E.164, PIX, endereço/Maps, preço/hora, abertura/fechamento, **dias abertos** `open_days`, duração do slot, **multi-hora** `allow_multi_hour` / `max_hours_per_booking`, estacionamento, nome da quadra).
+Aba **Configurações** edita o singleton `site_settings` (WhatsApp E.164, PIX, endereço/Maps, preço/hora, abertura/fechamento, **dias abertos** `open_days`, duração do slot, **multi-hora** `allow_multi_hour` / `max_hours_per_booking`, **lista de espera** `waitlist_enabled`, estacionamento, nome da quadra).
 
 - Público: `GET /api/site-settings`
 - Admin JWT: `GET|PUT /api/admin/site-settings`
@@ -223,3 +223,11 @@ Prod smoke: `GET /api/health`, `/api/courts`, `/api/site-settings`, WhatsApp `AG
 - Uma reserva com `duration_minutes` / `slot_keys` + collection `slot_locks` (unique `slot_key`) bloqueia todas as horas cobertas (409 em conflito).
 - Preço = horas × preço horário (fim de semana inclusive). Cancel/expire/reschedule liberam todos os locks.
 - Admin calendário mostra continuação (`↳`) e duração; criar reserva admin aceita `duration_hours`.
+
+## Cycle 25 notes
+- Lista de espera quando o horário está **reservado/bloqueado**: collection `waitlist` (FIFO).
+- Público `POST /api/waitlist` (rate-limited); UI Booking: “Entrar na lista” em slots ocupados.
+- Cancel/expire/reject liberam o slot e notificam o **primeiro** `waiting` via WhatsApp (best-effort), status → `notified` (uma vez).
+- Admin: aba **Lista de espera** (por data) + remoção; Configurações: `waitlist_enabled` (default true).
+- Sem hold lock — o cliente reserva normalmente no site/WA após o aviso.
+

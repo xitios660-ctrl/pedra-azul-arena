@@ -383,6 +383,7 @@ async def build_availability(
         "effective_price_per_hour": price,
         "allow_multi_hour": bool(runtime["settings"].get("allow_multi_hour", True)),
         "max_hours_per_booking": max_hours_cap(runtime["settings"]),
+        "waitlist_enabled": bool(runtime["settings"].get("waitlist_enabled", True)),
     }}
 
 
@@ -561,9 +562,11 @@ async def expire_stale_pending(db) -> int:
     now = datetime.now(timezone.utc)
     cursor = db.bookings.find(
         {"status": "pending", "payment.status": "pending"},
-        {"id": 1, "payment.expires_at": 1, "created_at": 1},
+        {"id": 1, "payment.expires_at": 1, "created_at": 1, "court_id": 1, "date": 1,
+         "start_time": 1, "slot_keys": 1, "slot_key": 1},
     )
     expired_ids = []
+    expired_docs = []
     async for b in cursor:
         exp = (b.get("payment") or {}).get("expires_at")
         created = b.get("created_at")
@@ -581,6 +584,7 @@ async def expire_stale_pending(db) -> int:
                 deadline = None
         if deadline and now >= deadline:
             expired_ids.append(b["id"])
+            expired_docs.append(b)
     if not expired_ids:
         return 0
     result = await db.bookings.update_many(
@@ -592,6 +596,16 @@ async def expire_stale_pending(db) -> int:
             await release_slot_locks(db, bid)
         except Exception:
             pass
+    # Cycle 25: best-effort waitlist notify for freed slots
+    try:
+        import waitlist_service as wls
+        for doc in expired_docs:
+            try:
+                await wls.notify_after_booking_freed(db, doc)
+            except Exception:
+                pass
+    except Exception:
+        pass
     return result.modified_count
 
 

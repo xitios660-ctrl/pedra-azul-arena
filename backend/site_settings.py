@@ -8,6 +8,7 @@ Weekend hours (Cycle 21): optional weekend_open_hour / weekend_close_hour
 
 Weekend price (Cycle 23): optional price_weekend (null/0 = use price_per_hour on Sat/Sun).
 Multi-hour (Cycle 24): allow_multi_hour + max_hours_per_booking (1–3, default 2).
+Waitlist (Cycle 25): waitlist_enabled (default true) — join when slot full; FIFO WA notify on free.
 maps_url may be empty — Landing/Footer hide "Como chegar" when unset.
 
 Amenities / FAQ (Cycle 17): has_parking, parking_note, game_duration_note,
@@ -68,6 +69,8 @@ DEFAULTS: dict[str, Any] = {
     # Admin WA alerts — empty until owner sets a real number (never invent phones)
     "admin_whatsapp_e164": "",
     "admin_alerts_enabled": True,
+    # Cycle 25: waitlist when slot reserved/blocked
+    "waitlist_enabled": True,
 }
 
 # Legacy Arena Premium placeholders → migrate once if still at old seed values.
@@ -108,6 +111,7 @@ class SiteSettingsUpdate(BaseModel):
     reminder_hours_before: int = Field(default=3, ge=1, le=48)
     admin_whatsapp_e164: Optional[str] = Field(default="", max_length=20)
     admin_alerts_enabled: bool = Field(default=True)
+    waitlist_enabled: bool = Field(default=True)
 
     @field_validator("whatsapp_e164")
     @classmethod
@@ -353,6 +357,9 @@ def public_view(doc: dict[str, Any]) -> dict[str, Any]:
         # admin_whatsapp_e164 stays admin-only (not in public_view)
         "admin_alerts_enabled": bool(
             d.get("admin_alerts_enabled") if d.get("admin_alerts_enabled") is not None else DEFAULTS["admin_alerts_enabled"]
+        ),
+        "waitlist_enabled": bool(
+            d.get("waitlist_enabled") if d.get("waitlist_enabled") is not None else DEFAULTS["waitlist_enabled"]
         ),
     }
 

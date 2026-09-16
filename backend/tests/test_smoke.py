@@ -2019,3 +2019,170 @@ def test_multi_hour_resolve_duration_unit():
         assert False, "expected ValueError when multi disabled"
     except ValueError:
         pass
+
+
+def test_waitlist_join_cancel_notify_and_duplicate(admin_session, s):
+    """Cycle 25: join waitlist on reserved slot; cancel notifies first; duplicate phone rejected."""
+    import sys
+    from pathlib import Path as P
+    from unittest.mock import AsyncMock, patch
+
+    root = P(__file__).resolve().parents[1]
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+
+    # Settings expose waitlist_enabled
+    pub = s.get(f"{API}/site-settings", timeout=10)
+    assert pub.status_code == 200, pub.text
+    assert "waitlist_enabled" in pub.json()
+
+    day = None
+    start = None
+    for day_off in range(55, 90):
+        cand = (datetime.now(TZ) + timedelta(days=day_off)).strftime("%Y-%m-%d")
+        avail = s.get(
+            f"{API}/courts/availability",
+            params={"court_id": "court-1", "date": cand},
+            timeout=15,
+        )
+        assert avail.status_code == 200, avail.text
+        data = avail.json()
+        if data.get("day_open") is False:
+            continue
+        for sl in data.get("slots") or []:
+            if sl.get("status") == "available":
+                day, start = cand, sl["time"]
+                break
+        if day:
+            break
+    assert day and start, "no free slot for waitlist test"
+
+    # Free slot → join should fail
+    free_join = s.post(
+        f"{API}/waitlist",
+        json={
+            "court_id": "court-1",
+            "date": day,
+            "start_time": start,
+            "name": "Lista Livre",
+            "phone": "5511988776655",
+        },
+        headers=_xff(),
+        timeout=15,
+    )
+    assert free_join.status_code == 400, free_join.text
+
+    # Reserve via admin
+    book = admin_session.post(
+        f"{API}/admin/calendar/bookings",
+        json={
+            "date": day,
+            "start_time": start,
+            "customer_name": "Reserva Waitlist",
+            "whatsapp": "5511999005566",
+            "duration_hours": 1,
+        },
+        timeout=15,
+    )
+    assert book.status_code in (200, 201), book.text
+    bid = book.json()["id"]
+
+    try:
+        # Join waitlist (two people — FIFO)
+        j1 = s.post(
+            f"{API}/waitlist",
+            json={
+                "court_id": "court-1",
+                "date": day,
+                "start_time": start,
+                "name": "Primeiro Fila",
+                "phone": "5511988112233",
+            },
+            headers=_xff(),
+            timeout=15,
+        )
+        assert j1.status_code == 200, j1.text
+        e1 = j1.json()
+        assert e1.get("status") == "waiting"
+        assert e1.get("position") == 1
+        wid1 = e1["id"]
+
+        # Duplicate same phone → 400
+        dup = s.post(
+            f"{API}/waitlist",
+            json={
+                "court_id": "court-1",
+                "date": day,
+                "start_time": start,
+                "name": "Primeiro Fila Dup",
+                "phone": "11988112233",  # same digits without 55
+            },
+            headers=_xff(),
+            timeout=15,
+        )
+        assert dup.status_code == 400, dup.text
+        assert "já está" in (dup.json().get("detail") or "").lower() or "lista" in (dup.json().get("detail") or "").lower()
+
+        j2 = s.post(
+            f"{API}/waitlist",
+            json={
+                "court_id": "court-1",
+                "date": day,
+                "start_time": start,
+                "name": "Segundo Fila",
+                "phone": "5511988445566",
+            },
+            headers=_xff(),
+            timeout=15,
+        )
+        assert j2.status_code == 200, j2.text
+        assert j2.json().get("position") == 2
+
+        # Admin list
+        listed = admin_session.get(f"{API}/admin/waitlist", params={"date": day}, timeout=15)
+        assert listed.status_code == 200, listed.text
+        entries = listed.json().get("entries") or []
+        assert any(e.get("id") == wid1 for e in entries)
+
+        # Cancel booking → notify path (spy send_text)
+        with patch("whatsapp_bridge.send_text", new_callable=AsyncMock) as mock_send:
+            mock_send.return_value = {"ok": True}
+            # Patch may not affect already-imported server module — also patch waitlist_service
+            with patch("waitlist_service.whatsapp_bridge.send_text", new_callable=AsyncMock) as mock_wls:
+                mock_wls.return_value = {"ok": True}
+                cancel = admin_session.post(f"{API}/admin/bookings/{bid}/cancel", timeout=15)
+                assert cancel.status_code == 200, cancel.text
+                # At least one of the patches should have been called if server shares process;
+                # status check below is the source of truth for notify path.
+
+        listed2 = admin_session.get(f"{API}/admin/waitlist", params={"date": day}, timeout=15)
+        assert listed2.status_code == 200
+        by_id = {e["id"]: e for e in (listed2.json().get("entries") or [])}
+        assert by_id[wid1]["status"] == "notified", by_id[wid1]
+        assert by_id[wid1].get("notified_at")
+        # Second still waiting (only first notified)
+        wid2 = j2.json()["id"]
+        assert by_id[wid2]["status"] == "waiting"
+
+        # Remove second
+        rm = admin_session.delete(f"{API}/admin/waitlist/{wid2}", timeout=15)
+        assert rm.status_code == 200, rm.text
+    finally:
+        admin_session.post(f"{API}/admin/bookings/{bid}/cancel", timeout=10)
+
+
+def test_waitlist_covered_times_unit():
+    """Cycle 25: unit — covered_times_from_booking expands slot_keys."""
+    import sys
+    from pathlib import Path as P
+    root = P(__file__).resolve().parents[1]
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    import waitlist_service as wls
+
+    times = wls.covered_times_from_booking({
+        "start_time": "18:00",
+        "slot_keys": ["court-1|2099-01-01|18:00", "court-1|2099-01-01|19:00"],
+    })
+    assert times == ["18:00", "19:00"]
+    assert wls.covered_times_from_booking({"start_time": "10:00"}) == ["10:00"]
