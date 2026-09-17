@@ -21,9 +21,9 @@ export const STRUCTURE_BLURB =
 export const DEFAULT_AMENITIES = ["Iluminação noturna", "Pelada & treino", "Copa Alto Tietê"];
 
 /** Brand arena video (cinematic opening / hero loop) */
-export const BALEYS_VIDEO_SRC = "https://d2ol7oe51mr4n9.cloudfront.net/user_3ExHvVfp1S2A6CycImN7kDdmbsV/9056219a-c354-499b-86f7-70ba028a7285.mp4";
+export const BALEYS_VIDEO_SRC = "https://d2ol7oe51mr4n9.cloudfront.net/user_3ExHvVfp1S2A6CycImN7kDdmbsV/5f0b6913-dd24-4c8a-90c5-681d493ca11b.mp4";
 export const BALEYS_VIDEO_FULL_SRC = BALEYS_VIDEO_SRC;
-export const BALEYS_POSTER_SRC = "https://d2ol7oe51mr4n9.cloudfront.net/user_3ExHvVfp1S2A6CycImN7kDdmbsV/def18072-c035-4b0a-a22b-df3609db16be.jpg";
+export const BALEYS_POSTER_SRC = "https://d2ol7oe51mr4n9.cloudfront.net/user_3ExHvVfp1S2A6CycImN7kDdmbsV/915e8d00-facd-4ec2-8e44-e676adf25143.jpg";
 /** Fallback if poster missing */
 export const BALEYS_POSTER_FALLBACK = "/assets/pedra-azul-logo.png";
 
