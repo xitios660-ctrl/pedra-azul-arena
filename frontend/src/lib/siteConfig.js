@@ -22,6 +22,7 @@ export const DEFAULT_AMENITIES = ["Iluminação noturna", "Pelada & treino", "Co
 
 /** Brand arena video (cinematic opening / hero loop) */
 export const BALEYS_VIDEO_SRC = "https://d2ol7oe51mr4n9.cloudfront.net/user_3ExHvVfp1S2A6CycImN7kDdmbsV/5f0b6913-dd24-4c8a-90c5-681d493ca11b.mp4";
+export const BALEYS_VIDEO_MOBILE_SRC = "https://d2ol7oe51mr4n9.cloudfront.net/user_3ExHvVfp1S2A6CycImN7kDdmbsV/0047d1b6-9fe5-435a-bb21-87386248c9df.mp4";
 export const BALEYS_VIDEO_FULL_SRC = BALEYS_VIDEO_SRC;
 export const BALEYS_POSTER_SRC = "https://d2ol7oe51mr4n9.cloudfront.net/user_3ExHvVfp1S2A6CycImN7kDdmbsV/915e8d00-facd-4ec2-8e44-e676adf25143.jpg";
 /** Fallback if poster missing */
