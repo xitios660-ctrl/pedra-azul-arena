@@ -177,8 +177,8 @@ export default function Landing() {
           fallbackSrc={STADIUM_IMG}
           reduceMotion={m.reduce}
         />
-        <div className="absolute inset-0 bg-gradient-to-b from-black/55 via-black/70 to-[#030305]" />
-        <div className="absolute inset-0 bg-gradient-to-r from-black/50 via-transparent to-black/35" />
+        <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-black/20 to-[#030305]/70" />
+        <div className="absolute inset-0 bg-gradient-to-r from-black/15 via-transparent to-black/10" />
         <div className="absolute inset-0 bg-grid opacity-40" />
         <div className="absolute inset-0 scanlines opacity-50" />
         <Spotlight />
