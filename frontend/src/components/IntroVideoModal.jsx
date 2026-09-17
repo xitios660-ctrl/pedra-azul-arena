@@ -2,7 +2,7 @@ import React, { useState, useCallback } from "react";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import { ChevronRight, X, MapPin, Calendar } from "lucide-react";
-import { BALEYS_VIDEO_SRC, BALEYS_POSTER_SRC } from "@/lib/siteConfig";
+import { BALEYS_VIDEO_SRC, BALEYS_VIDEO_MOBILE_SRC, BALEYS_POSTER_SRC } from "@/lib/siteConfig";
 import { useSiteSettings } from "@/lib/SiteSettings";
 import FutsalArenaBackdrop from "@/components/FutsalArenaBackdrop";
 
@@ -44,6 +44,7 @@ export default function IntroVideoModal() {
         {/* Live futsal background shared with the homepage hero */}
         <FutsalArenaBackdrop
           videoSrc={BALEYS_VIDEO_SRC}
+          mobileVideoSrc={BALEYS_VIDEO_MOBILE_SRC}
           posterSrc={BALEYS_POSTER_SRC || STADIUM_BG}
           fallbackSrc={STADIUM_BG}
           reduceMotion={reduce}
