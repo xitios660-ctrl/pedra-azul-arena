@@ -13,6 +13,7 @@ import {
   defaultWhatsAppPrefill,
   COURT_LOCATION,
   BALEYS_VIDEO_SRC,
+  BALEYS_VIDEO_MOBILE_SRC,
   BALEYS_POSTER_SRC,
   BALEYS_POSTER_FALLBACK,
   structureChips,
@@ -173,6 +174,7 @@ export default function Landing() {
         {/* Live futsal arena: base film + real-time animated match layer */}
         <FutsalArenaBackdrop
           videoSrc={BALEYS_VIDEO_SRC}
+          mobileVideoSrc={BALEYS_VIDEO_MOBILE_SRC}
           posterSrc={BALEYS_POSTER_SRC || BALEYS_POSTER_FALLBACK}
           fallbackSrc={STADIUM_IMG}
           reduceMotion={m.reduce}
