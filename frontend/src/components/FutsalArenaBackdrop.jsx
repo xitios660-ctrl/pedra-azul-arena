@@ -1,14 +1,26 @@
-import React, { useCallback, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Volume2, VolumeX } from "lucide-react";
 
 export default function FutsalArenaBackdrop({
   videoSrc,
+  mobileVideoSrc,
   posterSrc,
   fallbackSrc,
   reduceMotion = false,
 }) {
   const videoRef = useRef(null);
   const [soundOn, setSoundOn] = useState(false);
+  const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" && window.matchMedia("(max-width: 639px)").matches);
+
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 639px)");
+    const sync = () => setIsMobile(media.matches);
+    sync();
+    media.addEventListener?.("change", sync);
+    return () => media.removeEventListener?.("change", sync);
+  }, []);
+
+  const activeVideoSrc = isMobile && mobileVideoSrc ? mobileVideoSrc : videoSrc;
 
   const toggleSound = useCallback(async () => {
     const video = videoRef.current;
@@ -44,8 +56,8 @@ export default function FutsalArenaBackdrop({
       ) : (
         <video
           ref={videoRef}
-          className="absolute inset-0 w-full h-full object-cover hero-baleys-video brightness-[1.28] contrast-[1.08] saturate-[1.18]"
-          src={videoSrc}
+          className={`absolute inset-0 w-full h-full hero-baleys-video brightness-[1.24] contrast-[1.06] saturate-[1.14] ${isMobile ? "object-cover" : "object-cover"}`}
+          src={activeVideoSrc}
           poster={posterSrc || fallbackSrc}
           autoPlay
           muted
