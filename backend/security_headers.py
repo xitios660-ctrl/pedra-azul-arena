@@ -13,6 +13,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 # - React inline styles (style={...} across pages)
 # - Inline script in public/index.html (DataCloneError guard)
 # - data:/blob: images (WhatsApp QR data-URL, createObjectURL downloads)
+# - images.unsplash.com for the curated landing visuals already referenced by the SPA
 # - connect-src 'self' keeps EventSource /api/admin/whatsapp/events + API
 # - wa.me / Google Maps are top-level navigations — not blocked by connect-src
 SECURITY_CSP = (
@@ -24,7 +25,7 @@ SECURITY_CSP = (
     "script-src 'self' 'unsafe-inline'; "
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
     "font-src 'self' https://fonts.gstatic.com data:; "
-    "img-src 'self' data: blob:; "
+    "img-src 'self' data: blob: https://images.unsplash.com; "
     "connect-src 'self'; "
     "worker-src 'self'; "
     "manifest-src 'self'"
