@@ -50,10 +50,10 @@ export default function IntroVideoModal() {
         />
 
         {/* Heavy gradient overlays */}
-        <div className="absolute inset-0 bg-black/60" />
+        <div className="absolute inset-0 bg-black/12" />
         <div className="absolute inset-0"
-          style={{ background: "radial-gradient(ellipse 80% 60% at 50% 50%, rgba(5,8,16,0.4), rgba(5,8,16,0.96))" }} />
-        <div className="absolute inset-0 bg-gradient-to-b from-[#050810]/40 via-transparent to-[#050810]" />
+          style={{ background: "radial-gradient(ellipse 82% 64% at 50% 50%, rgba(5,8,16,0.05), rgba(5,8,16,0.48))" }} />
+        <div className="absolute inset-0 bg-gradient-to-b from-[#050810]/10 via-transparent to-[#050810]/55" />
         <div className="absolute inset-0 scanlines" />
 
         {/* Animated colored glows — skipped under prefers-reduced-motion */}
