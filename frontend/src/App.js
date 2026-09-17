@@ -6,11 +6,13 @@ import { ProtectedRoute } from "@/components/ProtectedRoute";
 import Landing from "@/pages/Landing";
 import Login from "@/pages/Login";
 import IntroVideoModal from "@/components/IntroVideoModal";
+import ArenaExperienceLayer from "@/components/ArenaExperienceLayer";
 import { SiteSettingsProvider } from "@/lib/SiteSettings";
 
 const Booking = lazy(() => import("@/pages/Booking"));
 const MyBookings = lazy(() => import("@/pages/MyBookings"));
 const AdminDashboard = lazy(() => import("@/pages/Admin"));
+const AdminWhatsApp = lazy(() => import("@/pages/AdminWhatsApp"));
 const Presentation = lazy(() => import("@/pages/Presentation"));
 const TournamentsList = lazy(() =>
   import("@/pages/Tournaments").then((m) => ({ default: m.TournamentsList }))
@@ -53,6 +55,7 @@ function App() {
     <BrowserRouter>
       <AuthProvider>
         <SiteSettingsProvider>
+        <ArenaExperienceLayer />
         <IntroVideoModal />
         <Suspense fallback={<NeonRouteFallback />}>
         <Routes>
@@ -63,6 +66,7 @@ function App() {
           <Route path="/tournaments" element={<TournamentsList />} />
           <Route path="/tournaments/:id" element={<TournamentDetail />} />
           <Route path="/admin" element={<ProtectedRoute adminOnly><AdminDashboard /></ProtectedRoute>} />
+          <Route path="/admin/whatsapp" element={<ProtectedRoute adminOnly><AdminWhatsApp /></ProtectedRoute>} />
           <Route path="/apresentacao" element={<Presentation />} />
           <Route path="/faq" element={<Faq />} />
           <Route path="/perguntas" element={<Navigate to="/faq" replace />} />
