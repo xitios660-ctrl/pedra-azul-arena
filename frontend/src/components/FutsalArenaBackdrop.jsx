@@ -37,14 +37,14 @@ export default function FutsalArenaBackdrop({
         <img
           src={posterSrc || fallbackSrc}
           alt=""
-          className="absolute inset-0 w-full h-full object-cover"
+          className="absolute inset-0 w-full h-full object-cover brightness-[1.22] contrast-[1.06] saturate-[1.12]"
           loading="eager"
           decoding="async"
         />
       ) : (
         <video
           ref={videoRef}
-          className="absolute inset-0 w-full h-full object-cover hero-baleys-video"
+          className="absolute inset-0 w-full h-full object-cover hero-baleys-video brightness-[1.28] contrast-[1.08] saturate-[1.18]"
           src={videoSrc}
           poster={posterSrc || fallbackSrc}
           autoPlay
